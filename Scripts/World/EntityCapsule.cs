@@ -345,98 +345,68 @@ public partial class EntityCapsule : CharacterBody3D
         MoveAndSlide();
     }
 
-    // EQ Race ID → model code mapping (classic races + NPC guard/citizen variants + monsters)
-    private static readonly System.Collections.Generic.Dictionary<int, (string male, string female)> RaceModelMap = new()
+    // ── Race → Model mapping loaded from Data/race_models.json (generated from EQ client racedata.txt) ──
+    private class RaceEntry { public string m { get; set; } public string f { get; set; } public float s { get; set; } = 1.0f; }
+    private static System.Collections.Generic.Dictionary<int, RaceEntry> _raceData;
+    private static bool _raceDataLoaded = false;
+
+    private static void LoadRaceData()
     {
-        // ── Classic player races (1-12) ──
-        { 1, ("hum", "huf") },   // Human
-        { 2, ("bam", "baf") },   // Barbarian
-        { 3, ("erm", "erf") },   // Erudite
-        { 4, ("elm", "elf") },   // Wood Elf
-        { 5, ("him", "hif") },   // High Elf
-        { 6, ("dam", "daf") },   // Dark Elf
-        { 7, ("ham", "haf") },   // Half Elf
-        { 8, ("dwm", "dwf") },   // Dwarf
-        { 9, ("trm", "trf") },   // Troll
-        { 10, ("ogm", "ogf") },  // Ogre
-        { 11, ("hom", "hof") },  // Halfling
-        { 12, ("gnm", "gnf") },  // Gnome
-        { 128, ("ikm", "ikf") }, // Iksar
+        if (_raceDataLoaded) return;
+        _raceDataLoaded = true;
+        _raceData = new System.Collections.Generic.Dictionary<int, RaceEntry>();
 
-        // ── Monsters with extracted GLBs ──
-        { 14, ("wer", "wer") },  // Werewolf
-        { 60, ("ske", "ske") },  // Skeleton
-        { 75, ("ele", "ele") },  // Earth Elemental / Elemental
-        { 108, ("eye", "eye") }, // Evil Eye
-        { 119, ("woe", "woe") }, // Will-o-Wisp
+        string path = "res://Data/race_models.json";
+        if (!FileAccess.FileExists(path))
+        {
+            GD.PrintErr("[MODEL] race_models.json not found! Using empty race map.");
+            return;
+        }
 
-        // ── City guard/citizen races → mapped to their racial model ──
-        { 44, ("hum", "huf") },  // Freeport Guards → Human
-        { 55, ("hum", "huf") },  // Human Beggar → Human
-        { 67, ("hum", "huf") },  // Highpass Citizen → Human
-        { 71, ("hum", "huf") },  // Qeynos Citizen → Human
-        { 77, ("dam", "daf") },  // Neriak Citizen → Dark Elf
-        { 78, ("erm", "erf") },  // Erudite Citizen → Erudite
-        { 81, ("hom", "hof") },  // Rivervale Citizen → Halfling
-        { 88, ("gnm", "gnf") },  // Clockwork Gnome → Gnome
-        { 90, ("bam", "baf") },  // Halas Citizen → Barbarian
-        { 92, ("trm", "trf") },  // Grobb Citizen → Troll
-        { 93, ("ogm", "ogf") },  // Oggok Citizen → Ogre
-        { 94, ("dwm", "dwf") },  // Kaladim Citizen → Dwarf
-        { 106, ("him", "hif") }, // Felguard → High Elf (Felwithe guards)
-        { 112, ("elm", "elf") }, // Fayguard → Wood Elf (Kelethin guards)
-        { 139, ("ikm", "ikf") }, // Iksar Citizen → Iksar
+        try
+        {
+            string json = FileAccess.Open(path, FileAccess.ModeFlags.Read).GetAsText();
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                int raceId = int.Parse(prop.Name);
+                var entry = new RaceEntry
+                {
+                    m = prop.Value.GetProperty("m").GetString(),
+                    f = prop.Value.GetProperty("f").GetString(),
+                    s = (float)prop.Value.GetProperty("s").GetDouble()
+                };
+                _raceData[raceId] = entry;
+            }
+            GD.Print($"[MODEL] Loaded {_raceData.Count} race models from race_models.json");
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MODEL] Failed to load race_models.json: {ex.Message}");
+        }
+    }
 
-        // ── Crushbone / Orc races → mapped to Dark Elf (closest available model) ──
-        { 54, ("dam", "daf") },  // Orc → Dark Elf placeholder (no orc GLB yet)
-        { 85, ("dam", "daf") },  // Crushbone Orc → Dark Elf placeholder
-    };
+    // Compatibility wrapper for existing RaceModelMap usage
+    private static readonly System.Collections.Generic.Dictionary<int, (string male, string female)> RaceModelMap = new();
 
-    // Race-specific scale multipliers (human = 1.0 baseline)
-    // Based on canonical EQ race sizes normalized to human size (~6)
+    private static bool TryGetRaceModel(int race, out (string male, string female) codes)
+    {
+        LoadRaceData();
+        if (_raceData != null && _raceData.TryGetValue(race, out var entry))
+        {
+            codes = (entry.m, entry.f);
+            return true;
+        }
+        codes = ("hum", "huf");
+        return false;
+    }
+
     private static float GetRaceScale(int race)
     {
-        return race switch
-        {
-            1 => 1.0f,    // Human
-            2 => 1.17f,   // Barbarian (tall/beefy)
-            3 => 1.0f,    // Erudite (human-sized)
-            4 => 0.88f,   // Wood Elf (slightly shorter)
-            5 => 1.0f,    // High Elf (human-sized)
-            6 => 0.88f,   // Dark Elf (slightly shorter)
-            7 => 0.92f,   // Half Elf (between human/elf)
-            8 => 0.67f,   // Dwarf (short/stocky)
-            9 => 1.33f,   // Troll (tall)
-            10 => 1.5f,   // Ogre (huge)
-            11 => 0.58f,  // Halfling (small)
-            12 => 0.5f,   // Gnome (smallest)
-            128 => 1.0f,  // Iksar (human-sized)
-            // City guards/citizens inherit their racial scale
-            44 => 1.0f,   // Freeport Guards
-            55 => 1.0f,   // Human Beggar
-            67 => 1.0f,   // Highpass Citizen
-            71 => 1.0f,   // Qeynos Citizen
-            77 => 0.88f,  // Neriak Citizen (Dark Elf)
-            78 => 1.0f,   // Erudite Citizen
-            81 => 0.58f,  // Rivervale Citizen (Halfling)
-            88 => 0.5f,   // Clockwork Gnome
-            90 => 1.17f,  // Halas Citizen (Barbarian)
-            92 => 1.33f,  // Grobb Citizen (Troll)
-            93 => 1.5f,   // Oggok Citizen (Ogre)
-            94 => 0.67f,  // Kaladim Citizen (Dwarf)
-            106 => 1.0f,  // Felguard (High Elf)
-            112 => 0.88f, // Fayguard (Wood Elf)
-            139 => 1.0f,  // Iksar Citizen
-            // Monster scales
-            14 => 1.1f,   // Werewolf
-            54 => 0.92f,  // Orc (slightly shorter than human)
-            60 => 1.0f,   // Skeleton
-            75 => 1.2f,   // Elemental
-            85 => 0.92f,  // Crushbone Orc
-            108 => 0.6f,  // Evil Eye (small floating)
-            119 => 0.5f,  // Will-o-Wisp (small)
-            _ => 1.0f,    // Default to human scale
-        };
+        LoadRaceData();
+        if (_raceData != null && _raceData.TryGetValue(race, out var entry))
+            return entry.s;
+        return 1.0f; // Default to human scale
     }
 
     private Node3D _characterModel;
@@ -476,7 +446,7 @@ public partial class EntityCapsule : CharacterBody3D
 
         // Try to load actual character model GLB
         bool modelLoaded = false;
-        if (RaceModelMap.TryGetValue(race, out var codes))
+        if (TryGetRaceModel(race, out var codes))
         {
             string modelCode = (gender == 1) ? codes.female : codes.male;
             string modelPath = $"res://Data/Characters/{modelCode}.glb";

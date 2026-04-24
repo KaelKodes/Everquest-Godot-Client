@@ -1,0 +1,32 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://Scripts/World/EntityCapsule.cs" id="1_ecaps"]
+[ext_resource type="Shader" path="res://Scenes/CapsuleClothes.gdshader" id="2_clothes"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_shp"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_clothes"]
+render_priority = 0
+shader = ExtResource("2_clothes")
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_msh"]
+material = SubResource("ShaderMaterial_clothes")
+
+[node name="EntityCapsule" type="CharacterBody3D"]
+script = ExtResource("1_ecaps")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("CapsuleShape3D_shp")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("CapsuleMesh_msh")
+
+[node name="NameLabel" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
+billboard = 1
+double_sided = false
+text = "Entity"
+font_size = 24
+outline_size = 6

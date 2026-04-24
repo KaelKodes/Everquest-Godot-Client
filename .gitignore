@@ -1,0 +1,8 @@
+.godot/
+bin/
+obj/
+Export/
+export_presets.cfg
+Data/
+*.user
+*.suo

@@ -1,0 +1,411 @@
+[gd_scene load_steps=9 format=3 uid="uid://bt4k8k8u8k8u8"]
+
+[ext_resource type="Script" path="res://Scripts/UI/MainUI.cs" id="1_x0y0p"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dark"]
+bg_color = Color(0.08, 0.08, 0.1, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.7, 0.55, 0.2, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+shadow_color = Color(0, 0, 0, 0.5)
+shadow_size = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp"]
+bg_color = Color(0.6, 0.1, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mana"]
+bg_color = Color(0.1, 0.1, 0.6, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_log"]
+bg_color = Color(0, 0, 0, 0.6)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.3, 0.3, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_target"]
+bg_color = Color(0.08, 0.05, 0.05, 0.9)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.8, 0.2, 0.2, 0.8)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+shadow_color = Color(0, 0, 0, 0.4)
+shadow_size = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_targethp"]
+bg_color = Color(0.7, 0.15, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.05, 0.05, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xp"]
+bg_color = Color(0.6, 0.5, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.25, 0, 1)
+
+[node name="MainUI" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_x0y0p")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.02, 0.02, 0.02, 1)
+
+[node name="BuffBar" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -600.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = 70.0
+grow_horizontal = 0
+theme_override_constants/separation = 10
+alignment = 2
+
+[node name="SpellBar" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -420.0
+offset_right = 170.0
+offset_bottom = -20.0
+grow_vertical = 0
+theme_override_constants/separation = 5
+
+[node name="Slot1" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 1"
+
+[node name="Slot2" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 2"
+
+[node name="Slot3" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 3"
+
+[node name="Slot4" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 4"
+
+[node name="Slot5" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 5"
+
+[node name="Slot6" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 6"
+
+[node name="Slot7" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 7"
+
+[node name="Slot8" type="Button" parent="SpellBar"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty Slot 8"
+
+[node name="CombatLogContainer" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -450.0
+offset_top = -420.0
+offset_right = -20.0
+offset_bottom = -160.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_log")
+
+[node name="CombatLog" type="RichTextLabel" parent="CombatLogContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_font_sizes/normal_font_size = 13
+bbcode_enabled = true
+text = "[color=gray][IDLE] Connected to MUD...[/color]
+"
+scroll_following = true
+
+[node name="StatusPanel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -250.0
+offset_top = -140.0
+offset_right = 250.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_dark")
+
+[node name="VBox" type="VBoxContainer" parent="StatusPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 15.0
+offset_top = 15.0
+offset_right = -15.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="HPBar" type="ProgressBar" parent="StatusPanel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/fill = SubResource("StyleBoxFlat_hp")
+value = 75.0
+show_percentage = false
+
+[node name="HPLabel" type="Label" parent="StatusPanel/VBox/HPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 14
+text = "HP: 100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ManaBar" type="ProgressBar" parent="StatusPanel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/fill = SubResource("StyleBoxFlat_mana")
+value = 50.0
+show_percentage = false
+
+[node name="ManaLabel" type="Label" parent="StatusPanel/VBox/ManaBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 14
+text = "MANA: 50/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Buttons" type="HBoxContainer" parent="StatusPanel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SitStandBtn" type="Button" parent="StatusPanel/VBox/Buttons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Sit"
+
+[node name="AutoFightBtn" type="Button" parent="StatusPanel/VBox/Buttons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start Combat"
+
+[node name="TargetFrame" type="Panel" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -160.0
+offset_top = 20.0
+offset_right = 160.0
+offset_bottom = 90.0
+grow_horizontal = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_target")
+
+[node name="VBox" type="VBoxContainer" parent="TargetFrame"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 8.0
+offset_right = -12.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="TargetName" type="Label" parent="TargetFrame/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.85, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 14
+text = "Target Name"
+horizontal_alignment = 1
+
+[node name="TargetHPBar" type="ProgressBar" parent="TargetFrame/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/fill = SubResource("StyleBoxFlat_targethp")
+value = 100.0
+show_percentage = false
+
+[node name="TargetHPLabel" type="Label" parent="TargetFrame/VBox/TargetHPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 12
+text = "100%"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ZoneLabel" type="Label" parent="."]
+layout_mode = 1
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 300.0
+offset_bottom = 42.0
+theme_override_colors/font_color = Color(0.7, 0.65, 0.5, 0.8)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+text = "Qeynos Hills"
+
+[node name="LevelLabel" type="Label" parent="."]
+layout_mode = 1
+offset_left = 20.0
+offset_top = 42.0
+offset_right = 300.0
+offset_bottom = 58.0
+theme_override_colors/font_color = Color(0.5, 0.5, 0.5, 0.7)
+theme_override_font_sizes/font_size = 12
+text = "Level 1"
+
+[node name="ZonePanel" type="VBoxContainer" parent="."]
+layout_mode = 1
+offset_left = 20.0
+offset_top = 60.0
+offset_right = 300.0
+offset_bottom = 120.0
+theme_override_constants/separation = 4
+
+[node name="ZoneConnections" type="HBoxContainer" parent="ZonePanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="XPBarContainer" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -250.0
+offset_top = -150.0
+offset_right = 250.0
+offset_bottom = -143.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="XPBar" type="ProgressBar" parent="XPBarContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_xp")
+value = 0.0
+show_percentage = false
+
+[node name="XPLabel" type="Label" parent="XPBarContainer/XPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 8
+text = "EXP"
+horizontal_alignment = 1
+vertical_alignment = 1

@@ -1,0 +1,765 @@
+[gd_scene format=3 uid="uid://bt4k8k8u8k8u8"]
+
+[ext_resource type="Script" uid="uid://b6gnwgkrkgk35" path="res://Scripts/UI/MainUI.cs" id="1_x0y0p"]
+[ext_resource type="PackedScene" path="res://Scenes/World3D.tscn" id="3_world"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_hover"]
+bg_color = Color(0.25, 0.25, 0.28, 0.9)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.8, 0.7, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn"]
+bg_color = Color(0.12, 0.12, 0.15, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.6, 0.5, 0.3, 1)
+
+[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_empty"]
+size = Vector2(0, 0)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_window_border"]
+bg_color = Color(0.08, 0.08, 0.1, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.7, 0.55, 0.2, 1)
+expand_margin_top = 10.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_window_unfocused"]
+bg_color = Color(0.08, 0.08, 0.1, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.25, 0.1, 1)
+expand_margin_top = 10.0
+
+[sub_resource type="Theme" id="Theme_global"]
+Button/colors/font_color = Color(0.8, 0.75, 0.6, 1)
+Button/styles/hover = SubResource("StyleBoxFlat_btn_hover")
+Button/styles/normal = SubResource("StyleBoxFlat_btn")
+Button/styles/pressed = SubResource("StyleBoxFlat_btn")
+Window/colors/title_color = Color(0, 0, 0, 0)
+Window/colors/title_outline_modulate = Color(0, 0, 0, 0)
+Window/constants/close_h_ofs = 2000
+Window/constants/close_v_ofs = 2000
+Window/constants/title_height = 10
+Window/icons/close = SubResource("PlaceholderTexture2D_empty")
+Window/icons/close_pressed = SubResource("PlaceholderTexture2D_empty")
+Window/styles/embedded_border = SubResource("StyleBoxFlat_window_border")
+Window/styles/embedded_unfocused_border = SubResource("StyleBoxFlat_window_unfocused")
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dark"]
+bg_color = Color(0.08, 0.08, 0.1, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.7, 0.55, 0.2, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+shadow_color = Color(0, 0, 0, 0.5)
+shadow_size = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xp"]
+bg_color = Color(0.6, 0.5, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.25, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp"]
+bg_color = Color(0.6, 0.1, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mana"]
+bg_color = Color(0.1, 0.1, 0.6, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_targethp"]
+bg_color = Color(0.7, 0.15, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.05, 0.05, 1)
+
+[node name="MainUI" type="Control" unique_id=1668763611]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = SubResource("Theme_global")
+script = ExtResource("1_x0y0p")
+
+[node name="Background" type="ColorRect" parent="." unique_id=872526795]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.04, 0.04, 0.04, 1)
+
+[node name="MenuWindow" type="Window" parent="." unique_id=1267978355]
+oversampling_override = 1.0
+position = Vector2i(1700, 809)
+size = Vector2i(200, 250)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="MenuWindow" unique_id=770013844]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+
+[node name="SitStandBtn" type="Button" parent="MenuWindow/VBox" unique_id=1371578399]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "SIT"
+
+[node name="CampBtn" type="Button" parent="MenuWindow/VBox" unique_id=987654331]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "CAMP"
+
+[node name="HelpBtn" type="Button" parent="MenuWindow/VBox" unique_id=1740330105]
+layout_mode = 2
+text = "HELP"
+
+[node name="OptionsBtn" type="Button" parent="MenuWindow/VBox" unique_id=555447017]
+layout_mode = 2
+text = "OPTIONS"
+
+[node name="SpellsBtn" type="Button" parent="MenuWindow/VBox" unique_id=39262900]
+layout_mode = 2
+text = "SPELLS"
+
+[node name="AbilitiesBtn" type="Button" parent="MenuWindow/VBox" unique_id=987654330]
+layout_mode = 2
+text = "ABILITIES"
+
+[node name="InventoryBtn" type="Button" parent="MenuWindow/VBox" unique_id=409825125]
+layout_mode = 2
+text = "INVENTORY"
+
+[node name="MapBtn" type="Button" parent="MenuWindow/VBox" unique_id=46256709]
+custom_minimum_size = Vector2(15, 15)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "MAP"
+
+[node name="StatsWindow" type="Window" parent="." unique_id=147605915]
+oversampling_override = 1.0
+position = Vector2i(1700, 100)
+size = Vector2i(200, 300)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="StatsText" type="RichTextLabel" parent="StatsWindow" unique_id=1072825500]
+unique_name_in_owner = true
+anchors_preset = -1
+anchor_right = 1.0
+anchor_bottom = 0.77300006
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 0.019989014
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/default_color = Color(0.8, 0.7, 0.5, 1)
+theme_override_font_sizes/normal_font_size = 14
+text = "Lvl : [1]
+Gold: [0]"
+
+[node name="ActionBarWindow" type="Window" parent="." unique_id=107450837]
+oversampling_override = 1.0
+position = Vector2i(1700, 600)
+size = Vector2i(200, 175)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="AbilitiesGrid" type="GridContainer" parent="ActionBarWindow" unique_id=987654321]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+columns = 2
+
+[node name="BtnAbility1" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=987654322]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Attack"
+
+[node name="BtnAbility2" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=987654323]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "2"
+
+[node name="BtnAbility3" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=987654324]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "3"
+
+[node name="BtnAbility4" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=987654325]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "4"
+
+[node name="BtnAbility5" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=1687758676]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "5"
+
+[node name="BtnAbility6" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=529336334]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "6"
+
+[node name="BtnAbility7" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=1864037797]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "7"
+
+[node name="BtnAbility8" type="Button" parent="ActionBarWindow/AbilitiesGrid" unique_id=1324660490]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Look"
+
+[node name="SpellBarWindow" type="Window" parent="." unique_id=1284903787]
+oversampling_override = 1.0
+position = Vector2i(291, 359)
+size = Vector2i(50, 400)
+metadata/_edit_lock_ = true
+
+[node name="SpellBar" type="VBoxContainer" parent="SpellBarWindow" unique_id=1230005433]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 5
+
+[node name="Slot1" type="Button" parent="SpellBarWindow/SpellBar" unique_id=640741709]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty  1"
+flat = true
+alignment = 0
+
+[node name="Slot2" type="Button" parent="SpellBarWindow/SpellBar" unique_id=1945010732]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 2"
+flat = true
+alignment = 0
+
+[node name="Slot3" type="Button" parent="SpellBarWindow/SpellBar" unique_id=1219432319]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 3"
+flat = true
+alignment = 0
+
+[node name="Slot4" type="Button" parent="SpellBarWindow/SpellBar" unique_id=432251914]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 4"
+flat = true
+alignment = 0
+
+[node name="Slot5" type="Button" parent="SpellBarWindow/SpellBar" unique_id=2018887997]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 5"
+flat = true
+alignment = 0
+
+[node name="Slot6" type="Button" parent="SpellBarWindow/SpellBar" unique_id=1752786917]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 6"
+flat = true
+alignment = 0
+
+[node name="Slot7" type="Button" parent="SpellBarWindow/SpellBar" unique_id=474382397]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Empty 7"
+flat = true
+alignment = 0
+
+[node name="Slot8" type="Button" parent="SpellBarWindow/SpellBar" unique_id=1962760516]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 12
+text = "Empty 8"
+flat = true
+alignment = 0
+
+[node name="ViewPortPanel" type="Panel" parent="." unique_id=624239300]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_dark")
+
+[node name="Tabs" type="HBoxContainer" parent="ViewPortPanel" unique_id=1605052294]
+z_index = 1
+layout_mode = 0
+offset_left = 207.0
+offset_top = 67.0
+offset_right = 281.0
+offset_bottom = 97.0
+alignment = 1
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="ViewPortPanel" unique_id=123482833]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 286.0
+offset_top = 61.0
+offset_right = -230.0
+offset_bottom = -303.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="ViewPortPanel/SubViewportContainer" unique_id=555555555]
+handle_input_locally = false
+physics_object_picking = true
+size = Vector2i(1404, 716)
+render_target_update_mode = 4
+
+[node name="World3D" parent="ViewPortPanel/SubViewportContainer/SubViewport" unique_id=2079960605 instance=ExtResource("3_world")]
+
+[node name="LocationLabel" type="RichTextLabel" parent="ViewPortPanel" unique_id=1023799561]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -674.0
+offset_top = -4.0
+offset_right = 723.0
+offset_bottom = 58.0
+grow_horizontal = 2
+theme_override_colors/default_color = Color(0.9, 0.8, 0.5, 1)
+theme_override_font_sizes/normal_font_size = 18
+bbcode_enabled = true
+text = "[center]Location Unknown[/center]"
+scroll_active = false
+
+[node name="ChatWindow" type="Window" parent="." unique_id=1731372643]
+oversampling_override = 1.0
+position = Vector2i(285, 801)
+size = Vector2i(650, 250)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="ChatWindow" unique_id=496397698]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="ChatWindow/VBox" unique_id=961745811]
+layout_mode = 2
+
+[node name="MainBtn" type="Button" parent="ChatWindow/VBox/HBoxContainer" unique_id=739850154]
+layout_mode = 2
+text = "Main"
+
+[node name="PartyBtn" type="Button" parent="ChatWindow/VBox/HBoxContainer" unique_id=258003452]
+layout_mode = 2
+text = "Party"
+
+[node name="GuildBtn" type="Button" parent="ChatWindow/VBox/HBoxContainer" unique_id=290128389]
+layout_mode = 2
+text = "Guild"
+
+[node name="CombatLog" type="RichTextLabel" parent="ChatWindow/VBox" unique_id=620157392]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/default_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/normal_font_size = 14
+bbcode_enabled = true
+scroll_following = true
+
+[node name="ChatInput" type="LineEdit" parent="ChatWindow/VBox" unique_id=2091257727]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+placeholder_text = "Type here..."
+caret_blink = true
+
+[node name="XPBar" type="ProgressBar" parent="." unique_id=1152062191]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 15)
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -4.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/fill = SubResource("StyleBoxFlat_xp")
+show_percentage = false
+
+[node name="XPLabel" type="Label" parent="XPBar" unique_id=637641875]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 10
+text = "EXP: 0.0%"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="StatusWindow" type="Window" parent="." unique_id=1439515293]
+unique_name_in_owner = true
+oversampling_override = 1.0
+position = Vector2i(15, 415)
+size = Vector2i(260, 100)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="StatusWindow" unique_id=598446401]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 5
+
+[node name="PlayerName" type="Label" parent="StatusWindow/VBox" unique_id=820516463]
+unique_name_in_owner = true
+layout_mode = 2
+text = "PlayerName"
+horizontal_alignment = 1
+
+[node name="HPBar" type="ProgressBar" parent="StatusWindow/VBox" unique_id=627174357]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_hp")
+value = 75.0
+show_percentage = false
+
+[node name="HPLabel" type="Label" parent="StatusWindow/VBox/HPBar" unique_id=1517430638]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 14
+text = "HP: 100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ManaBar" type="ProgressBar" parent="StatusWindow/VBox" unique_id=1720681017]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_mana")
+value = 50.0
+show_percentage = false
+
+[node name="ManaLabel" type="Label" parent="StatusWindow/VBox/ManaBar" unique_id=1634263992]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 14
+text = "MP: 50/50"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyWindow" type="Window" parent="." unique_id=1893413473]
+oversampling_override = 1.0
+position = Vector2i(15, 530)
+size = Vector2i(260, 240)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="PartyWindow" unique_id=706458889]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="PartyLabel" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1595887735]
+layout_mode = 2
+text = "PARTY"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyMember1" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1965191802]
+layout_mode = 2
+text = "[1]"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyMember2" type="Label" parent="PartyWindow/VBoxContainer" unique_id=392814811]
+layout_mode = 2
+text = "[2]"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyMember3" type="Label" parent="PartyWindow/VBoxContainer" unique_id=356222588]
+layout_mode = 2
+text = "[3]"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyMember4" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1119377388]
+layout_mode = 2
+text = "[4]"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartyMember5" type="Label" parent="PartyWindow/VBoxContainer" unique_id=982822901]
+layout_mode = 2
+text = "[5]"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MembersLabel" type="Label" parent="PartyWindow/VBoxContainer" unique_id=780753835]
+layout_mode = 2
+text = "MEMBERS"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TargetListWindow" type="Window" parent="." unique_id=451079970]
+oversampling_override = 1.0
+position = Vector2i(15, 719)
+size = Vector2i(260, 240)
+metadata/_edit_lock_ = true
+
+[node name="VScrollBar" type="VScrollBar" parent="TargetListWindow" unique_id=1832522836]
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -8.0
+grow_horizontal = 0
+grow_vertical = 2
+size_flags_vertical = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="TargetListWindow" unique_id=882159383]
+clip_contents = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -56.5
+offset_bottom = 56.5
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="PartyLabel" type="Label" parent="TargetListWindow/VBoxContainer" unique_id=1919740240]
+layout_mode = 2
+text = "Targets"
+horizontal_alignment = 1
+
+[node name="Target1" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=1433730825]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target2" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=2111893923]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target3" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=691450130]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target4" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=684204528]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target5" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=767868191]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target6" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=438627908]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target7" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=1808514673]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target8" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=272049469]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target9" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=281836124]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="Target10" type="Button" parent="TargetListWindow/VBoxContainer" unique_id=1153559830]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "[1]"
+
+[node name="TargetWindow" type="Window" parent="." unique_id=27210106]
+unique_name_in_owner = true
+oversampling_override = 1.0
+position = Vector2i(15, 300)
+size = Vector2i(260, 100)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="TargetWindow" unique_id=998971029]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TargetName" type="Label" parent="TargetWindow/VBox" unique_id=581631974]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.4, 0.4, 1)
+text = "No Target"
+horizontal_alignment = 1
+
+[node name="TargetHPBar" type="ProgressBar" parent="TargetWindow/VBox" unique_id=434396692]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_targethp")
+value = 100.0
+show_percentage = false
+
+[node name="TargetHPLabel" type="Label" parent="TargetWindow/VBox/TargetHPBar" unique_id=983227659]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 12
+text = "100%"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BuffBar" type="HBoxContainer" parent="." unique_id=8636168]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -947.0
+offset_top = 22.0
+offset_right = -685.0
+offset_bottom = 199.0
+grow_horizontal = 2
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="LevelLabel" type="Label" parent="." unique_id=1410997920]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+
+[node name="ZoneLabel" type="Label" parent="." unique_id=207403947]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+
+[node name="ZoneConnections" type="HBoxContainer" parent="." unique_id=1250082682]
+unique_name_in_owner = true
+layout_mode = 0

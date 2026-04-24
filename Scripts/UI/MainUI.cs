@@ -1217,6 +1217,10 @@ public partial class MainUI : Control
 				string state = stateProp.GetString();
 				_isSitting = (state == "medding"); 
 				if (_sitStandBtn != null) _sitStandBtn.Text = _isSitting ? "Stand" : "Sit";
+
+				// Trigger sit/stand animation on player model
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null) wm.SetPlayerSitting(_isSitting);
 			}
 
 			// Auto-fight state (use autoFight flag, not inCombat)

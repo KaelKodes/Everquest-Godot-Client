@@ -114,7 +114,7 @@ public partial class EntityCapsule : CharacterBody3D
         {
             // Set loop mode: death/social/cast anims play once, movement loops
             var anim = _animPlayer.GetAnimation(animName);
-            if (animName.StartsWith("d") || animName.StartsWith("s") || animName.StartsWith("t"))
+            if (animName.StartsWith("d") || animName.StartsWith("s") || animName.StartsWith("t") || animName == "p02" || animName == "p05")
                 anim.LoopMode = Animation.LoopModeEnum.None;
             else
                 anim.LoopMode = Animation.LoopModeEnum.Linear;
@@ -345,10 +345,10 @@ public partial class EntityCapsule : CharacterBody3D
         MoveAndSlide();
     }
 
-    // EQ Race ID → model code mapping (classic races + NPC guard/citizen variants)
+    // EQ Race ID → model code mapping (classic races + NPC guard/citizen variants + monsters)
     private static readonly System.Collections.Generic.Dictionary<int, (string male, string female)> RaceModelMap = new()
     {
-        // Classic player races (1-12)
+        // ── Classic player races (1-12) ──
         { 1, ("hum", "huf") },   // Human
         { 2, ("bam", "baf") },   // Barbarian
         { 3, ("erm", "erf") },   // Erudite
@@ -361,9 +361,16 @@ public partial class EntityCapsule : CharacterBody3D
         { 10, ("ogm", "ogf") },  // Ogre
         { 11, ("hom", "hof") },  // Halfling
         { 12, ("gnm", "gnf") },  // Gnome
-        { 60, ("ske", "ske") },  // Skeleton
         { 128, ("ikm", "ikf") }, // Iksar
-        // City guard/citizen races → mapped to their racial equivalents
+
+        // ── Monsters with extracted GLBs ──
+        { 14, ("wer", "wer") },  // Werewolf
+        { 60, ("ske", "ske") },  // Skeleton
+        { 75, ("ele", "ele") },  // Earth Elemental / Elemental
+        { 108, ("eye", "eye") }, // Evil Eye
+        { 119, ("woe", "woe") }, // Will-o-Wisp
+
+        // ── City guard/citizen races → mapped to their racial model ──
         { 44, ("hum", "huf") },  // Freeport Guards → Human
         { 55, ("hum", "huf") },  // Human Beggar → Human
         { 67, ("hum", "huf") },  // Highpass Citizen → Human
@@ -379,6 +386,10 @@ public partial class EntityCapsule : CharacterBody3D
         { 106, ("him", "hif") }, // Felguard → High Elf (Felwithe guards)
         { 112, ("elm", "elf") }, // Fayguard → Wood Elf (Kelethin guards)
         { 139, ("ikm", "ikf") }, // Iksar Citizen → Iksar
+
+        // ── Crushbone / Orc races → mapped to Dark Elf (closest available model) ──
+        { 54, ("dam", "daf") },  // Orc → Dark Elf placeholder (no orc GLB yet)
+        { 85, ("dam", "daf") },  // Crushbone Orc → Dark Elf placeholder
     };
 
     // Race-specific scale multipliers (human = 1.0 baseline)
@@ -416,6 +427,14 @@ public partial class EntityCapsule : CharacterBody3D
             106 => 1.0f,  // Felguard (High Elf)
             112 => 0.88f, // Fayguard (Wood Elf)
             139 => 1.0f,  // Iksar Citizen
+            // Monster scales
+            14 => 1.1f,   // Werewolf
+            54 => 0.92f,  // Orc (slightly shorter than human)
+            60 => 1.0f,   // Skeleton
+            75 => 1.2f,   // Elemental
+            85 => 0.92f,  // Crushbone Orc
+            108 => 0.6f,  // Evil Eye (small floating)
+            119 => 0.5f,  // Will-o-Wisp (small)
             _ => 1.0f,    // Default to human scale
         };
     }

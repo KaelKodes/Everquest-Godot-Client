@@ -1257,4 +1257,13 @@ public partial class WorldManager : Node3D
             }
         }
     }
+
+    public void SetPlayerSitting(bool sitting)
+    {
+        if (_playerCapsule == null) return;
+        if (sitting)
+            _playerCapsule.PlaySit();
+        else
+            _playerCapsule.Revive(); // resets _isSitting and returns to idle
+    }
 }

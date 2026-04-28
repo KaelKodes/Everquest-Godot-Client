@@ -47,6 +47,8 @@ public partial class MainUI
 					string attackType = text.ToLower().Replace("!", ""); // e.g. "Kick!" -> "kick"
 					wm.TriggerEntityAction(src, $"attack:{attackType}");
 				}
+				// Weapon impact sound
+				UISoundPlayer.Instance?.PlayWeaponImpact(text);
 				break;
 			}
 			case "MELEE_MISS":
@@ -79,6 +81,8 @@ public partial class MainUI
 				
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null) wm.TriggerEntityAction(tgt, "hit");
+				// Spell impact — use a generic blunt sound for magical force
+				UISoundPlayer.Instance?.PlayWeaponImpact("crush");
 				break;
 			}
 			case "SPELL_HEAL":
@@ -110,6 +114,7 @@ public partial class MainUI
 			{
 				int amt = evt.GetProperty("amount").GetInt32();
 				Log("XP", $"You gained {amt} experience!");
+				UISoundPlayer.Instance?.PlayXpGain();
 				break;
 			}
 			case "LOOT":
@@ -117,12 +122,14 @@ public partial class MainUI
 				string item = evt.GetProperty("item").GetString();
 				string from = evt.TryGetProperty("source", out var src) ? src.GetString() : "a corpse";
 				Log("LOOT", $"You loot {item} from {from}.");
+				UISoundPlayer.Instance?.PlayLoot();
 				break;
 			}
 			case "LEVEL_UP":
 			{
 				int lvl = evt.GetProperty("level").GetInt32();
 				Log("DING", $"You have reached level {lvl}! Congratulations!");
+				UISoundPlayer.Instance?.PlayLevelUp();
 				break;
 			}
 			case "FIZZLE":
@@ -131,6 +138,7 @@ public partial class MainUI
 				Log("FIZZLE", $"Your {spell} spell fizzles!");
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null) wm.TriggerEntityAction("You", "fizzle");
+				UISoundPlayer.Instance?.PlayFizzle();
 				break;
 			}
 			case "RESIST":

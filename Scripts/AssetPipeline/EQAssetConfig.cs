@@ -17,7 +17,8 @@ public partial class EQAssetConfig : RefCounted
     public string EQPath { get; private set; } = "";
 
     /// <summary>Whether the EQ path has been configured and validated.</summary>
-    public bool IsConfigured => !string.IsNullOrEmpty(EQPath) && Validate(EQPath);
+    public bool IsConfigured => _isValidated;
+    private bool _isValidated = false;
 
     // Key files that must exist in a valid EQ installation
     private static readonly string[] RequiredFiles = {
@@ -41,7 +42,7 @@ public partial class EQAssetConfig : RefCounted
     /// Validate that a given path contains a real EQ installation.
     /// Returns true if all required marker files are found.
     /// </summary>
-    public bool Validate(string path)
+    public bool Validate(string path, bool silent = false)
     {
         if (string.IsNullOrEmpty(path)) return false;
 
@@ -51,12 +52,12 @@ public partial class EQAssetConfig : RefCounted
             string fullPath = System.IO.Path.Combine(path, file);
             if (!System.IO.File.Exists(fullPath))
             {
-                GD.Print($"[EQ Config] Missing required file: {fullPath}");
+                if (!silent) GD.Print($"[EQ Config] Missing required file: {fullPath}");
                 return false;
             }
         }
 
-        GD.Print($"[EQ Config] Validated EQ installation at: {path}");
+        if (!silent) GD.Print($"[EQ Config] Validated EQ installation at: {path}");
         return true;
     }
 
@@ -69,10 +70,12 @@ public partial class EQAssetConfig : RefCounted
         if (!Validate(path))
         {
             GD.PrintErr($"[EQ Config] Invalid EQ path: {path}");
+            _isValidated = false;
             return false;
         }
 
         EQPath = path;
+        _isValidated = true;
         Save();
         GD.Print($"[EQ Config] EQ path set to: {path}");
         return true;
@@ -174,6 +177,7 @@ public partial class EQAssetConfig : RefCounted
                 if (!string.IsNullOrEmpty(path) && Validate(path))
                 {
                     EQPath = path;
+                    _isValidated = true;
                     GD.Print($"[EQ Config] Loaded saved EQ path: {path}");
                 }
                 else

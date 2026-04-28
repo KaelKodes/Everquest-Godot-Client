@@ -161,15 +161,21 @@ public partial class EQAssetCache : RefCounted
     }
 
     private Dictionary<string, AudioStream> _soundCache = new Dictionary<string, AudioStream>();
+    private HashSet<string> _missingSounds = new HashSet<string>();
 
     /// <summary>
     /// Loads a WAV file from the EQ installation and caches it for runtime playback.
     /// Supports looping sounds (like ambient fire).
+    /// Results are cached — including negative results for missing files.
     /// </summary>
     public AudioStream GetSound(string filename, bool loop = false)
     {
         if (_soundCache.TryGetValue(filename, out var cachedStream))
             return cachedStream;
+
+        // Don't re-check files we already know are missing
+        if (_missingSounds.Contains(filename))
+            return null;
 
         string path = EQAssetConfig.Instance.GetEQFilePath($"sounds/{filename}");
         if (path == null || !System.IO.File.Exists(path))
@@ -177,13 +183,20 @@ public partial class EQAssetCache : RefCounted
             // Fallback to EQ root directory since many EQ installations place .wav files there
             path = EQAssetConfig.Instance.GetEQFilePath(filename);
             if (path == null || !System.IO.File.Exists(path))
+            {
+                _missingSounds.Add(filename);
                 return null;
+            }
         }
 
         var wav = LoadWav(path, loop);
         if (wav != null)
         {
             _soundCache[filename] = wav;
+        }
+        else
+        {
+            _missingSounds.Add(filename);
         }
         return wav;
     }
@@ -235,10 +248,32 @@ public partial class EQAssetCache : RefCounted
             Array.Copy(fileData, dataOffset, audioData, 0, Math.Min(dataSize, fileData.Length - dataOffset));
 
             var wav = new AudioStreamWav();
-            wav.Data = audioData;
+            
+            // Force convert Mono to Stereo to ensure Godot 4 audio compatibility
+            // since we know the Stereo music stream plays flawlessly.
+            if (numChannels == 1 && bitsPerSample == 16)
+            {
+                byte[] stereoData = new byte[audioData.Length * 2];
+                for (int j = 0; j < audioData.Length; j += 2)
+                {
+                    // Copy Left
+                    stereoData[j * 2] = audioData[j];
+                    stereoData[j * 2 + 1] = audioData[j + 1];
+                    // Copy Right (duplicate of Left)
+                    stereoData[j * 2 + 2] = audioData[j];
+                    stereoData[j * 2 + 3] = audioData[j + 1];
+                }
+                wav.Data = stereoData;
+                wav.Stereo = true;
+            }
+            else
+            {
+                wav.Data = audioData;
+                wav.Stereo = numChannels == 2;
+            }
+
             wav.Format = bitsPerSample == 8 ? AudioStreamWav.FormatEnum.Format8Bits : AudioStreamWav.FormatEnum.Format16Bits;
             wav.MixRate = sampleRate;
-            wav.Stereo = numChannels == 2;
             if (loop)
             {
                 wav.LoopMode = AudioStreamWav.LoopModeEnum.Forward;

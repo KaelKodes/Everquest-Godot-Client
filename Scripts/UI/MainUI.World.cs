@@ -617,12 +617,19 @@ public partial class MainUI
 			if (character.TryGetProperty("availableSkills", out var skillsArr) && skillsArr.ValueKind == JsonValueKind.Array)
 			{
 				_availableSkills.Clear();
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null) wm.PlayerHasStealthSkill = false;
 				foreach (var sk in skillsArr.EnumerateArray())
 				{
 					string sName = sk.GetString();
 					if (!string.IsNullOrEmpty(sName))
 					{
-						sName = char.ToUpper(sName[0]) + sName.Substring(1);						_availableSkills.Add(sName);
+						sName = char.ToUpper(sName[0]) + sName.Substring(1);
+						_availableSkills.Add(sName);
+						if (sName.ToLower() == "sneak" || sName.ToLower() == "hide")
+						{
+							if (wm != null) wm.PlayerHasStealthSkill = true;
+						}
 					}
 				}
 			}

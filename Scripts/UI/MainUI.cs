@@ -182,6 +182,7 @@ public partial class MainUI : Control
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
 	private Panel _optionsPanel;
+	private AudioPlayerWindow _audioPlayerWindow;
 
 	// Buff tracking for duration ticking
 	private class ActiveBuff
@@ -686,6 +687,25 @@ public partial class MainUI : Control
 		var optionsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/OptionsBtn");
 		if (optionsBtn != null) optionsBtn.Pressed += () => ToggleOptionsPanel();
 
+		// Wire AUDIO button on Simple Panel to toggle Audio Player
+		var audioBtn = GetNodeOrNull<Button>("MenuWindow/VBox/AudioBtn");
+		if (audioBtn == null)
+		{
+			// Dynamically add the Audio button if not in scene
+			var menuVBox = GetNodeOrNull<VBoxContainer>("MenuWindow/VBox");
+			if (menuVBox != null && optionsBtn != null)
+			{
+				audioBtn = new Button();
+				audioBtn.Text = "AUDIO";
+				audioBtn.Name = "AudioBtn";
+				// Insert right after the OPTIONS button
+				int optIdx = optionsBtn.GetIndex();
+				menuVBox.AddChild(audioBtn);
+				menuVBox.MoveChild(audioBtn, optIdx + 1);
+			}
+		}
+		if (audioBtn != null) audioBtn.Pressed += () => ToggleAudioPlayer();
+
 		// Upgrade existing ActionBarWindow with title + 3 tabs
 		_actionBarWindow = GetNodeOrNull<Window>("ActionBarWindow");
 		if (_actionBarWindow != null)
@@ -856,8 +876,15 @@ public partial class MainUI : Control
 		// Wire ActionPanel ability/skill activation signals
 		// ActionPanel is now a persistent node handled by ActionPanel.cs
 
+
+		// Global UI sound effects player (level dings, loot, combat impacts)
+		var uiSfx = new UISoundPlayer();
+		uiSfx.Name = "UISoundPlayer";
+		AddChild(uiSfx);
+
 		Log("SYSTEM", "Initialized EQMUD Client...");
 		GD.Print("[UI] MainUI Ready with Inventory & Combat Log enabled!");
+
 		
 		// Catch-up on missed signals during scene transition
 		if (!string.IsNullOrEmpty(_client.LastStatusPayload))
@@ -1316,6 +1343,30 @@ public partial class MainUI : Control
 			BuildOptionsPanel();
 
 		_optionsPanel.Visible = !_optionsPanel.Visible;
+	}
+
+	private void ToggleAudioPlayer()
+	{
+		if (_audioPlayerWindow == null)
+		{
+			_audioPlayerWindow = new AudioPlayerWindow();
+			_audioPlayerWindow.Name = "AudioPlayerWindow";
+
+			// Center on screen
+			var screenSize = GetViewport().GetVisibleRect().Size;
+			_audioPlayerWindow.GlobalPosition = new Vector2(
+				(screenSize.X - 280) / 2f,
+				(screenSize.Y - 310) / 2f
+			);
+
+			// Find the music player from WorldManager
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			_audioPlayerWindow.Initialize(wm?.MusicPlayer);
+
+			AddChild(_audioPlayerWindow);
+		}
+
+		_audioPlayerWindow.Visible = !_audioPlayerWindow.Visible;
 	}
 
 	private void BuildOptionsPanel()

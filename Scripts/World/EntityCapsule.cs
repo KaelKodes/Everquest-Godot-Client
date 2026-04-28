@@ -21,6 +21,7 @@ public partial class EntityCapsule : CharacterBody3D
 
     public string EntityName { get; private set; } = "Entity";
     public string EntityType { get; private set; } = "enemy";
+    public int Gender { get; private set; } = 0; // 0=Male, 1=Female, 2=Neutral
 
     public override void _Ready()
     {
@@ -393,6 +394,9 @@ public partial class EntityCapsule : CharacterBody3D
     // --- Audio Triggers ---
     private string _modelCode = "hum";
 
+    /// <summary>Get the race-specific model code (e.g., "hum", "elf", "orc") for sound lookups.</summary>
+    public string GetModelCode() => _modelCode;
+
     public void PlayVoice(string action)
     {
         var vp = GetNodeOrNull<AudioStreamPlayer3D>("VoicePlayer");
@@ -591,6 +595,7 @@ public partial class EntityCapsule : CharacterBody3D
 
         EntityName = name;
         EntityType = type;
+        Gender = gender;
         _nameLabel.Text = name;
 
         // Apply classic EQ color coding

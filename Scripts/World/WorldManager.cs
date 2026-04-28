@@ -6,7 +6,7 @@ using System.Linq;
 public partial class WorldManager : Node3D
 {
     private Node3D _spawnsContainer;
-    private Node3D _cameraArm;
+    private SpringArm3D _cameraArm;
     private Camera3D _camera;
     private EntityCapsule _playerCapsule;
     private EntityCapsule _currentTarget;
@@ -43,6 +43,7 @@ public partial class WorldManager : Node3D
     private bool _isAutoRunning = false;
     private bool _isSneaking = false;
     private bool _isHiding = false;
+    public bool PlayerHasStealthSkill { get; set; } = false;
     private bool _isCrouching = false;
     private bool _playerInCombat = false;
     private double _zoneImmunityTimer = 0.0; // Seconds of immunity after teleport
@@ -50,10 +51,18 @@ public partial class WorldManager : Node3D
     private Node3D _zoneObjectsContainer; // Placed zone objects (trees, buildings, etc.)
     private ZoneObjectPlacer _objectPlacer;
     private ZoneMusicPlayer _musicPlayer;
+    /// <summary>Public accessor for the zone music player — used by Audio Player UI.</summary>
+    public ZoneMusicPlayer MusicPlayer => _musicPlayer;
     private bool _flyMode = false; // Admin fly mode (F5 toggle)
     private bool _f5Held = false;
     private bool _f6Held = false;
     private bool _f4Held = false;
+
+    // Footstep sound system
+    private AudioStreamPlayer _footstepPlayer;
+    private double _footstepTimer = 0;
+    private double _footstepCadence = 0.45; // seconds between footsteps
+    private string _lastFootstepState = "idle"; // idle, walk, run, swim
 
     // Expose the current target ID for the attack system
     public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget) ? _currentTarget.Name : null;
@@ -98,8 +107,21 @@ public partial class WorldManager : Node3D
     public override void _Ready()
     {
         _spawnsContainer = GetNode<Node3D>("Spawns");
-        _cameraArm = GetNode<Node3D>("CameraArm");
-        _camera = GetNode<Camera3D>("CameraArm/Camera3D");
+        var oldArm = GetNode<Node3D>("CameraArm");
+        _camera = oldArm.GetNode<Camera3D>("Camera3D");
+        oldArm.RemoveChild(_camera);
+        
+        _cameraArm = new SpringArm3D();
+        _cameraArm.Name = "CameraArm";
+        _cameraArm.CollisionMask = 1; // Collide with environment
+        _cameraArm.Shape = new SphereShape3D { Radius = 0.5f };
+        _cameraArm.SpringLength = _cameraDistance;
+        
+        AddChild(_cameraArm);
+        _cameraArm.AddChild(_camera);
+        _camera.Position = Vector3.Zero; // SpringArm3D handles the offset
+        
+        oldArm.QueueFree();
 
         _boundariesContainer = new Node3D { Name = "Boundaries" };
         AddChild(_boundariesContainer);
@@ -371,6 +393,12 @@ public partial class WorldManager : Node3D
 
     public override void _Process(double delta)
     {
+        // Keep the celestial bodies infinitely far away by centering them on the camera
+        if (_moon != null && _camera != null)
+        {
+            _moon.GlobalPosition = _camera.GlobalPosition;
+        }
+
         if (_timeInitialized)
         {
             if (SmoothDayNightCycle)
@@ -429,8 +457,22 @@ public partial class WorldManager : Node3D
         float speed = baseSpeed;
         if (_flyMode) speed *= 5f; // Admin fly mode gets 5x speed
         float gravity = 50f;
+        float jumpVelocity = 15f;
         Vector3 velocity = _playerCapsule.Velocity;
         bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
+        
+        // Handle Gravity
+        if (!_flyMode && !_playerCapsule.IsOnFloor())
+        {
+            velocity.Y -= gravity * (float)delta;
+        }
+
+        // Handle Jump
+        if (Input.IsActionJustPressed("ui_accept") && _playerCapsule.IsOnFloor() && !_flyMode)
+        {
+            velocity.Y = jumpVelocity;
+            PlayFootstep("jmp");
+        }
         
         // Manual movement cancels autorun
         if (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back")) {
@@ -568,6 +610,9 @@ public partial class WorldManager : Node3D
             isSprinting && !_isCrouching,
             _isCrouching
         );
+
+        // ── Footstep Sounds ──
+        UpdateFootstepSounds(_playerCapsule.Velocity, _playerCapsule.IsOnFloor(), isSprinting, delta);
 
         // Sync position to server if moved > 0.1 units
         if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f)
@@ -1107,6 +1152,10 @@ public partial class WorldManager : Node3D
             {
                 string targetZone = zl.TryGetProperty("target", out var tz) ? tz.GetString() : "unknown";
                 
+                // PoK books are interactive objects, not walk-in spatial triggers.
+                // Creating a giant trigger box for them blocks the zone (especially Kelethin).
+                if (targetZone.ToLower() == "poknowledge") continue;
+                
                 // Check if this is a coordinate-based zone point (from DB) or edge-based (legacy)
                 bool hasCoords = zl.TryGetProperty("x", out _);
                 
@@ -1432,8 +1481,9 @@ public partial class WorldManager : Node3D
                 if (mat != null)
                 {
                     mat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
-                    mat.Roughness = 0.9f;
+                    mat.Roughness = 1.0f;
                     mat.Metallic = 0.0f;
+                    mat.MetallicSpecular = 0.0f;
                     mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled; 
                     
                     // UNIVERSAL BACKLIGHT FIX: 
@@ -1453,8 +1503,9 @@ public partial class WorldManager : Node3D
                     {
                         var newMat = mat.Duplicate(true) as StandardMaterial3D;
                         newMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
-                        newMat.Roughness = 0.9f;
+                        newMat.Roughness = 1.0f;
                         newMat.Metallic = 0.0f;
+                        newMat.MetallicSpecular = 0.0f;
                         newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                         
                         // Apply backlight to surface overrides too
@@ -1822,6 +1873,12 @@ public partial class WorldManager : Node3D
         _playerCapsule.IsPlayerControlled = true;
         _playerCapsule.SetNameVisible(false); // Hidden by default; toggled via Options panel
         _activeEntities["player_self"] = _playerCapsule;
+
+        // Exclude the player from the SpringArm raycast so it doesn't zoom in instantly
+        if (_cameraArm != null)
+        {
+            _cameraArm.AddExcludedObject(_playerCapsule.GetRid());
+        }
     }
 
     public void TeleportPlayer(float rawX, float rawY, float rawZ = 0f)
@@ -1974,6 +2031,141 @@ public partial class WorldManager : Node3D
         if (_playerCapsule == null || string.IsNullOrEmpty(animName)) return;
         // Use PlayEmote to set the emote timer, preventing idle from overriding
         _playerCapsule.PlayEmote(animName);
+    }
+
+    // ── Footstep Sound System ───────────────────────────────────
+
+    private void UpdateFootstepSounds(Vector3 vel, bool onFloor, bool sprinting, double delta)
+    {
+        // Determine movement state
+        float horizSpeed = new Vector2(vel.X, vel.Z).Length();
+        string newState;
+
+        if (!onFloor && vel.Y < -2f)
+            newState = "idle"; // Falling — no footsteps
+        else if (horizSpeed < 0.5f)
+            newState = "idle";
+        else if (sprinting)
+            newState = "run";
+        else
+            newState = "walk";
+
+        // Create footstep player on first use
+        if (_footstepPlayer == null && _playerCapsule != null)
+        {
+            _footstepPlayer = new AudioStreamPlayer();
+            _footstepPlayer.Name = "FootstepPlayer";
+            _playerCapsule.AddChild(_footstepPlayer);
+        }
+
+        // State change — reset timer
+        if (newState != _lastFootstepState)
+        {
+            GD.Print($"[Footstep] State changed from '{_lastFootstepState}' to '{newState}' (speed={horizSpeed:F2}, onFloor={onFloor})");
+            _lastFootstepState = newState;
+            _footstepTimer = 0; // Play immediately on transition
+
+            if (newState == "idle" && _footstepPlayer != null)
+            {
+                _footstepPlayer.Stop();
+            }
+        }
+
+        if (newState == "idle") return;
+
+        // Cadence: run = faster steps, walk = slower
+        _footstepCadence = newState == "run" ? 0.32 : 0.50;
+
+        _footstepTimer -= delta;
+        if (_footstepTimer <= 0)
+        {
+            _footstepTimer = _footstepCadence;
+            PlayFootstep(newState);
+        }
+    }
+
+    private void PlayFootstep(string moveType)
+    {
+        if (_playerCapsule == null) return;
+
+        // Get the player's model code for race-specific sounds
+        string modelCode = _playerCapsule.GetModelCode();
+        if (string.IsNullOrEmpty(modelCode)) modelCode = "hum";
+
+        // Map moveType to sound suffix (EQ naming: hum_run.wav, hum_wlk.wav, hum_swm.wav, hum_atk.wav)
+        string suffix = moveType switch
+        {
+            "run" => "_run.wav",
+            "walk" => "_wlk.wav",
+            "swim" => "_swm.wav",
+            "jmp" => "_atk.wav", // Jump uses the vocal attack grunt
+            _ => "_wlk.wav"
+        };
+
+        // Try race-specific first, then human fallback
+        string soundFile = $"{modelCode}{suffix}";
+        var stream = EQAssetCache.Instance.GetSound(soundFile);
+
+        if (stream == null)
+        {
+            // Fallback: try 3-letter code
+            string shortCode = modelCode.Substring(0, System.Math.Min(3, modelCode.Length));
+            soundFile = $"{shortCode}{suffix}";
+            stream = EQAssetCache.Instance.GetSound(soundFile);
+        }
+
+        if (stream == null)
+        {
+            // Final fallback: Use high-quality Dark Elf Male/Female audio as the universal humanoid default
+            string dkPrefix = _playerCapsule.Gender == 1 ? "DKF_" : "DKM_";
+            string dkSuffix = moveType switch
+            {
+                "run" => "Run.wav",
+                "walk" => "Walk.wav",
+                "swim" => "SwimFoward.wav",
+                "jmp" => "Jump.wav",
+                _ => "Walk.wav"
+            };
+            soundFile = $"{dkPrefix}{dkSuffix}";
+            stream = EQAssetCache.Instance.GetSound(soundFile);
+        }
+
+        if (stream != null)
+        {
+            // Use the global UI sound player for local player footsteps/jumps
+            // since we know its audio pipeline is 100% functional and local sounds
+            // don't need 3D spatial attenuation.
+            float sfxVol = _musicPlayer?.GetSfxVolume() ?? 0.8f;
+            bool sfxMuted = _musicPlayer?.IsSfxMuted ?? false;
+            
+            if (!sfxMuted && sfxVol > 0f)
+            {
+                float finalVol = 2f; // Base volume (+2dB)
+                
+                // Silent if successfully sneaking or hiding
+                if (_isSneaking || _isHiding)
+                {
+                    finalVol = -80f; // Godot's minimum dB (silent)
+                }
+                else if (_isCrouching)
+                {
+                    // If crouched but failed sneak check (or just crouching normally)
+                    if (PlayerHasStealthSkill)
+                        finalVol = -10f; // Even quieter if they have the skill but failed
+                    else
+                        finalVol = -4f;  // Quieter for normal crouch
+                }
+
+                if (finalVol > -80f)
+                {
+                    UISoundPlayer.Instance?.PlaySound(soundFile, finalVol);
+                }
+            }
+        }
+        else
+        {
+            GD.Print($"[Footstep] No sound found for model='{modelCode}' type='{moveType}'");
+        }
     }
 }
 

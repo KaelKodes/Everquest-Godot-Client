@@ -1491,7 +1491,7 @@ public partial class MainUI : Control
 						}
 					}
 					
-					if (dict.TryGetProperty("vision", out var visionDict))
+						if (dict.TryGetProperty("vision", out var visionDict))
 					{
 						int worldHour = visionDict.TryGetProperty("worldHour", out var wh) ? wh.GetInt32() : 12;
 						int dawn = visionDict.TryGetProperty("dawn", out var d) ? d.GetInt32() : 6;
@@ -1505,6 +1505,10 @@ public partial class MainUI : Control
 						
 						wm.UpdateEnvironmentTime(worldHour, dawn, dusk, drinalPhase, true); // true = initial load
 					
+						// Set indoor/outdoor from server vision data (replaces hardcoded zone list)
+						bool isOutdoor = visionDict.TryGetProperty("isOutdoor", out var ooProp) && ooProp.GetBoolean();
+						wm.SetIndoorZone(!isOutdoor);
+
 						// Wire up player light source from server vision data
 						bool hasLight = visionDict.TryGetProperty("hasLightSource", out var hlProp) && hlProp.GetBoolean();
 						wm.SetPlayerLightSource(hasLight);

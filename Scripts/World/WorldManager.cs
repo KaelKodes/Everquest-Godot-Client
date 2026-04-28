@@ -88,9 +88,9 @@ public partial class WorldManager : Node3D
     private int _dawnHour = 6;
     private int _duskHour = 18;
     private string _currentMoonPhase = "Full";
-    private float _timeSyncSpeed = 1.0f; // Speed to catch up to server time when smooth
     private bool _timeInitialized = false;
     private string _currentZoneId = "";
+    private bool _isIndoorZone = false;
 
     public override void _Ready()
     {
@@ -183,24 +183,18 @@ public partial class WorldManager : Node3D
         }
     }
 
-    private bool IsIndoorZone(string zoneId)
+    /// <summary>Set whether the current zone is indoor (driven by server ZONE_STATE data).</summary>
+    public void SetIndoorZone(bool indoor)
     {
-        if (string.IsNullOrEmpty(zoneId)) return false;
-        string lower = zoneId.ToLower();
-        return lower.StartsWith("neriak") || 
-               lower.StartsWith("crushbone") || 
-               lower.StartsWith("unrest") || 
-               lower.StartsWith("blackburrow") || 
-               lower.StartsWith("guk") || 
-               lower.StartsWith("runnyeye") ||
-               lower.StartsWith("befallen");
+        _isIndoorZone = indoor;
+        ApplyTimeOfDayVisuals();
     }
 
     private void ApplyTimeOfDayVisuals()
     {
         if (_sun == null || _moon == null) return;
 
-        bool isIndoor = IsIndoorZone(_currentZoneId);
+        bool isIndoor = _isIndoorZone;
 
         if (isIndoor)
         {
@@ -1368,13 +1362,6 @@ public partial class WorldManager : Node3D
                 return false;
             }
 
-            // LanternExtractor GLB coordinate fix:
-            // Log the mesh's built-in transform so we can calibrate
-            GD.Print($"[LANTERN-DEBUG] Scene tree for {zoneId}:");
-            DebugPrintSceneTree(scene, 0);
-            bool firstMesh = true;
-            DebugLogMeshInfo(scene, ref firstMesh);
-
             // Lantern bakes a mesh transform of scale=(-0.1,-0.1,-0.1) rot=(180,0,0)
             // which maps local vertices (x,y,z) → (-0.1x, 0.1y, 0.1z).
             // The bundled EQ Advanced Maps GLBs use world coords where:
@@ -1408,8 +1395,6 @@ public partial class WorldManager : Node3D
                 float centerZ = aabb.Position.Z + aabb.Size.Z / 2f;
 
                 GD.Print($"[WORLD] Cached GLB bounds: pos=({aabb.Position}), size=({aabb.Size})");
-                GD.Print($"[LANTERN-DEBUG] Cached GLB center=({centerX},{centerZ}), size=({mapWidth}x{mapLength})");
-                GD.Print($"[LANTERN-DEBUG] Compare to bundled: pos=((-1546.5625, -2.03125, -988.4063)), size=((2570.75, 268.6397, 2000.0477))");
                 RebuildBoundaryWallsOnly(centerX, centerZ, mapWidth, mapLength, aabb.Position.Y - 10f);
             }
 
@@ -1499,58 +1484,6 @@ public partial class WorldManager : Node3D
         foreach (var child in node.GetChildren())
         {
             CalculateAabbRecursive(child, ref combined, ref first);
-        }
-    }
-
-    // ── Debug helpers for Lantern coordinate investigation ──────────────
-
-    private void DebugPrintSceneTree(Node node, int depth)
-    {
-        string indent = new string(' ', depth * 2);
-        string info = $"{indent}{node.GetType().Name}: '{node.Name}'";
-        if (node is Node3D n3d)
-        {
-            var t = n3d.Transform;
-            if (t != Transform3D.Identity)
-            {
-                info += $" pos=({n3d.Position}) rot=({n3d.RotationDegrees}) scale=({n3d.Scale})";
-            }
-        }
-        GD.Print($"[LANTERN-DEBUG] {info}");
-        // Only go 3 levels deep to avoid spam
-        if (depth < 3)
-        {
-            foreach (var child in node.GetChildren())
-            {
-                DebugPrintSceneTree(child, depth + 1);
-            }
-        }
-    }
-
-    private void DebugLogMeshInfo(Node node, ref bool first)
-    {
-        if (node is MeshInstance3D meshInst && meshInst.Mesh != null && first)
-        {
-            var localAabb = meshInst.Mesh.GetAabb();
-            GD.Print($"[LANTERN-DEBUG] First mesh '{meshInst.Name}' local AABB: pos=({localAabb.Position}), size=({localAabb.Size})");
-            GD.Print($"[LANTERN-DEBUG] First mesh transform: pos=({meshInst.Position}) rot=({meshInst.RotationDegrees}) scale=({meshInst.Scale})");
-            
-            // Try to read a few vertex positions from the first surface
-            if (meshInst.Mesh is ArrayMesh arrayMesh && arrayMesh.GetSurfaceCount() > 0)
-            {
-                var arrays = arrayMesh.SurfaceGetArrays(0);
-                var vertVariant = arrays[(int)Mesh.ArrayType.Vertex];
-                var verts = vertVariant.AsVector3Array();
-                if (verts != null && verts.Length > 0)
-                {
-                    GD.Print($"[LANTERN-DEBUG] First 3 vertices: v0=({verts[0]}), v1=({(verts.Length > 1 ? verts[1].ToString() : "n/a")}), v2=({(verts.Length > 2 ? verts[2].ToString() : "n/a")})");
-                }
-            }
-            first = false;
-        }
-        foreach (var child in node.GetChildren())
-        {
-            DebugLogMeshInfo(child, ref first);
         }
     }
 

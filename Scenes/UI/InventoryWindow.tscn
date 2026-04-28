@@ -1,145 +1,158 @@
-[gd_scene load_steps=3 format=3 uid="uid://df7h6k5v4u3"]
+[gd_scene load_steps=4 format=3 uid="uid://df7h6k5v4u3"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_window"]
-bg_color = Color(0.05, 0.05, 0.07, 0.95)
+[sub_resource type="StyleBoxFlat" id="sb_window"]
+bg_color = Color(0.07, 0.065, 0.055, 0.97)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.7, 0.55, 0.2, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-shadow_color = Color(0, 0, 0, 0.5)
-shadow_size = 10
+border_color = Color(0.55, 0.45, 0.2, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0, 0, 0, 0.4)
+shadow_size = 8
+
+[sub_resource type="StyleBoxFlat" id="sb_inner"]
+bg_color = Color(0.04, 0.04, 0.04, 0.9)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.25, 0.15, 0.7)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="sb_title"]
+bg_color = Color(0.12, 0.1, 0.07, 1)
+border_width_bottom = 1
+border_color = Color(0.55, 0.45, 0.2, 1)
 
 [node name="InventoryWindow" type="Panel"]
-custom_minimum_size = Vector2(400, 500)
+custom_minimum_size = Vector2(520, 640)
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = -250.0
-offset_right = 200.0
-offset_bottom = 250.0
+offset_left = -260.0
+offset_top = -320.0
+offset_right = 260.0
+offset_bottom = 320.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_window")
+theme_override_styles/panel = SubResource("sb_window")
 
-[node name="TabContainer" type="TabContainer" parent="."]
+[node name="MainVBox" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = -10.0
+offset_left = 6.0
+offset_top = 6.0
+offset_right = -6.0
+offset_bottom = -6.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_font_sizes/font_size = 14
+theme_override_constants/separation = 4
 
-[node name="Equipment" type="ScrollContainer" parent="TabContainer"]
+[node name="TitleBar" type="PanelContainer" parent="MainVBox"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("sb_title")
+
+[node name="HBox" type="HBoxContainer" parent="MainVBox/TitleBar"]
 layout_mode = 2
 
-[node name="Grid" type="GridContainer" parent="TabContainer/Equipment"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/v_separation = 10
-columns = 1
-
-[node name="Head" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Head"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-text = "Head"
-
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Head"]
+[node name="Title" type="Label" parent="MainVBox/TitleBar/HBox"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Empty"
+theme_override_colors/font_color = Color(0.85, 0.75, 0.45, 1)
+theme_override_font_sizes/font_size = 15
+text = "Inventory"
+horizontal_alignment = 1
 
-[node name="Chest" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
+[node name="CloseBtn" type="Button" parent="MainVBox/TitleBar/HBox"]
+custom_minimum_size = Vector2(24, 24)
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_font_sizes/font_size = 11
+text = "X"
 
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Chest"]
-custom_minimum_size = Vector2(80, 0)
+[node name="ContentHBox" type="HBoxContainer" parent="MainVBox"]
 layout_mode = 2
-text = "Chest"
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.0
+theme_override_constants/separation = 4
 
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Chest"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Empty"
-
-[node name="Arms" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Arms"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-text = "Arms"
-
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Arms"]
+[node name="StatsPanel" type="PanelContainer" parent="MainVBox/ContentHBox"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Empty"
+size_flags_stretch_ratio = 0.45
+theme_override_styles/panel = SubResource("sb_inner")
 
-[node name="Hands" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
+[node name="StatsScroll" type="ScrollContainer" parent="MainVBox/ContentHBox/StatsPanel"]
 layout_mode = 2
-theme_override_constants/separation = 10
+horizontal_scroll_mode = 0
 
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Hands"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-text = "Hands"
-
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Hands"]
+[node name="StatsText" type="RichTextLabel" parent="MainVBox/ContentHBox/StatsPanel/StatsScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Empty"
+size_flags_vertical = 3
+bbcode_enabled = true
+theme_override_colors/default_color = Color(0.8, 0.8, 0.7, 1)
+theme_override_font_sizes/normal_font_size = 12
 
-[node name="Primary" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Primary"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-text = "Primary"
-
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Primary"]
+[node name="EquipPanel" type="PanelContainer" parent="MainVBox/ContentHBox"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Empty"
+size_flags_stretch_ratio = 0.55
+theme_override_styles/panel = SubResource("sb_inner")
 
-[node name="Secondary" type="HBoxContainer" parent="TabContainer/Equipment/Grid"]
+[node name="EquipScroll" type="ScrollContainer" parent="MainVBox/ContentHBox/EquipPanel"]
 layout_mode = 2
-theme_override_constants/separation = 10
+horizontal_scroll_mode = 0
 
-[node name="Label" type="Label" parent="TabContainer/Equipment/Grid/Secondary"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
-text = "Secondary"
-
-[node name="Item" type="Button" parent="TabContainer/Equipment/Grid/Secondary"]
+[node name="EquipGrid" type="VBoxContainer" parent="MainVBox/ContentHBox/EquipPanel/EquipScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Empty"
+theme_override_constants/separation = 2
 
-[node name="Inventory" type="ScrollContainer" parent="TabContainer"]
-visible = false
+[node name="SlotsSection" type="VBoxContainer" parent="MainVBox"]
 layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.5
+theme_override_constants/separation = 2
 
-[node name="VBox" type="VBoxContainer" parent="TabContainer/Inventory"]
+[node name="SlotsTitle" type="Label" parent="MainVBox/SlotsSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.6, 0.35, 1)
+theme_override_font_sizes/font_size = 12
+text = "── General Slots ──"
+horizontal_alignment = 1
+
+[node name="SlotsGrid" type="GridContainer" parent="MainVBox/SlotsSection"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 5
+size_flags_vertical = 3
+columns = 2
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+
+[node name="ButtonBar" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+alignment = 2
+theme_override_constants/separation = 6
+
+[node name="DestroyBtn" type="Button" parent="MainVBox/ButtonBar"]
+custom_minimum_size = Vector2(70, 28)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Destroy"
+
+[node name="DoneBtn" type="Button" parent="MainVBox/ButtonBar"]
+custom_minimum_size = Vector2(70, 28)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Done"

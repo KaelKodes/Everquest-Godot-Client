@@ -11,6 +11,7 @@ public partial class WorldManager : Node3D
     private EntityCapsule _playerCapsule;
     private EntityCapsule _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
+    private string _currentVisionStyle = "normal";
 
     private int _spawnCounter = 0;
     private int _enemyTargetIndex = -1;
@@ -32,17 +33,24 @@ public partial class WorldManager : Node3D
     [Signal] public delegate void PlayerMovedEventHandler(float x, float z);
     [Signal] public delegate void ZoneLineCrossedEventHandler(string targetZoneId);
     [Signal] public delegate void SneakToggledEventHandler(bool isSneaking);
+    [Signal] public delegate void HideToggledEventHandler(bool isHiding);
     [Signal] public delegate void SyncProgressEventHandler(int current, int total);
     private Vector3 _lastSentPos = Vector3.Zero;
     private Node3D _boundariesContainer;
     private bool _isAutoRunning = false;
     private bool _isSneaking = false;
+    private bool _isHiding = false;
+    private bool _isCrouching = false;
     private bool _playerInCombat = false;
     private double _zoneImmunityTimer = 0.0; // Seconds of immunity after teleport
     private Node3D _zoneGeometryContainer;
+    private Node3D _zoneObjectsContainer; // Placed zone objects (trees, buildings, etc.)
+    private ZoneObjectPlacer _objectPlacer;
+    private ZoneMusicPlayer _musicPlayer;
     private bool _flyMode = false; // Admin fly mode (F5 toggle)
     private bool _f5Held = false;
     private bool _f6Held = false;
+    private bool _f4Held = false;
 
     // Expose the current target ID for the attack system
     public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget) ? _currentTarget.Name : null;
@@ -66,6 +74,24 @@ public partial class WorldManager : Node3D
         return dist >= 0 && dist <= range;
     }
 
+    // Day/Night Cycle
+    public bool SmoothDayNightCycle { get; set; } = true;
+    private DirectionalLight3D _sun;
+    private DirectionalLight3D _moon;
+    private Sprite3D _moonSprite;
+    private ShaderMaterial _moonMaterial;
+    private WorldEnvironment _environment;
+    
+    // Time state
+    private float _currentWorldHour = 12f;
+    private float _targetWorldHour = 12f;
+    private int _dawnHour = 6;
+    private int _duskHour = 18;
+    private string _currentMoonPhase = "Full";
+    private float _timeSyncSpeed = 1.0f; // Speed to catch up to server time when smooth
+    private bool _timeInitialized = false;
+    private string _currentZoneId = "";
+
     public override void _Ready()
     {
         _spawnsContainer = GetNode<Node3D>("Spawns");
@@ -75,10 +101,309 @@ public partial class WorldManager : Node3D
         _boundariesContainer = new Node3D { Name = "Boundaries" };
         AddChild(_boundariesContainer);
 
+        // Environment Setup
+        _sun = GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D");
+        _environment = GetNodeOrNull<WorldEnvironment>("WorldEnvironment");        // Spawn Moon
+        _moon = new DirectionalLight3D { Name = "MoonLight" };
+        _moon.LightColor = new Color(0.6f, 0.7f, 1.0f); // Pale blue
+        _moon.LightEnergy = 0.0f;
+        _moon.ShadowEnabled = false; // Disable shadows for moon for performance
+        _moon.SkyMode = DirectionalLight3D.SkyModeEnum.LightOnly; // Don't draw a black disk in the sky
+        AddChild(_moon);
+
+        // Vision Manager
+        var visionManager = new VisionManager();
+        visionManager.Name = "VisionManager";
+        AddChild(visionManager);
+
+        // Spawn Moon Sprite3D
+        _moonSprite = new Sprite3D { Name = "MoonSprite" };
+        _moonSprite.Texture = GD.Load<Texture2D>("res://Assets/Textures/drinal_full_moon.jpg");
+        _moonSprite.Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
+        _moonSprite.PixelSize = 1.0f; // Large scale for the sky
+        _moonSprite.Position = new Vector3(0, 0, -800f); // Far away
+        _moon.AddChild(_moonSprite);
+
+        // Load Moon Phase Shader
+        _moonMaterial = new ShaderMaterial();
+        _moonMaterial.Shader = GD.Load<Shader>("res://Assets/Shaders/MoonPhase.gdshader");
+        _moonSprite.MaterialOverride = _moonMaterial;
+
+        // Initialize Audio Subsystems
+        _musicPlayer = new ZoneMusicPlayer();
+        AddChild(_musicPlayer);
+
         GD.Print("[WORLD] 3D World Initialized");
 
         // Player is now spawned lazily via SpawnPlayer() after the world is ready
         UpdateCamera();
+    }
+
+    public void UpdateEnvironmentTime(int hour, int dawn, int dusk, string moonPhase = "Full", bool initialLoad = false)
+    {
+        _targetWorldHour = hour;
+        _dawnHour = dawn;
+        _duskHour = dusk;
+        _currentMoonPhase = moonPhase;
+        
+        if (initialLoad || !_timeInitialized || !SmoothDayNightCycle)
+        {
+            _currentWorldHour = hour;
+            _timeInitialized = true;
+            ApplyTimeOfDayVisuals();
+        }
+    }
+
+    public EntityCapsule GetEntityByName(string name)
+    {
+        if (name == "You") return _playerCapsule;
+        foreach (var entity in _activeEntities.Values)
+        {
+            if (entity is EntityCapsule cap && cap.EntityName == name)
+                return cap;
+        }
+        return null;
+    }
+
+    public void TriggerEntityAction(string name, string action)
+    {
+        var entity = GetEntityByName(name);
+        if (entity != null)
+        {
+            if (action == "hit") entity.PlayDamage();
+            else if (action == "miss") entity.PlaySfx("aam_hit.wav"); // Placeholder for miss/whoosh sound
+            else if (action == "cast") entity.PlayCast();
+            else if (action == "die") entity.PlayDeath();
+            else if (action == "fizzle") entity.PlaySfx("fizzle.wav");
+            else if (action.StartsWith("attack:"))
+            {
+                string type = action.Split(':')[1];
+                entity.PlayAttack(type);
+            }
+        }
+    }
+
+    private bool IsIndoorZone(string zoneId)
+    {
+        if (string.IsNullOrEmpty(zoneId)) return false;
+        string lower = zoneId.ToLower();
+        return lower.StartsWith("neriak") || 
+               lower.StartsWith("crushbone") || 
+               lower.StartsWith("unrest") || 
+               lower.StartsWith("blackburrow") || 
+               lower.StartsWith("guk") || 
+               lower.StartsWith("runnyeye") ||
+               lower.StartsWith("befallen");
+    }
+
+    private void ApplyTimeOfDayVisuals()
+    {
+        if (_sun == null || _moon == null) return;
+
+        bool isIndoor = IsIndoorZone(_currentZoneId);
+
+        if (isIndoor)
+        {
+            _sun.Visible = false;
+            _moon.Visible = false;
+            if (_moonSprite != null) _moonSprite.Visible = false;
+
+            if (_environment != null && _environment.Environment != null)
+            {
+                float bgEnergy = 1.0f;
+                float ambEnergy = 1.0f;
+                
+                if (_currentVisionStyle == "ultravision")
+                {
+                    bgEnergy = 2.0f;
+                    ambEnergy = 15.0f; // Turn pitch black night into day (0.05 * 15 = 0.75 ambient)
+                }
+                else if (_currentVisionStyle == "infravision")
+                {
+                    bgEnergy = 1.0f;
+                    ambEnergy = 6.0f; // Bright enough to see clearly but still dark
+                }
+
+                _environment.Environment.BackgroundMode = Godot.Environment.BGMode.Color;
+                _environment.Environment.BackgroundColor = Colors.Black;
+                _environment.Environment.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                _environment.Environment.AmbientLightColor = new Color(0.05f, 0.05f, 0.05f); 
+                _environment.Environment.AmbientLightEnergy = ambEnergy;
+                _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
+            }
+            return;
+        }
+
+        _sun.Visible = true;
+        _moon.Visible = true;
+        if (_moonSprite != null) _moonSprite.Visible = true;
+
+        // Progress 0 to 1 over 24 hours. 0 = midnight, 0.5 = noon
+        float progress = _currentWorldHour / 24f;
+        
+        // Pitch mapping: 
+        // 0 (Midnight): Sun is straight down (-90 degrees)
+        // 6 (Dawn): Sun is at horizon (0 degrees)
+        // 12 (Noon): Sun is straight up (90 degrees)
+        // 18 (Dusk): Sun is at horizon (0 or 180 degrees)
+        
+        float sunPitchDegrees = (progress * 360f) - 90f; 
+        _sun.RotationDegrees = new Vector3(sunPitchDegrees, -45f, 0f);
+        
+        // Moon is opposite of sun
+        float moonPitchDegrees = sunPitchDegrees + 180f;
+        _moon.RotationDegrees = new Vector3(moonPitchDegrees, -45f, 0f);
+
+        // Update Moon Phase Shader
+        if (_moonMaterial != null)
+        {
+            float phaseVal = 0.5f; // Full
+            switch (_currentMoonPhase)
+            {
+                case "New": phaseVal = 0.0f; break;
+                case "Waxing Crescent": phaseVal = 0.125f; break;
+                case "First Quarter": phaseVal = 0.25f; break;
+                case "Waxing Gibbous": phaseVal = 0.375f; break;
+                case "Full": phaseVal = 0.5f; break;
+                case "Waning Gibbous": phaseVal = 0.625f; break;
+                case "Last Quarter": phaseVal = 0.75f; break;
+                case "Waning Crescent": phaseVal = 0.875f; break;
+            }
+            _moonMaterial.SetShaderParameter("phase", phaseVal);
+        }
+
+        // Skybox Colors
+        Color dayTopColor = new Color(0.2f, 0.4f, 0.6f);
+        Color dayHorizonColor = new Color(0.6f, 0.7f, 0.8f);
+        Color nightTopColor = new Color(0.01f, 0.02f, 0.05f);
+        Color nightHorizonColor = new Color(0.05f, 0.1f, 0.15f);
+
+        ProceduralSkyMaterial skyMat = null;
+        if (_environment != null && _environment.Environment != null && _environment.Environment.Sky != null)
+        {
+            skyMat = _environment.Environment.Sky.SkyMaterial as ProceduralSkyMaterial;
+        }
+
+        // Lighting intensity
+        float dayDuration = _duskHour - _dawnHour;
+        float dayProgress = 0f;
+        
+        if (_currentWorldHour >= _dawnHour && _currentWorldHour <= _duskHour)
+        {
+            // Daytime
+            dayProgress = (_currentWorldHour - _dawnHour) / dayDuration;
+            
+            // Parabola: peaks at 1.0 at noon (midday), 0 at dawn/dusk
+            float sunIntensity = 1.0f - Mathf.Pow((dayProgress - 0.5f) * 2f, 2f);
+            sunIntensity = Mathf.Clamp(sunIntensity, 0f, 1f);
+            
+            _sun.LightEnergy = sunIntensity;
+            _moon.LightEnergy = 0f;
+            
+            // Adjust environment ambient/sky energy if it exists
+            if (_environment != null && _environment.Environment != null)
+            {
+                float bgEnergy = Mathf.Max(0.2f, sunIntensity);
+                float ambEnergy = Mathf.Max(0.1f, sunIntensity);
+                
+                if (_currentVisionStyle == "ultravision")
+                {
+                    bgEnergy = Mathf.Max(bgEnergy, 2.0f);
+                    ambEnergy = Mathf.Max(ambEnergy, 4.0f);
+                }
+                
+                _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
+                _environment.Environment.AmbientLightEnergy = ambEnergy;
+            }
+            
+            if (skyMat != null)
+            {
+                skyMat.SkyTopColor = nightTopColor.Lerp(dayTopColor, sunIntensity);
+                skyMat.SkyHorizonColor = nightHorizonColor.Lerp(dayHorizonColor, sunIntensity);
+            }
+        }
+        else
+        {
+            // Nighttime
+            _sun.LightEnergy = 0f;
+            
+            // Moon peaks at midnight
+            float nightProgress;
+            if (_currentWorldHour > _duskHour)
+                nightProgress = (_currentWorldHour - _duskHour) / (24f - _duskHour + _dawnHour);
+            else
+                nightProgress = (_currentWorldHour + (24f - _duskHour)) / (24f - _duskHour + _dawnHour);
+
+            float moonIntensity = 1.0f - Mathf.Pow((nightProgress - 0.5f) * 2f, 2f);
+            moonIntensity = Mathf.Clamp(moonIntensity, 0f, 1f);
+            
+            _moon.LightEnergy = moonIntensity * 0.3f; // Moon is max 30% as bright as sun
+            
+            if (_environment != null && _environment.Environment != null)
+            {
+                float bgEnergy = Mathf.Max(0.1f, moonIntensity * 0.3f);
+                float ambEnergy = Mathf.Max(0.05f, moonIntensity * 0.3f);
+                
+                if (_currentVisionStyle == "ultravision")
+                {
+                    bgEnergy = Mathf.Max(bgEnergy, 2.0f);
+                    ambEnergy = Mathf.Max(ambEnergy, 4.0f);
+                }
+                
+                _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
+                _environment.Environment.AmbientLightEnergy = ambEnergy;
+            }
+            
+            if (skyMat != null)
+            {
+                skyMat.SkyTopColor = nightTopColor;
+                skyMat.SkyHorizonColor = nightHorizonColor;
+            }
+        }
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_timeInitialized)
+        {
+            if (SmoothDayNightCycle)
+            {
+                // In EQEmu, 1 in-game hour passes every 90 seconds (72 minutes per real day).
+                // But we don't need to guess perfectly; we just linearly interpolate towards _targetWorldHour.
+                
+                // If we're behind, move towards target
+                float diff = _targetWorldHour - _currentWorldHour;
+                
+                // Handle midnight wrap-around (e.g., target is 0.1, current is 23.9)
+                if (diff < -12f) diff += 24f;
+                else if (diff > 12f) diff -= 24f;
+
+                if (Mathf.Abs(diff) > 0.01f)
+                {
+                    // Move 1 hour per second in real time to catch up if we're far behind, 
+                    // or just slowly drift if we're close. 
+                    // Normally server ticks every hour, so diff is 1.0. 
+                    // To make it smooth over the 90 real-seconds it takes for the server to tick an hour:
+                    // 1 hour / 90 seconds = 0.011 hours per second.
+                    float step = 0.012f * (float)delta;
+                    
+                    if (Mathf.Abs(diff) > 2.0f) 
+                        step = 2.0f * (float)delta; // Snap faster if way out of sync
+                        
+                    _currentWorldHour += Mathf.Sign(diff) * step;
+                    
+                    if (_currentWorldHour >= 24f) _currentWorldHour -= 24f;
+                    if (_currentWorldHour < 0f) _currentWorldHour += 24f;
+                }
+            }
+            else
+            {
+                // Discrete ticks
+                _currentWorldHour = _targetWorldHour;
+            }
+
+            ApplyTimeOfDayVisuals();
+        }
     }
 
     public override void _PhysicsProcess(double delta)
@@ -91,10 +416,11 @@ public partial class WorldManager : Node3D
 
         // --- WASD Movement & Turning ---
         float baseSpeed = 8f;
-        if (_isSneaking) baseSpeed = 4f;
+        if (_isCrouching) baseSpeed = 4f;
         else if (Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning) baseSpeed = 40f;
         
         float speed = baseSpeed;
+        if (_flyMode) speed *= 5f; // Admin fly mode gets 5x speed
         float gravity = 50f;
         Vector3 velocity = _playerCapsule.Velocity;
         bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
@@ -193,10 +519,10 @@ public partial class WorldManager : Node3D
         // Apply gravity & Jump (or fly mode)
         if (_flyMode)
         {
-            // Fly mode: Space = up, Ctrl = down, no gravity
+            // Fly mode: Space = up, C = down, no gravity
             velocity.Y = 0;
             if (Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = speed;
-            if (Input.IsPhysicalKeyPressed(Key.Ctrl)) velocity.Y = -speed;
+            if (Input.IsPhysicalKeyPressed(Key.C)) velocity.Y = -speed;
         }
         else if (!_playerCapsule.IsOnFloor())
         {
@@ -207,6 +533,19 @@ public partial class WorldManager : Node3D
             velocity.Y = 0;
             if (Input.IsPhysicalKeyPressed(Key.Space)) {
                 velocity.Y = 18.0f; // Jump force
+                // Jumping cancels crouch/sneak/hide
+                if (_isCrouching)
+                {
+                    _isCrouching = false;
+                    _isSneaking = false;
+                    _playerCapsule.SetSneakState(false, true);
+                    EmitSignal(SignalName.SneakToggled, false);
+                    if (_isHiding)
+                    {
+                        _isHiding = false;
+                        EmitSignal(SignalName.HideToggled, false);
+                    }
+                }
             }
         }
 
@@ -219,7 +558,8 @@ public partial class WorldManager : Node3D
             _playerCapsule.Velocity,
             _playerCapsule.IsOnFloor(),
             _playerInCombat,
-            isSprinting
+            isSprinting && !_isCrouching,
+            _isCrouching
         );
 
         // Sync position to server if moved > 0.1 units
@@ -250,6 +590,17 @@ public partial class WorldManager : Node3D
         }
         if (!Input.IsPhysicalKeyPressed(Key.F6)) _f6Held = false;
 
+        // F4: Admin Succor — teleport to zone safe point via server
+        if (Input.IsPhysicalKeyPressed(Key.F4) && !_f4Held)
+        {
+            _f4Held = true;
+            GD.Print("[WORLD] Admin Succor requested (F4)");
+            var client = GetNodeOrNull<GameClient>("/root/GameClient");
+            if (client != null)
+                client.SendRaw("{\"type\": \"SUCCOR\"}");
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F4)) _f4Held = false;
+
         // --- Targeting Keybinds (polled every physics frame) ---
         if (Input.IsActionJustPressed("target_self"))
             TargetSelf();
@@ -269,12 +620,30 @@ public partial class WorldManager : Node3D
     {
         if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo)
         {
-            // Toggle Sneak
+            // Toggle Crouch / Sneak
             if (keyEvent.Keycode == Key.Ctrl)
             {
-                _isSneaking = !_isSneaking;
+                _isCrouching = !_isCrouching;
+
+                // Tie into sneak
+                _isSneaking = _isCrouching;
                 _playerCapsule.SetSneakState(_isSneaking, true);
                 EmitSignal(SignalName.SneakToggled, _isSneaking);
+
+                // If entering crouch, also attempt Hide
+                if (_isCrouching)
+                {
+                    _isHiding = true;
+                    EmitSignal(SignalName.HideToggled, true);
+                }
+                else
+                {
+                    if (_isHiding)
+                    {
+                        _isHiding = false;
+                        EmitSignal(SignalName.HideToggled, false);
+                    }
+                }
             }
             // Toggle AutoRun
             if (keyEvent.Keycode == Key.Numlock)
@@ -339,6 +708,24 @@ public partial class WorldManager : Node3D
         GD.Print("[WORLD] Targeted self.");
     }
 
+    /// <summary>
+    /// Called by MainUI when the server rejects a sneak/hide attempt or breaks stealth.
+    /// Only clears the skill state flags — does NOT cancel the crouch animation.
+    /// Crouching is a visual/movement state and is independent of the sneak skill.
+    /// </summary>
+    public void CancelStealth(bool cancelSneak, bool cancelHide)
+    {
+        if (cancelSneak && _isSneaking)
+        {
+            _isSneaking = false;
+            // Don't touch _isCrouching — player stays crouched, just loses stealth benefit
+        }
+        if (cancelHide && _isHiding)
+        {
+            _isHiding = false;
+        }
+    }
+
     private void CycleTarget(string category, int direction)
     {
         List<EntityCapsule> candidates = new List<EntityCapsule>();
@@ -347,9 +734,9 @@ public partial class WorldManager : Node3D
         {
             if (kvp.Value is EntityCapsule ec && ec != _playerCapsule)
             {
-                if (category == "enemy" && (ec.EntityType == "enemy" || ec.EntityType == "mob"))
+                if (category == "enemy" && (ec.EntityType == "enemy" || ec.EntityType == "mob" || ec.EntityType == "mining_node"))
                     candidates.Add(ec);
-                else if (category == "friendly" && (ec.EntityType == "player" || ec.EntityType == "npc"))
+                else if (category == "friendly" && (ec.EntityType == "player" || ec.EntityType == "npc" || ec.EntityType == "pet"))
                     candidates.Add(ec);
             }
         }
@@ -392,6 +779,12 @@ public partial class WorldManager : Node3D
         }
     }
 
+    /// <summary>Clears the current target (called by ESC key).</summary>
+    public void ClearTarget()
+    {
+        SetTarget(null);
+    }
+
     private void UpdateCamera()
     {
         if (_playerCapsule == null || _cameraArm == null || _camera == null) return;
@@ -411,7 +804,7 @@ public partial class WorldManager : Node3D
     {
         foreach (var child in _spawnsContainer.GetChildren())
         {
-            if (child != _playerCapsule)
+            if (child != _playerCapsule && GodotObject.IsInstanceValid(child))
                 child.QueueFree();
         }
         _activeEntities.Clear();
@@ -425,7 +818,7 @@ public partial class WorldManager : Node3D
         _friendlyTargetIndex = -1;
     }
 
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0)
+    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "")
     {
         if (_activeEntities.ContainsKey(id)) return;
 
@@ -437,7 +830,10 @@ public partial class WorldManager : Node3D
         _activeEntities[id] = instance;
 
         try {
-            instance.Setup(name, type, appearanceJson, race, gender);
+            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson);
+            // Apply current vision effects
+            if (_currentVisionStyle == "infravision")
+                instance.SetInfravision(true);
         } catch (Exception ex) {
             GD.PrintErr($"[WORLD] Failed Setup on '{name}': {ex.Message}");
         }
@@ -446,7 +842,7 @@ public partial class WorldManager : Node3D
     public void SyncLiveMobs(System.Text.Json.JsonElement entitiesArray)
     {
         int count = entitiesArray.GetArrayLength();
-        GD.Print($"[WORLD] SyncLiveMobs called with {count} entities");
+        // Sync entities silently
 
         var existingIds = new HashSet<string>();
         foreach (var kvp in _activeEntities)
@@ -477,17 +873,22 @@ public partial class WorldManager : Node3D
             string appearance = ent.TryGetProperty("appearance", out var aProp) ? aProp.ToString() : "";
             int race = ent.TryGetProperty("race", out var rProp) ? rProp.GetInt32() : 1;
             int gender = ent.TryGetProperty("gender", out var gProp) ? gProp.GetInt32() : 0;
+            int face = ent.TryGetProperty("face", out var fProp) ? fProp.GetInt32() : 0;
             bool sneaking = ent.TryGetProperty("sneaking", out var sProp) && sProp.GetBoolean();
+            bool hidden = ent.TryGetProperty("hidden", out var hidProp) && hidProp.GetBoolean();
+            string equipVis = ent.TryGetProperty("equipVisuals", out var evProp) ? evProp.ToString() : "";
 
             incomingIds.Add(id);
 
             if (!existingIds.Contains(id))
             {
-                GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender}) at server coords: {x}, {y}, {z}");
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender);
+                // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
+                // Use the Godot-mapped coordinates (x, y, z) calculated above
+                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis);
             }
             
             UpdateEntitySneak(id, sneaking);
+            UpdateEntityHide(id, hidden);
         }
 
         // Remove entities that no longer exist on the server
@@ -508,6 +909,35 @@ public partial class WorldManager : Node3D
         }
     }
 
+    public void UpdateEntityHide(string id, bool hidden)
+    {
+        if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule ec)
+        {
+            ec.SetHideState(hidden, false);
+        }
+    }
+
+    /// <summary>Show or hide the player's torch/light source OmniLight3D.</summary>
+    public void SetPlayerLightSource(bool hasLight)
+    {
+        if (_playerCapsule != null)
+            _playerCapsule.SetLightSource(hasLight);
+    }
+
+    /// <summary>Show or hide the player's overhead name label.</summary>
+    public void SetPlayerNameVisible(bool visible)
+    {
+        if (_playerCapsule != null)
+            _playerCapsule.SetNameVisible(visible);
+    }
+
+    /// <summary>Update the player's 3D equipment visuals (weapons, armor textures).</summary>
+    public void UpdatePlayerEquipVisuals(string equipVisualsJson)
+    {
+        if (_playerCapsule != null)
+            _playerCapsule.UpdateEquipVisuals(equipVisualsJson);
+    }
+
     public void SpawnEntity(string id, string name, string type, string appearanceJson = "")
     {
         float radius = 8f + _spawnCounter * 4f;
@@ -523,18 +953,31 @@ public partial class WorldManager : Node3D
         {
             if (entity == _currentTarget)
                 _currentTarget = null;
-                
-            entity.QueueFree();
+
+            if (GodotObject.IsInstanceValid(entity))
+                entity.QueueFree();
             _activeEntities.Remove(id);
         }
     }
 
     public void RebuildZoneBoundaries(System.Text.Json.JsonElement mapSizeElement, System.Text.Json.JsonElement zoneLines, System.Text.Json.JsonElement centerOffsetElement)
     {
-        // Clear old boundaries
+        // Delete the static legacy CSG Floor if it exists at the root level
+        var rootFloor = GetNodeOrNull<Node3D>("Floor");
+        if (rootFloor != null)
+        {
+            rootFloor.QueueFree();
+        }
+
+        // Clear old boundaries surgically
         foreach (var child in _boundariesContainer.GetChildren())
         {
-            child.QueueFree();
+            string name = child.Name;
+            if (name == "VisualFloor" || name == "PhysicalFloor" || name == "Floor" || name.StartsWith("Wall_") || name.StartsWith("ZoneLine_"))
+            {
+                _boundariesContainer.RemoveChild(child);
+                child.QueueFree();
+            }
         }
 
         // Map dimensions
@@ -571,18 +1014,21 @@ public partial class WorldManager : Node3D
             csgFloor.QueueFree();
         }
         
-        // Build the dynamic visual green floor using true geometry
-        var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
-        var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
-        var grassMat = new StandardMaterial3D {
-            AlbedoColor = new Color(0.2f, 0.4f, 0.15f), // Grass Green
-            Roughness = 0.8f
-        };
-        boxMesh.Material = grassMat;
-        floorMeshInstance.Mesh = boxMesh;
-        // Positioned at the center of the coordinate span
-        floorMeshInstance.Position = new Vector3(offsetX, -0.5f, offsetZ); 
-        _boundariesContainer.AddChild(floorMeshInstance);
+        // Only build the fallback visual floor if there's NO GLB zone geometry loaded
+        bool hasGlbGeometry = _zoneGeometryContainer != null && _zoneGeometryContainer.GetChildCount() > 0;
+        if (!hasGlbGeometry)
+        {
+            var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
+            var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
+            var grassMat = new StandardMaterial3D {
+                AlbedoColor = new Color(0.2f, 0.4f, 0.15f), // Grass Green
+                Roughness = 0.8f
+            };
+            boxMesh.Material = grassMat;
+            floorMeshInstance.Mesh = boxMesh;
+            floorMeshInstance.Position = new Vector3(offsetX, -0.5f, offsetZ); 
+            _boundariesContainer.AddChild(floorMeshInstance);
+        }
         
         // Build instant mathematical Physics floor padded generously below walls
         var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
@@ -619,7 +1065,7 @@ public partial class WorldManager : Node3D
                 string targetZone = zl.TryGetProperty("target", out var tz) ? tz.GetString() : "unknown";
                 
                 // Check if this is a coordinate-based zone point (from DB) or edge-based (legacy)
-                bool hasCoords = zl.TryGetProperty("x", out var xProp) && xProp.GetSingle() != 0;
+                bool hasCoords = zl.TryGetProperty("x", out _);
                 
                 var triggerArea = new Area3D { Name = $"ZoneLine_{targetZone}" };
                 var col = new CollisionShape3D();
@@ -758,6 +1204,9 @@ public partial class WorldManager : Node3D
 
     public void LoadZoneMap(string zoneId)
     {
+        _currentZoneId = zoneId;
+        ApplyTimeOfDayVisuals(); // Instantly apply indoor/outdoor sky logic
+
         if (_zoneGeometryContainer == null)
         {
             _zoneGeometryContainer = new Node3D { Name = "ZoneGeometry" };
@@ -771,18 +1220,54 @@ public partial class WorldManager : Node3D
             }
         }
 
-        // --- Try GLB first (real 3D zone geometry) ---
+        // Clean up previous zone objects
+        if (_zoneObjectsContainer != null && GodotObject.IsInstanceValid(_zoneObjectsContainer))
+        {
+            _zoneObjectsContainer.QueueFree();
+            _zoneObjectsContainer = null;
+        }
+        _objectPlacer?.ClearCache();
+
+        var cache = EQAssetCache.Instance;
+
+        // --- Priority 1: Try bundled GLB (res://Data/Maps/) — known-working coordinate space ---
         string glbPath = $"res://Data/Maps/{zoneId}_raw.glb";
         if (Godot.FileAccess.FileExists(glbPath))
         {
-            GD.Print($"[WORLD] Found GLB zone model: {glbPath}");
+            GD.Print($"[WORLD] Found bundled GLB zone model: {glbPath}");
             if (LoadZoneGlb(zoneId, glbPath))
-                return; // Success — skip Brewall fallback
-            GD.PrintErr($"[WORLD] GLB load failed, falling back to Brewall lines...");
+            {
+                if (cache.HasZone(zoneId))
+                {
+                    PlaceZoneObjects(zoneId, cache.GetZonePath(zoneId), true);
+                }
+                PlayZoneMusic(zoneId);
+                return;
+            }
+            GD.PrintErr($"[WORLD] GLB load failed, trying Lantern cache...");
+        }
+
+        // --- Priority 2: Try extracted EQ asset cache (from player's EQ install) ---
+        if (cache.HasZone(zoneId))
+        {
+            string cachedGlb = cache.GetZoneGlbPath(zoneId);
+            if (cachedGlb != null)
+            {
+                GD.Print($"[WORLD] Loading zone from asset cache: {cachedGlb}");
+                if (LoadZoneGlbFromDisk(zoneId, cachedGlb))
+                {
+                    // Place zone objects (trees, buildings, torches, etc.)
+                    PlaceZoneObjects(zoneId, cache.GetZonePath(zoneId));
+                    // Play zone music
+                    PlayZoneMusic(zoneId);
+                    return;
+                }
+            }
         }
 
         // --- Fallback: Brewall line-based map ---
         LoadZoneBrewall(zoneId);
+        PlayZoneMusic(zoneId);
     }
 
     /// <summary>
@@ -858,6 +1343,115 @@ public partial class WorldManager : Node3D
     }
 
     /// <summary>
+    /// Loads a zone GLB from an absolute filesystem path (extracted from player's EQ install).
+    /// Uses GltfDocument.AppendFromFile for direct disk loading.
+    /// LanternExtractor GLBs are already in EQ coordinate space — no rotation needed.
+    /// </summary>
+    private bool LoadZoneGlbFromDisk(string zoneId, string absolutePath)
+    {
+        try
+        {
+            var gltfDoc = new GltfDocument();
+            var gltfState = new GltfState();
+
+            var err = gltfDoc.AppendFromFile(absolutePath, gltfState);
+            if (err != Error.Ok)
+            {
+                GD.PrintErr($"[WORLD] GLTF parse error for cached GLB: {err}");
+                return false;
+            }
+
+            Node scene = gltfDoc.GenerateScene(gltfState);
+            if (scene == null)
+            {
+                GD.PrintErr("[WORLD] GLTF generated null scene from cache");
+                return false;
+            }
+
+            // LanternExtractor GLB coordinate fix:
+            // Log the mesh's built-in transform so we can calibrate
+            GD.Print($"[LANTERN-DEBUG] Scene tree for {zoneId}:");
+            DebugPrintSceneTree(scene, 0);
+            bool firstMesh = true;
+            DebugLogMeshInfo(scene, ref firstMesh);
+
+            // Lantern bakes a mesh transform of scale=(-0.1,-0.1,-0.1) rot=(180,0,0)
+            // which maps local vertices (x,y,z) → (-0.1x, 0.1y, 0.1z).
+            // The bundled EQ Advanced Maps GLBs use world coords where:
+            //   world.X = -local.Z,  world.Y = local.Y,  world.Z = -local.X
+            // So the parent transform must map the mesh output to match.
+            // Parent basis: (u,v,w) → (-10w, 10v, 10u) compensates the 0.1 scale
+            // and swaps/negates X↔Z to match the bundled coordinate space.
+            var zoneRoot = new Node3D { Name = $"GLB_{zoneId}" };
+            zoneRoot.Transform = new Transform3D(
+                new Vector3(0, 0, 10),    // X basis: parent X comes from 10 * child Z
+                new Vector3(0, 10, 0),    // Y basis: parent Y comes from 10 * child Y
+                new Vector3(-10, 0, 0),   // Z basis: parent Z comes from -10 * child X
+                Vector3.Zero
+            );
+            zoneRoot.AddChild(scene);
+            _zoneGeometryContainer.AddChild(zoneRoot);
+
+            // Generate collision for walkable geometry
+            int meshCount = 0;
+            int collisionCount = 0;
+            GenerateCollisionRecursive(scene, ref meshCount, ref collisionCount);
+
+            // Calculate bounds for boundary walls
+            var aabb = CalculateWorldAabb(zoneRoot);
+            if (aabb.Size.Length() > 0)
+            {
+                float pad = 50f;
+                float mapWidth = aabb.Size.X + pad * 2;
+                float mapLength = aabb.Size.Z + pad * 2;
+                float centerX = aabb.Position.X + aabb.Size.X / 2f;
+                float centerZ = aabb.Position.Z + aabb.Size.Z / 2f;
+
+                GD.Print($"[WORLD] Cached GLB bounds: pos=({aabb.Position}), size=({aabb.Size})");
+                GD.Print($"[LANTERN-DEBUG] Cached GLB center=({centerX},{centerZ}), size=({mapWidth}x{mapLength})");
+                GD.Print($"[LANTERN-DEBUG] Compare to bundled: pos=((-1546.5625, -2.03125, -988.4063)), size=((2570.75, 268.6397, 2000.0477))");
+                RebuildBoundaryWallsOnly(centerX, centerZ, mapWidth, mapLength, aabb.Position.Y - 10f);
+            }
+
+            GD.Print($"[WORLD] Cached GLB loaded: {meshCount} meshes, {collisionCount} collision shapes for {zoneId}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[WORLD] Cached GLB load exception: {ex.Message}\n{ex.StackTrace}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Place zone objects (trees, buildings, torches, etc.) from extracted data.
+    /// </summary>
+    private void PlaceZoneObjects(string zoneId, string cachePath, bool isBundledMap = false)
+    {
+        _objectPlacer ??= new ZoneObjectPlacer();
+
+        if (_zoneGeometryContainer == null) return;
+
+        _zoneObjectsContainer = _objectPlacer.PlaceObjects(zoneId, cachePath, _zoneGeometryContainer, isBundledMap);
+        _objectPlacer.PlaceLights(zoneId, cachePath, _zoneGeometryContainer, isBundledMap);
+    }
+
+    /// <summary>
+    /// Start playing zone-appropriate background music.
+    /// </summary>
+    public void PlayZoneMusic(string zoneId)
+    {
+        if (_musicPlayer == null)
+        {
+            _musicPlayer = new ZoneMusicPlayer();
+            _musicPlayer.Name = "ZoneMusicPlayer";
+            AddChild(_musicPlayer);
+        }
+
+        _musicPlayer.PlayZoneMusic(zoneId);
+    }
+
+    /// <summary>
     /// Recursively walks the scene tree and creates trimesh (ConcavePolygon) collision
     /// for every MeshInstance3D found. This gives pixel-perfect collision matching the zone geometry.
     /// </summary>
@@ -905,6 +1499,58 @@ public partial class WorldManager : Node3D
         foreach (var child in node.GetChildren())
         {
             CalculateAabbRecursive(child, ref combined, ref first);
+        }
+    }
+
+    // ── Debug helpers for Lantern coordinate investigation ──────────────
+
+    private void DebugPrintSceneTree(Node node, int depth)
+    {
+        string indent = new string(' ', depth * 2);
+        string info = $"{indent}{node.GetType().Name}: '{node.Name}'";
+        if (node is Node3D n3d)
+        {
+            var t = n3d.Transform;
+            if (t != Transform3D.Identity)
+            {
+                info += $" pos=({n3d.Position}) rot=({n3d.RotationDegrees}) scale=({n3d.Scale})";
+            }
+        }
+        GD.Print($"[LANTERN-DEBUG] {info}");
+        // Only go 3 levels deep to avoid spam
+        if (depth < 3)
+        {
+            foreach (var child in node.GetChildren())
+            {
+                DebugPrintSceneTree(child, depth + 1);
+            }
+        }
+    }
+
+    private void DebugLogMeshInfo(Node node, ref bool first)
+    {
+        if (node is MeshInstance3D meshInst && meshInst.Mesh != null && first)
+        {
+            var localAabb = meshInst.Mesh.GetAabb();
+            GD.Print($"[LANTERN-DEBUG] First mesh '{meshInst.Name}' local AABB: pos=({localAabb.Position}), size=({localAabb.Size})");
+            GD.Print($"[LANTERN-DEBUG] First mesh transform: pos=({meshInst.Position}) rot=({meshInst.RotationDegrees}) scale=({meshInst.Scale})");
+            
+            // Try to read a few vertex positions from the first surface
+            if (meshInst.Mesh is ArrayMesh arrayMesh && arrayMesh.GetSurfaceCount() > 0)
+            {
+                var arrays = arrayMesh.SurfaceGetArrays(0);
+                var vertVariant = arrays[(int)Mesh.ArrayType.Vertex];
+                var verts = vertVariant.AsVector3Array();
+                if (verts != null && verts.Length > 0)
+                {
+                    GD.Print($"[LANTERN-DEBUG] First 3 vertices: v0=({verts[0]}), v1=({(verts.Length > 1 ? verts[1].ToString() : "n/a")}), v2=({(verts.Length > 2 ? verts[2].ToString() : "n/a")})");
+                }
+            }
+            first = false;
+        }
+        foreach (var child in node.GetChildren())
+        {
+            DebugLogMeshInfo(child, ref first);
         }
     }
 
@@ -1108,17 +1754,21 @@ public partial class WorldManager : Node3D
             }
         }
 
-        // Build the dynamic visual green floor
-        var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
-        var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
-        var grassMat = new StandardMaterial3D {
-            AlbedoColor = new Color(0.2f, 0.4f, 0.15f),
-            Roughness = 0.8f
-        };
-        boxMesh.Material = grassMat;
-        floorMeshInstance.Mesh = boxMesh;
-        floorMeshInstance.Position = new Vector3(centerX, -0.5f, centerZ);
-        _boundariesContainer.AddChild(floorMeshInstance);
+        // Only build the fallback visual floor if there's NO GLB zone geometry loaded
+        bool hasGlbGeometry = _zoneGeometryContainer != null && _zoneGeometryContainer.GetChildCount() > 0;
+        if (!hasGlbGeometry)
+        {
+            var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
+            var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
+            var grassMat = new StandardMaterial3D {
+                AlbedoColor = new Color(0.2f, 0.4f, 0.15f),
+                Roughness = 0.8f
+            };
+            boxMesh.Material = grassMat;
+            floorMeshInstance.Mesh = boxMesh;
+            floorMeshInstance.Position = new Vector3(centerX, -0.5f, centerZ);
+            _boundariesContainer.AddChild(floorMeshInstance);
+        }
         
         // Build physical floor with generous padding
         var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
@@ -1166,6 +1816,20 @@ public partial class WorldManager : Node3D
         }
     }
     
+    // Player appearance (set before spawning)
+    private int _playerRace = 1;
+    private int _playerGender = 0;
+    private int _playerFace = 0;
+    private string _playerEquipVisuals = "";
+
+    public void SetPlayerAppearance(int race, int gender, int face, string equipVisualsJson = "")
+    {
+        _playerRace = race;
+        _playerGender = gender;
+        _playerFace = face;
+        _playerEquipVisuals = equipVisualsJson;
+    }
+
     public void SpawnPlayer(float rawX, float rawY)
     {
         if (_playerCapsule != null) return;
@@ -1174,32 +1838,89 @@ public partial class WorldManager : Node3D
         float x = -rawX;
         float z = -rawY;
 
-        GD.Print($"[WORLD] Spawning Player at {x}, {z}");
+        GD.Print($"[WORLD] Spawning Player at {x}, {z} (race={_playerRace} gender={_playerGender} face={_playerFace})");
+
+        // Raycast downward from high above to find terrain surface
+        float spawnHeight = 2.0f; // Fallback
+        var spaceState = GetWorld3D()?.DirectSpaceState;
+        if (spaceState != null)
+        {
+            var rayFrom = new Vector3(x, 500f, z);
+            var rayTo = new Vector3(x, -500f, z);
+            var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
+            query.CollideWithBodies = true;
+            query.CollideWithAreas = false;
+            var result = spaceState.IntersectRay(query);
+            if (result.Count > 0)
+            {
+                Vector3 hitPos = (Vector3)result["position"];
+                spawnHeight = hitPos.Y + 10.0f; // Spawn well above terrain, gravity handles landing
+                // GD.Print($"[WORLD] Raycast terrain hit at Y={hitPos.Y:F1}, spawning at Y={spawnHeight:F1}");
+            }
+            else
+            {
+                GD.Print($"[WORLD] No terrain hit at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
+            }
+        }
+
         _playerCapsule = new EntityCapsule();
         _playerCapsule.Name = "Player";
-        _playerCapsule.Position = new Vector3(x, 2.0f, z);
+        _playerCapsule.Position = new Vector3(x, spawnHeight, z);
         _spawnsContainer.AddChild(_playerCapsule);
-        _playerCapsule.Setup("You", "player");
+        _playerCapsule.Setup("You", "player", "", _playerRace, _playerGender, _playerFace, _playerEquipVisuals);
         _playerCapsule.IsPlayerControlled = true;
+        _playerCapsule.SetNameVisible(false); // Hidden by default; toggled via Options panel
         _activeEntities["player_self"] = _playerCapsule;
     }
 
-    public void TeleportPlayer(float rawX, float rawY)
+    public void TeleportPlayer(float rawX, float rawY, float rawZ = 0f)
     {
         // Map EQ Coords to Godot Coords
         float x = -rawX;
         float z = -rawY;
+        float y = rawZ; // EQ Z (height) → Godot Y
 
         if (_playerCapsule == null)
         {
             SpawnPlayer(rawX, rawY);
         }
 
-        // Drop them from slightly higher to guarantee they hit the instant floor securely
-        float safeDropHeight = 3.0f;
-        _playerCapsule.GlobalPosition = new Vector3(x, safeDropHeight, z);
+        // Start with the target height from zone_points, with a small bump
+        float spawnHeight = (y != 0f) ? y + 2.0f : 3.0f;
+
+        // Raycast downward from well above the target position to find the actual terrain surface.
+        // This is critical for GLB-loaded zones where the mesh height may differ from DB target_z.
+        var spaceState = GetWorld3D()?.DirectSpaceState;
+        if (spaceState != null)
+        {
+            float rayStartY = spawnHeight + 500f; // Cast from high above
+            var rayFrom = new Vector3(x, rayStartY, z);
+            var rayTo = new Vector3(x, spawnHeight - 500f, z); // Cast far below too
+            var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
+            query.CollideWithBodies = true;
+            query.CollideWithAreas = false;
+            // Exclude the player capsule from the raycast
+            if (_playerCapsule != null)
+            {
+                query.Exclude = new Godot.Collections.Array<Rid> { _playerCapsule.GetRid() };
+            }
+
+            var result = spaceState.IntersectRay(query);
+            if (result.Count > 0)
+            {
+                Vector3 hitPos = (Vector3)result["position"];
+                spawnHeight = hitPos.Y + 10.0f; // Spawn well above terrain, gravity handles landing
+                // GD.Print($"[WORLD] Raycast terrain hit at Y={hitPos.Y:F1}, spawning at Y={spawnHeight:F1}");
+            }
+            else
+            {
+                GD.Print($"[WORLD] No terrain hit at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
+            }
+        }
+
+        _playerCapsule.GlobalPosition = new Vector3(x, spawnHeight, z);
         _playerCapsule.Velocity = Vector3.Zero;
-        _lastSentPos = new Vector3(x, safeDropHeight, z);
+        _lastSentPos = new Vector3(x, spawnHeight, z);
         EmitSignal(SignalName.PlayerMoved, x, z); // Force sync
 
         // Grant zone immunity so we don't instantly trigger a nearby zoneline
@@ -1266,4 +1987,43 @@ public partial class WorldManager : Node3D
         else
             _playerCapsule.Revive(); // resets _isSitting and returns to idle
     }
+
+    public void SetVisionStyle(string styleName)
+    {
+        _currentVisionStyle = styleName;
+        var vm = GetNodeOrNull<VisionManager>("VisionManager");
+        if (vm != null)
+        {
+            vm.SetVisionStyle(styleName);
+        }
+
+        // Apply heat signature to all entities if in infravision
+        bool isInfra = styleName == "infravision";
+        foreach (var entity in _activeEntities.Values)
+        {
+            if (entity is EntityCapsule ec)
+            {
+                ec.SetInfravision(isInfra);
+            }
+        }
+    }
+
+    public void SetPlayerCasting(bool casting)
+    {
+        if (_playerCapsule == null) return;
+        if (casting)
+            _playerCapsule.PlayAnimation("t04"); // casting animation
+        else
+            _playerCapsule.PlayAnimation("p01"); // return to idle
+    }
+
+    /// <summary>Play a named animation on the player capsule (for emotes like wave s03).</summary>
+    public void PlayPlayerAnimation(string animName)
+    {
+        if (_playerCapsule == null || string.IsNullOrEmpty(animName)) return;
+        // Use PlayEmote to set the emote timer, preventing idle from overriding
+        _playerCapsule.PlayEmote(animName);
+    }
 }
+
+

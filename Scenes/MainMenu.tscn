@@ -1,9 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://c3n4egrdcgrtu"]
 
-[ext_resource type="Script" path="res://Scripts/UI/MainMenu.cs" id="1_menu"]
+[ext_resource type="Script" uid="uid://d0wkl4qdji375" path="res://Scripts/UI/MainMenu.cs" id="1_menu"]
 
-
-[node name="MainMenu" type="Control"]
+[node name="MainMenu" type="Control" unique_id=2032109537]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -12,7 +11,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_menu")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=1913682823]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -21,7 +20,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.012, 0.012, 0.02, 1)
 
-[node name="TitlePanel" type="Control" parent="."]
+[node name="TitlePanel" type="Control" parent="." unique_id=1428698397]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -29,7 +28,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="Title" type="Label" parent="TitlePanel"]
+[node name="Title" type="Label" parent="TitlePanel" unique_id=893468433]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -43,11 +42,11 @@ theme_override_colors/font_color = Color(0.85, 0.7, 0.25, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 6
 theme_override_font_sizes/font_size = 48
-text = "IDLE EVERQUEST"
+text = "EVERQUEST.godot"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="Subtitle" type="Label" parent="TitlePanel"]
+[node name="Subtitle" type="Label" parent="TitlePanel" unique_id=1160613881]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -62,10 +61,7 @@ theme_override_font_sizes/font_size = 14
 text = "— The Realm of Norrath Awaits —"
 horizontal_alignment = 1
 
-
-
-
-[node name="Footer" type="Label" parent="."]
+[node name="Footer" type="Label" parent="." unique_id=787033106]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5

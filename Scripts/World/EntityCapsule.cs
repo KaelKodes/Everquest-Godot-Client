@@ -11,6 +11,13 @@ public partial class EntityCapsule : CharacterBody3D
     private MeshInstance3D _facingArrow;
     private AnimationPlayer _animPlayer;
     private string _currentAnim = "";
+    private readonly System.Collections.Generic.HashSet<string> _warnedAnims = new();
+
+    // Torch / Light Source
+    private OmniLight3D _torchLight;
+    private bool _hasLightSource = false;
+    private float _torchFlickerTimer = 0f;
+    private static readonly Random _flickerRng = new Random();
 
     public string EntityName { get; private set; } = "Entity";
     public string EntityType { get; private set; } = "enemy";
@@ -32,6 +39,20 @@ public partial class EntityCapsule : CharacterBody3D
             AddChild(col);
         }
 
+        // Separate Area3D for mouse click targeting — covers the visible model
+        if (GetNodeOrNull<Area3D>("ClickArea") == null) {
+            var clickArea = new Area3D { Name = "ClickArea" };
+            clickArea.InputRayPickable = true;
+            var clickCol = new CollisionShape3D {
+                Name = "ClickShape",
+                Shape = new CapsuleShape3D { Radius = 1.0f, Height = 3.0f },
+                Position = new Vector3(0, 1.2f, 0)
+            };
+            clickArea.AddChild(clickCol);
+            clickArea.InputEvent += OnInputEvent;
+            AddChild(clickArea);
+        }
+
         if (_nameLabel == null) {
             _nameLabel = new Label3D {
                 Name = "NameLabel",
@@ -39,7 +60,7 @@ public partial class EntityCapsule : CharacterBody3D
                 Text = "Entity",
                 FontSize = 24,
                 OutlineSize = 6,
-                Position = new Vector3(0, 2.3f, 0)
+                Position = new Vector3(0, 3.6f, 0)
             };
             AddChild(_nameLabel);
         }
@@ -81,8 +102,23 @@ public partial class EntityCapsule : CharacterBody3D
             AddChild(_facingArrow);
         }
         
-        // Listen for standard Godot 3D mouse pick clicks
-        this.InputEvent += OnInputEvent;
+        // Initialize Audio Players
+        if (GetNodeOrNull<AudioStreamPlayer3D>("VoicePlayer") == null)
+        {
+            var vp = new AudioStreamPlayer3D { Name = "VoicePlayer" };
+            vp.MaxDistance = 80.0f;
+            vp.UnitSize = 10.0f;
+            AddChild(vp);
+        }
+        if (GetNodeOrNull<AudioStreamPlayer3D>("SfxPlayer") == null)
+        {
+            var sp = new AudioStreamPlayer3D { Name = "SfxPlayer" };
+            sp.MaxDistance = 80.0f;
+            sp.UnitSize = 10.0f;
+            AddChild(sp);
+        }
+        
+        // Click targeting is handled by the ClickArea Area3D (see above)
     }
 
     private void OnInputEvent(Node camera, InputEvent @event, Vector3 position, Vector3 normal, long shapeIdx)
@@ -106,22 +142,52 @@ public partial class EntityCapsule : CharacterBody3D
     // Set to true for the player capsule — WorldManager handles its physics
     public bool IsPlayerControlled { get; set; } = false;
 
-    // Play a named animation if available, with cross-fade
+    // Play a named animation if available, with cross-fade.
+    // Falls back to alternative idle animations if the requested one is missing.
     public void PlayAnimation(string animName)
     {
         if (_animPlayer == null || _currentAnim == animName) return;
-        if (_animPlayer.HasAnimation(animName))
-        {
-            // Set loop mode: death/social/cast anims play once, movement loops
-            var anim = _animPlayer.GetAnimation(animName);
-            if (animName.StartsWith("d") || animName.StartsWith("s") || animName.StartsWith("t") || animName == "p02" || animName == "p05")
-                anim.LoopMode = Animation.LoopModeEnum.None;
-            else
-                anim.LoopMode = Animation.LoopModeEnum.Linear;
+        if (IsQueuedForDeletion()) return;
 
-            _animPlayer.Play(animName, 0.2); // 0.2s cross-fade
-            _currentAnim = animName;
+        string resolved = animName;
+        if (!_animPlayer.HasAnimation(resolved))
+        {
+            // Try fallback: for idle (p01), try p06, then any p-prefixed, then l09
+            resolved = null;
+            if (animName == "p01")
+            {
+                if (_animPlayer.HasAnimation("p06")) resolved = "p06";
+                else
+                {
+                    foreach (var a in _animPlayer.GetAnimationList())
+                    {
+                        if (a.ToString().StartsWith("p")) { resolved = a; break; }
+                    }
+                    if (resolved == null && _animPlayer.HasAnimation("l09")) resolved = "l09";
+                }
+            }
+
+            if (resolved == null)
+            {
+                // Only warn once per entity per animation to avoid log spam
+                if (_warnedAnims.Add(animName))
+                {
+                    var anims = _animPlayer.GetAnimationList();
+                    GD.Print($"[ANIM] Animation '{animName}' not found on {EntityName}. Available: {string.Join(", ", anims)}");
+                }
+                return;
+            }
         }
+
+        // Set loop mode: death/social/cast anims play once, movement loops
+        var anim = _animPlayer.GetAnimation(resolved);
+        if (resolved.StartsWith("d") || resolved.StartsWith("s") || resolved.StartsWith("t") || resolved == "p02" || resolved == "p05")
+            anim.LoopMode = Animation.LoopModeEnum.None;
+        else
+            anim.LoopMode = Animation.LoopModeEnum.Linear;
+
+        _animPlayer.Play(resolved, 0.2); // 0.2s cross-fade
+        _currentAnim = animName; // Track the *requested* name so we don't re-resolve every frame
     }
 
     // --- Animation state tracking ---
@@ -132,9 +198,9 @@ public partial class EntityCapsule : CharacterBody3D
     private double _airborneTime = 0;
 
     // Called by WorldManager to update player animation based on movement
-    public void UpdateAnimationFromVelocity(Vector3 velocity, bool isOnFloor = true, bool inCombat = false, bool isSprinting = false)
+    public void UpdateAnimationFromVelocity(Vector3 velocity, bool isOnFloor = true, bool inCombat = false, bool isSprinting = false, bool isCrouching = false)
     {
-        if (_animPlayer == null || _isDead) return;
+        if (_animPlayer == null || _isDead || IsQueuedForDeletion()) return;
 
         // If playing a timed emote/cast, let it finish
         if (_emoteTimer > 0) return;
@@ -150,23 +216,44 @@ public partial class EntityCapsule : CharacterBody3D
             _airborneTime += 0.016; // ~1 frame at 60fps
             if (_airborneTime > 1.0 && velocity.Y < -5f)
             {
-                // Been airborne > 1 second — real fall
                 PlayAnimation("l05"); // falling
             }
             else if (horizSpeed > 0.5f)
             {
-                PlayAnimation("l03"); // running jump (holds through arc)
+                PlayAnimation("l03"); // running jump
             }
             else
             {
-                PlayAnimation("l04"); // stationary jump (holds through arc)
+                PlayAnimation("l04"); // stationary jump
             }
             _animPlayer.SpeedScale = 1.0f;
         }
         else
         {
             _airborneTime = 0;
-            if (horizSpeed > 0.5f)
+            if (isCrouching && horizSpeed > 0.5f)
+            {
+                // Duck walking — same pattern as sprint (l02)
+                PlayAnimation("l06");
+                _animPlayer.SpeedScale = Mathf.Clamp(horizSpeed / 4.0f, 0.5f, 1.5f);
+            }
+            else if (isCrouching)
+            {
+                // Crouch idle — hold last frame of l08
+                if (_currentAnim != "l08_hold")
+                {
+                    if (_animPlayer.HasAnimation("l08"))
+                    {
+                        var anim = _animPlayer.GetAnimation("l08");
+                        anim.LoopMode = Animation.LoopModeEnum.None;
+                        _animPlayer.Play("l08");
+                        _animPlayer.Seek(anim.Length, true);
+                        _animPlayer.Pause();
+                        _currentAnim = "l08_hold";
+                    }
+                }
+            }
+            else if (horizSpeed > 0.5f)
             {
                 if (isSprinting)
                 {
@@ -198,6 +285,7 @@ public partial class EntityCapsule : CharacterBody3D
     {
         _isDead = true;
         PlayAnimation("d05"); // death
+        PlayVoice("die");
     }
 
     public void PlayDamage(bool heavy = false)
@@ -209,6 +297,7 @@ public partial class EntityCapsule : CharacterBody3D
             _animPlayer.Play(heavy ? "d02" : "d01", 0.1);
             _currentAnim = heavy ? "d02" : "d01";
         }
+        PlayVoice("hit");
     }
 
     public void PlaySit()
@@ -240,7 +329,11 @@ public partial class EntityCapsule : CharacterBody3D
             "dragonpunch" => "t09",
             _ => null
         };
-        if (animCode != null) PlayAnimation(animCode);
+        // If no named match, try using the emote string as a raw animation code
+        PlayAnimation(animCode ?? emote);
+        
+        // Emote sounds for combat/aggro
+        if (emote == "aggro" || emote == "attack") PlayVoice("atk");
     }
 
     public void PlayCast(int castType = 1)
@@ -255,6 +348,32 @@ public partial class EntityCapsule : CharacterBody3D
             _ => "t04"
         };
         PlayAnimation(animCode);
+        PlayVoice("spl"); // Use spell voice/shout if exists
+    }
+
+    public void PlayAttack(string attackType = "slash")
+    {
+        if (_isDead) return;
+        
+        string animCode;
+        switch (attackType.ToLower())
+        {
+            case "kick": animCode = "t07"; break;
+            case "bash": animCode = "t10"; break; // Bash/Shield Bash
+            case "pierce":
+            case "backstab": animCode = "c04"; break; // Pierce
+            case "2h": animCode = "c06"; break; // 2H Slash
+            case "blunt": animCode = "c07"; break; // 2H Blunt
+            case "h2h": animCode = "c03"; break; // Hand to hand
+            case "slash":
+            default: animCode = "c05"; break; // 1H Slash / Default Melee
+        }
+
+        // Just quick attack animation
+        PlayAnimation(animCode);
+        
+        // Attack sound (grunt)
+        PlayVoice("atk");
     }
 
     public void PlayInstrument(bool stringed = true)
@@ -271,8 +390,51 @@ public partial class EntityCapsule : CharacterBody3D
         PlayAnimation("p01"); // back to idle
     }
 
+    // --- Audio Triggers ---
+    private string _modelCode = "hum";
+
+    public void PlayVoice(string action)
+    {
+        var vp = GetNodeOrNull<AudioStreamPlayer3D>("VoicePlayer");
+        if (vp == null) return;
+
+        // Try race-specific first (e.g. "orc_die.wav" or "orc_hit.wav")
+        // If that fails, try 3-letter race code + action (e.g. "huf_die.wav" or "aam_hit.wav")
+        string[] attempts = {
+            $"{_modelCode}_{action}.wav",
+            $"{_modelCode.Substring(0, Math.Min(3, _modelCode.Length))}_{action}.wav",
+            $"{(EntityType == "player" ? "hum" : "orc")}_{action}.wav" // Fallback to human or orc
+        };
+
+        foreach (var file in attempts)
+        {
+            var stream = EQAssetCache.Instance.GetSound(file);
+            if (stream != null)
+            {
+                vp.Stream = stream;
+                vp.Play();
+                return;
+            }
+        }
+    }
+
+    public void PlaySfx(string soundName)
+    {
+        var sp = GetNodeOrNull<AudioStreamPlayer3D>("SfxPlayer");
+        if (sp == null) return;
+
+        var stream = EQAssetCache.Instance.GetSound(soundName);
+        if (stream != null)
+        {
+            sp.Stream = stream;
+            sp.Play();
+        }
+    }
+
     public override void _PhysicsProcess(double delta)
     {
+        if (IsQueuedForDeletion()) return;
+
         // Tick down emote timer
         if (_emoteTimer > 0)
         {
@@ -281,6 +443,17 @@ public partial class EntityCapsule : CharacterBody3D
             {
                 _emoteTimer = 0;
                 _currentAnim = ""; // force re-evaluation
+            }
+        }
+
+        // Torch flicker effect — subtle energy variation for realism
+        if (_torchLight != null && _hasLightSource)
+        {
+            _torchFlickerTimer += (float)delta;
+            if (_torchFlickerTimer > 0.08f) // flicker ~12 times per second
+            {
+                _torchFlickerTimer = 0f;
+                _torchLight.LightEnergy = 1.3f + (float)(_flickerRng.NextDouble() * 0.4 - 0.2);
             }
         }
 
@@ -411,7 +584,7 @@ public partial class EntityCapsule : CharacterBody3D
 
     private Node3D _characterModel;
 
-    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0)
+    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "")
     {
         // Setup nodes if Setup is called before _Ready
         if (_nameLabel == null || _mesh == null) _Ready();
@@ -435,6 +608,12 @@ public partial class EntityCapsule : CharacterBody3D
             case "npc":
                 nameColor = new Color(1.0f, 1.0f, 0.2f); // Yellow
                 break;
+            case "pet":
+                nameColor = new Color(0.2f, 1.0f, 0.2f); // Green — owned pet
+                break;
+            case "mining_node":
+                nameColor = new Color(0.85f, 0.65f, 0.3f); // Gold/brown for ore
+                break;
         }
 
         _nameLabel.Modulate = nameColor;
@@ -444,12 +623,74 @@ public partial class EntityCapsule : CharacterBody3D
             sam.Emission = nameColor;
         }
 
+        // Mining nodes get a rock mesh instead of a character model
+        if (type.ToLower() == "mining_node")
+        {
+            // Hide the default capsule and arrow
+            if (_mesh != null) _mesh.Visible = false;
+            if (_facingArrow != null) _facingArrow.Visible = false;
+
+            // Create a rocky boulder visual
+            var rockMesh = new MeshInstance3D();
+            var sphere = new SphereMesh();
+            sphere.Radius = 1.2f;
+            sphere.Height = 1.8f;
+            sphere.RadialSegments = 8;  // Low-poly for a rocky look
+            sphere.Rings = 4;
+
+            var rockMat = new StandardMaterial3D();
+            rockMat.AlbedoColor = new Color(0.45f, 0.40f, 0.35f); // Dark grey-brown rock
+            rockMat.Roughness = 0.95f;
+            rockMat.Metallic = 0.15f;
+            // Add subtle gold emission to hint at ore content
+            rockMat.Emission = new Color(0.4f, 0.3f, 0.1f);
+            rockMat.EmissionEnergyMultiplier = 0.15f;
+            sphere.Material = rockMat;
+
+            rockMesh.Mesh = sphere;
+            rockMesh.Position = new Vector3(0, -1.5f, 0); // Sit on the ground
+            AddChild(rockMesh);
+
+            // Reposition name label lower (rocks are shorter than characters)
+            if (_nameLabel != null)
+                _nameLabel.Position = new Vector3(0, 1.0f, 0);
+
+            // Resize click area for rock proportions
+            var clickArea = GetNodeOrNull<Area3D>("ClickArea");
+            if (clickArea != null)
+            {
+                var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
+                if (clickShape != null)
+                {
+                    clickShape.Position = new Vector3(0, -0.5f, 0);
+                    clickShape.Shape = new SphereShape3D { Radius = 1.5f };
+                }
+            }
+
+            return; // Don't try to load a character model for mining nodes
+        }
+
         // Try to load actual character model GLB
         bool modelLoaded = false;
         if (TryGetRaceModel(race, out var codes))
         {
             string modelCode = (gender == 1) ? codes.female : codes.male;
-            string modelPath = $"res://Data/Characters/{modelCode}.glb";
+            _modelCode = modelCode;
+            
+            // Try face variant first: {code}_face{N}.glb, then fall back to base
+            string modelPath;
+            if (face > 0)
+            {
+                string facePath = $"res://Data/Characters/{modelCode}_face{face}.glb";
+                if (ResourceLoader.Exists(facePath))
+                    modelPath = facePath;
+                else
+                    modelPath = $"res://Data/Characters/{modelCode}.glb";
+            }
+            else
+            {
+                modelPath = $"res://Data/Characters/{modelCode}.glb";
+            }
 
             if (ResourceLoader.Exists(modelPath))
             {
@@ -459,13 +700,36 @@ public partial class EntityCapsule : CharacterBody3D
                     if (scene != null)
                     {
                         _characterModel = scene.Instantiate<Node3D>();
-                        // Rotate +90° Y: EQ models face +X, Godot expects -Z forward
-                        _characterModel.RotationDegrees = new Vector3(0, 90f, 0);
+                        // Rotate model to face Godot's -Z forward
+                        // LanternExtractor: EQ models face +X, need +90° Y
+                        // EQSage exports (Iksar/Vah Shir): face opposite, need +270° Y
+                        bool isFaceVariant = modelPath.Contains("_face");
+                        float yRot = (race == 128 || race == 130) ? 270f : 90f;
+                        _characterModel.RotationDegrees = new Vector3(0, yRot, 0);
                         _characterModel.Position = new Vector3(0, 0, 0);
                         // Apply race-specific scale (human = 1.0 baseline)
                         float raceScale = GetRaceScale(race);
-                        _characterModel.Scale = new Vector3(raceScale, raceScale, raceScale);
-                        // Scale collision capsule to match model proportions
+
+                        // Auto-detect oversized EQSage face-variant models
+                        // EQSage exports use EQ's raw coordinate system (~50-100 units tall)
+                        // while LanternExtractor models are ~3-5 units tall.
+                        // Measure the model AABB and normalize to ~3.0 units height.
+                        float modelCorrection = 1.0f;
+                        if (isFaceVariant)
+                        {
+                            var aabb = GetCombinedAABB(_characterModel);
+                            float modelHeight = aabb.Size.Y;
+                            if (modelHeight > 10f)
+                            {
+                                // Normalize to ~3.0 Godot units tall (standard humanoid height)
+                                modelCorrection = 3.0f / modelHeight;
+                                GD.Print($"[MODEL] EQSage face-variant detected: {modelPath} height={modelHeight:F1}, correcting scale to {modelCorrection:F3}");
+                            }
+                        }
+
+                        float finalScale = raceScale * modelCorrection;
+                        _characterModel.Scale = new Vector3(finalScale, finalScale, finalScale);
+                        // Scale physics collision capsule to match model proportions
                         var col = GetNodeOrNull<CollisionShape3D>("Collision");
                         if (col != null) {
                             col.Position = new Vector3(0, -2.1f * raceScale, 0);
@@ -474,16 +738,42 @@ public partial class EntityCapsule : CharacterBody3D
                                 Height = 2.0f * raceScale
                             };
                         }
+                        // Scale click targeting area to match model
+                        var clickArea = GetNodeOrNull<Area3D>("ClickArea");
+                        if (clickArea != null) {
+                            var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
+                            if (clickShape != null) {
+                                clickShape.Position = new Vector3(0, 1.2f * raceScale, 0);
+                                clickShape.Shape = new CapsuleShape3D {
+                                    Radius = 1.0f * raceScale,
+                                    Height = 3.0f * raceScale
+                                };
+                            }
+                        }
                         AddChild(_characterModel);
                         // Hide placeholder visuals (capsule + facing arrow) — model has its own face
                         if (_mesh != null) _mesh.Visible = false;
                         if (_facingArrow != null) _facingArrow.Visible = false;
                         modelLoaded = true;
 
+                        // Reposition name label above the model head based on race scale
+                        if (_nameLabel != null)
+                            _nameLabel.Position = new Vector3(0, 3.8f * raceScale, 0);
+
+                        // Fix materials: EQ textures are painted sprites, not metallic.
+                        // Remove specular/metallic to prevent shiny sun/moon reflections.
+                        FixCharacterMaterials(_characterModel);
 
                         // Store AnimationPlayer reference and start idle
                         _animPlayer = FindAnimationPlayer(_characterModel);
                         PlayAnimation("p01");
+
+                        // Apply per-slot armor textures if provided
+                        if (!string.IsNullOrEmpty(equipVisualsJson))
+                        {
+                            ApplyArmorTextures(_characterModel, modelCode, equipVisualsJson);
+                            AttachWeapons(_characterModel, equipVisualsJson);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -530,6 +820,296 @@ public partial class EntityCapsule : CharacterBody3D
                     GD.PrintErr("Error parsing appearance JSON: " + ex.Message);
                 }
             }
+        }
+    }
+
+    // ═══════ Armor Texture Swap ═══════════════════════════════════════
+    // Body part codes matching EQ texture naming convention
+    private static readonly (string code, string jsonKey)[] ArmorSlots = {
+        ("he", "head"), ("ch", "chest"), ("ua", "arms"),
+        ("fa", "wrist"), ("hn", "hands"), ("lg", "legs"), ("ft", "feet")
+    };
+
+    private void ApplyArmorTextures(Node3D modelRoot, string raceCode, string armorMaterialsJson)
+    {
+        try
+        {
+            var mats = JsonDocument.Parse(armorMaterialsJson).RootElement;
+            int swapped = 0;
+
+            foreach (var (partCode, jsonKey) in ArmorSlots)
+            {
+                if (!mats.TryGetProperty(jsonKey, out var matVal)) continue;
+                int material = matVal.GetInt32();
+                if (material <= 0) continue; // 0 = cloth/base, skip
+
+                string matStr = material.ToString("D2");
+                ApplyPartTextures(modelRoot, raceCode, partCode, matStr, ref swapped);
+            }
+
+            // if (swapped > 0)
+            //    // GD.Print($"[MODEL] Applied {swapped} armor texture swaps for {raceCode}");
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MODEL] Armor texture parse error: {ex.Message}");
+        }
+    }
+
+    private void ApplyPartTextures(Node node, string raceCode, string partCode, string matStr, ref int swapped)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat is not StandardMaterial3D stdMat) continue;
+
+                string matName = stdMat.ResourceName;
+                if (string.IsNullOrEmpty(matName)) continue;
+
+                string partPrefix = $"{raceCode}{partCode}";
+                int idx = matName.IndexOf(partPrefix, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) continue;
+
+                // Extract piece number from material name (last 2 digits)
+                string afterPart = matName.Substring(idx + partPrefix.Length);
+                string digits = "";
+                foreach (char c in afterPart) { if (char.IsDigit(c)) digits += c; }
+                if (digits.Length < 2) continue;
+                string piece = digits.Substring(digits.Length - 2);
+
+                // Load armor texture: {race}{part}{material}{piece}.png
+                string texFile = $"{raceCode}{partCode}{matStr}{piece}.png";
+                string texPath = $"res://Data/Characters/Textures/{texFile}";
+
+                if (!ResourceLoader.Exists(texPath)) continue;
+
+                var armorTex = GD.Load<Texture2D>(texPath);
+                if (armorTex == null) continue;
+
+                var newMat = (StandardMaterial3D)stdMat.Duplicate();
+                newMat.AlbedoTexture = armorTex;
+                meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                swapped++;
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            ApplyPartTextures(child, raceCode, partCode, matStr, ref swapped);
+        }
+    }
+
+    // ═══════ Runtime Equipment Visual Update ══════════════════════════
+    /// <summary>
+    /// Update equipment visuals on an already-loaded character model.
+    /// Strips old weapon/shield attachments and re-applies from new JSON.
+    /// </summary>
+    public void UpdateEquipVisuals(string equipVisualsJson)
+    {
+        if (_characterModel == null) return;
+
+        // Remove existing weapon bone attachments (they are named "attach_r_point", "attach_l_point", "attach_shield_point")
+        var skeleton = FindSkeleton(_characterModel);
+        if (skeleton != null)
+        {
+            var toRemove = new System.Collections.Generic.List<Node>();
+            foreach (var child in skeleton.GetChildren())
+            {
+                if (child is BoneAttachment3D ba && ba.Name.ToString().StartsWith("attach_"))
+                    toRemove.Add(child);
+            }
+            foreach (var node in toRemove)
+            {
+                skeleton.RemoveChild(node);
+                node.QueueFree();
+            }
+        }
+
+        // Re-apply weapons if we have visual data
+        if (!string.IsNullOrEmpty(equipVisualsJson))
+        {
+            // Determine model code for armor textures
+            string modelCode = _characterModel.Name.ToString().Replace("equip_", "");
+            ApplyArmorTextures(_characterModel, modelCode, equipVisualsJson);
+            AttachWeapons(_characterModel, equipVisualsJson);
+        }
+    }
+
+    // ═══════ Weapon / Shield Attachment ═══════════════════════════════
+    private void AttachWeapons(Node3D modelRoot, string equipVisualsJson)
+    {
+        try
+        {
+            var vis = JsonDocument.Parse(equipVisualsJson).RootElement;
+
+            if (vis.TryGetProperty("primaryWeapon", out var pwProp))
+            {
+                string pw = pwProp.GetString();
+                if (!string.IsNullOrEmpty(pw))
+                    AttachEquipmentToPoint(modelRoot, pw, "r_point");
+            }
+
+            if (vis.TryGetProperty("secondaryWeapon", out var swProp))
+            {
+                string sw = swProp.GetString();
+                if (!string.IsNullOrEmpty(sw))
+                {
+                    // Try shield_point first, fall back to l_point
+                    if (!AttachEquipmentToPoint(modelRoot, sw, "shield_point"))
+                        AttachEquipmentToPoint(modelRoot, sw, "l_point");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MODEL] Weapon attach error: {ex.Message}");
+        }
+    }
+
+    private bool AttachEquipmentToPoint(Node3D modelRoot, string idfile, string boneName)
+    {
+        // In Godot, bones are NOT child nodes — they live in Skeleton3D.
+        // We must use BoneAttachment3D to parent objects to bones.
+        var skeleton = FindSkeleton(modelRoot);
+        if (skeleton == null)
+        {
+            GD.Print($"[MODEL] No Skeleton3D found for {idfile}");
+            return false;
+        }
+
+        int boneIdx = skeleton.FindBone(boneName);
+        if (boneIdx < 0)
+        {
+            // Some models (like Iksars from EQSage) have bones prefixed with "Clone of "
+            boneIdx = skeleton.FindBone("Clone of " + boneName);
+            if (boneIdx < 0)
+            {
+                GD.Print($"[MODEL] Bone '{boneName}' not found in skeleton for {idfile}");
+                return false;
+            }
+            // Update boneName so BoneAttachment3D binds correctly
+            boneName = "Clone of " + boneName;
+        }
+
+        // Load the equipment GLB
+        string glbPath = $"res://Data/Equipment/{idfile}.glb";
+        if (!ResourceLoader.Exists(glbPath))
+        {
+            GD.Print($"[MODEL] Equipment model not found: {glbPath}");
+            return false;
+        }
+
+        try
+        {
+            var scene = GD.Load<PackedScene>(glbPath);
+            if (scene == null) return false;
+
+            var weaponModel = scene.Instantiate<Node3D>();
+            weaponModel.Name = $"equip_{idfile}";
+
+            // Create BoneAttachment3D to parent weapon to the bone
+            var attachment = new BoneAttachment3D();
+            attachment.Name = $"attach_{boneName}";
+            attachment.BoneIdx = boneIdx;
+            attachment.BoneName = boneName;
+            skeleton.AddChild(attachment);
+            attachment.AddChild(weaponModel);
+
+            // Debug: log what's inside the weapon model and fix materials
+            FixWeaponMaterials(weaponModel, idfile);
+
+            // GD.Print($"[MODEL] Attached {idfile} to bone '{boneName}' (idx={boneIdx})");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MODEL] Failed to attach {idfile}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private Aabb GetCombinedAABB(Node root)
+    {
+        Aabb combined = new Aabb();
+        bool first = true;
+        
+        var meshes = new System.Collections.Generic.List<MeshInstance3D>();
+        FindAllMeshes(root, meshes);
+        
+        foreach (var mi in meshes)
+        {
+            if (mi.Mesh != null)
+            {
+                var aabb = mi.GetAabb();
+                // Transform AABB to the root's local space
+                // (Assuming meshes are direct or near-direct children with minimal complex transforms)
+                if (first)
+                {
+                    combined = aabb;
+                    first = false;
+                }
+                else
+                {
+                    combined = combined.Merge(aabb);
+                }
+            }
+        }
+        return combined;
+    }
+
+    private void FindAllMeshes(Node node, System.Collections.Generic.List<MeshInstance3D> results)
+    {
+        if (node is MeshInstance3D mi)
+            results.Add(mi);
+            
+        foreach (var child in node.GetChildren())
+            FindAllMeshes(child, results);
+    }
+
+    private static Skeleton3D FindSkeleton(Node root)
+    {
+        if (root is Skeleton3D skel) return skel;
+        foreach (var child in root.GetChildren())
+        {
+            var found = FindSkeleton(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void FixWeaponMaterials(Node node, string idfile, int depth = 0)
+    {
+        string indent = new string(' ', depth * 2);
+        // GD.Print($"[MODEL] {indent}{node.GetType().Name}: '{node.Name}'");
+
+        if (node is MeshInstance3D meshInst)
+        {
+            var mesh = meshInst.Mesh;
+            // GD.Print($"[MODEL] {indent}  Mesh: {(mesh != null ? mesh.GetType().Name : "NULL")} surfaces={mesh?.GetSurfaceCount()}");
+            meshInst.Visible = true;
+
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                // GD.Print($"[MODEL] {indent}  Surface {i}: {mat?.GetType().Name} name={mat?.ResourceName}");
+
+                if (mat is StandardMaterial3D stdMat)
+                {
+                    // Force visibility: no transparency, double-sided
+                    var fixedMat = (StandardMaterial3D)stdMat.Duplicate();
+                    fixedMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                    fixedMat.Transparency = BaseMaterial3D.TransparencyEnum.Disabled;
+                    meshInst.SetSurfaceOverrideMaterial(i, fixedMat);
+                    // GD.Print($"[MODEL] {indent}  Fixed material: cull=disabled, transparency=disabled, tex={fixedMat.AlbedoTexture?.ResourceName}");
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            FixWeaponMaterials(child, idfile, depth + 1);
         }
     }
 
@@ -590,6 +1170,35 @@ public partial class EntityCapsule : CharacterBody3D
         }
     }
 
+    public void SetHideState(bool isHidden, bool isLocalPlayer)
+    {
+        float alpha = 1.0f;
+        if (isHidden) {
+            // Local: ghostly transparent. Remote: invisible (unless See Invis).
+            alpha = isLocalPlayer ? 0.4f : 0.0f;
+        }
+
+        if (_mesh != null) {
+            ShaderMaterial mat = _mesh.MaterialOverride as ShaderMaterial;
+            if (mat != null) {
+                mat.SetShaderParameter("sneak_alpha", alpha);
+            }
+        }
+
+        if (_nameLabel != null) {
+            if (isHidden && !isLocalPlayer) {
+                _nameLabel.Visible = false;
+            } else {
+                _nameLabel.Visible = true;
+            }
+        }
+
+        // Also hide the entire node for remote hidden players
+        if (!isLocalPlayer) {
+            Visible = !isHidden;
+        }
+    }
+
     // Recursively find an AnimationPlayer in the node tree
     private static AnimationPlayer FindAnimationPlayer(Node root)
     {
@@ -600,5 +1209,111 @@ public partial class EntityCapsule : CharacterBody3D
             if (found != null) return found;
         }
         return null;
+    }
+
+    // ═══════ Light Source (Torch) ═════════════════════════════════════
+
+    /// <summary>
+    /// Show or hide a warm OmniLight3D on this entity to simulate an
+    /// equipped torch, lantern, or lightstone. Called by WorldManager
+    /// when the server vision payload includes hasLightSource.
+    /// </summary>
+    public void SetLightSource(bool hasLight)
+    {
+        _hasLightSource = hasLight;
+
+        if (hasLight)
+        {
+            if (_torchLight == null)
+            {
+                _torchLight = new OmniLight3D
+                {
+                    Name = "TorchLight",
+                    LightColor = new Color(1.0f, 0.8f, 0.45f),  // Warm torch orange
+                    LightEnergy = 1.3f,
+                    OmniRange = 12f,
+                    OmniAttenuation = 1.4f,
+                    ShadowEnabled = false,  // Performance: skip shadows for handheld lights
+                    Position = new Vector3(0.4f, 1.6f, -0.3f),  // Right-hand height, slightly forward
+                };
+                AddChild(_torchLight);
+            }
+            _torchLight.Visible = true;
+        }
+        else
+        {
+            if (_torchLight != null)
+                _torchLight.Visible = false;
+        }
+    }
+
+    /// <summary>Show or hide this entity's overhead name label.</summary>
+    public void SetNameVisible(bool visible)
+    {
+        if (_nameLabel != null)
+            _nameLabel.Visible = visible;
+    }
+
+    // ═══════ Character Material Fix ═══════════════════════════════════
+
+    /// <summary>
+    /// Recursively fix all StandardMaterial3D surfaces on a loaded GLB
+    /// character model so they don't reflect the sun/moon like chrome.
+    /// EQ's original textures are hand-painted diffuse sprites — they
+    /// should have zero metallic, low specular, and high roughness.
+    /// </summary>
+    private void FixCharacterMaterials(Node node)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat is StandardMaterial3D stdMat)
+                {
+                    var fixedMat = (StandardMaterial3D)stdMat.Duplicate();
+                    fixedMat.Metallic = 0.0f;
+                    fixedMat.MetallicSpecular = 0.1f;
+                    fixedMat.Roughness = 0.9f;
+                    meshInst.SetSurfaceOverrideMaterial(i, fixedMat);
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            FixCharacterMaterials(child);
+        }
+    }
+
+    public void SetInfravision(bool enabled)
+    {
+        if (_characterModel == null) return;
+        SetInfravisionRecursive(_characterModel, enabled);
+    }
+
+    private void SetInfravisionRecursive(Node node, bool enabled)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetSurfaceOverrideMaterial(i);
+                if (mat is StandardMaterial3D stdMat)
+                {
+                    stdMat.EmissionEnabled = enabled;
+                    if (enabled)
+                    {
+                        stdMat.Emission = new Color(0.8f, 0.1f, 0.05f); // Deep heat red
+                        stdMat.EmissionEnergyMultiplier = 0.6f;
+                    }
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            SetInfravisionRecursive(child, enabled);
+        }
     }
 }

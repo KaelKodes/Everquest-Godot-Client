@@ -18,6 +18,13 @@ public partial class MainMenu : Control
     private Button _loginButton;
     private Button _createAccountButton;
     private Label _loginStatusLabel;
+    private CheckBox _rememberCheckbox;
+    private LineEdit _serverAddressInput; // Removed from UI, kept as internal ref
+    private string _currentServerName = "ALPHA";
+    private static readonly Dictionary<string, string> ServerConfigs = new() {
+        { "ALPHA", "ws://localhost:3005" }
+    };
+    private string _pendingAction = null;
 
     // ── Character Select Panel Nodes ──────────────────────────────
     private VBoxContainer _charListContainer;
@@ -54,16 +61,44 @@ public partial class MainMenu : Control
     private int[] _allocStats = new int[7];  // player-allocated bonus points
     private int _totalPool = 0;              // total distributable points
 
+    // Appearance customization
+    private int _selectedGender = 0;         // 0=Male, 1=Female
+    private int _selectedFace = 0;           // Face index (0-based)
+    private int _faceCountMale = 1;          // Faces available for male
+    private int _faceCountFemale = 1;        // Faces available for female
+    private Button _genderMaleBtn, _genderFemaleBtn;
+    private Button _facePrevBtn, _faceNextBtn;
+    private Label _faceLabel;
+
+    // Armor material preview
+    private int _selectedArmorMaterial = 0;
+    private Button _armorPrevBtn, _armorNextBtn;
+    private Label _armorLabel;
+    private static readonly string[] ArmorMaterialNames = { "Cloth", "Leather", "Chain", "Plate" };
+
+    // 3D Model Preview
+    private SubViewportContainer _previewContainer;
+    private SubViewport _previewViewport;
+    private Node3D _previewRoot;
+    private Node3D _previewModel;
+    private Camera3D _previewCamera;
+    private float _previewRotation = 0f;
+    private float _previewZoom = 12.0f;
+    private float _previewCamHeight = 1.0f;
+    private float _previewLookAtY = 0.7f;
+    private bool _previewAutoRotate = true;
+    private CheckBox _rotateCheckbox;
+
     // Networking
     private bool _waitingForLogin = false;
 
-    // Race data — all 15 classic EQ races
+    // Race data — 13 playable EQ races (Vah Shir & Froglok disabled: no animation support yet)
     private static readonly string[] RaceNames = {
         "Human", "Barbarian", "Erudite", "Wood Elf", "High Elf",
         "Dark Elf", "Half Elf", "Dwarf", "Troll", "Ogre",
-        "Halfling", "Gnome", "Iksar", "Vah Shir", "Froglok"
+        "Halfling", "Gnome", "Iksar"
     };
-    private static readonly int[] RaceIds = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 128, 130, 330 };
+    private static readonly int[] RaceIds = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 128 };
 
     // All 16 classes (display names → keys)
     private static readonly Dictionary<int, string> ClassDisplayNames = new() {
@@ -111,6 +146,17 @@ public partial class MainMenu : Control
     // Stat labels for iteration
     private static readonly string[] StatNames = { "STR", "STA", "AGI", "DEX", "WIS", "INT", "CHA" };
 
+    // Stat descriptions shown when clicking a stat name (sourced from P99 wiki + Bonzz)
+    private static readonly Dictionary<int, string> StatDescriptions = new() {
+        {0, "[color=#dd8833]STRENGTH (STR)[/color]\n\nAffects: Attack Power, Weight Limit, Bow Damage, Shield AC\nHard Cap: 255\n\nStrength determines how much you can carry and influences maximum and average melee and bow damage. It also improves the AC bonus granted while using a shield. A valuable stat for melee and tank characters.\n\n[color=#888888]• Increases max and average melee hit\n• Determines carry weight capacity\n• Improves shield AC bonus\n• Influences offensive skill learning speed\n• Overweight = encumbered (snared)[/color]"},
+        {1, "[color=#dd8833]STAMINA (STA)[/color]\n\nAffects: Hit Points, HP Regen, Endurance, Breath\nHard Cap: 255\n\nStamina directly affects how many hit points you have and your HP regeneration rate. Tanks (Warriors, Shadow Knights, Paladins) gain the most HP per point. HP per STA scales with level.\n\n[color=#888888]• Primary HP stat — essential for tanks\n• Increases HP regeneration\n• Minor HP benefit for non-tank classes\n• Affects breath duration underwater\n• Rule of thumb: 1 AC ≈ 6 HP[/color]"},
+        {2, "[color=#dd8833]AGILITY (AGI)[/color]\n\nAffects: Avoidance AC, Dodge, Defense, Endurance, Fall Damage\nHard Cap: 255\n\nAgility influences your ability to avoid being hit and reduces falling damage. Below 75 AGI, you take a massive AC penalty. Also increases your Endurance pool and regen.\n\n[color=#888888]• Critical threshold at 75 AGI\n• Below 75: huge AC penalty (~45 AC lost)\n• Affects Dodge/Defense/Parry skill rates\n• Reduces falling damage\n• Below 25% HP, AGI takes a penalty[/color]"},
+        {3, "[color=#dd8833]DEXTERITY (DEX)[/color]\n\nAffects: Procs, Crits, Riposte, Block, Parry, Ranged Damage\nHard Cap: 255\n\nDexterity determines how quickly you learn weapon skills, how often weapons proc, and improves your chance to riposte, block, and parry attacks. Also increases ranged attack damage.\n\n[color=#888888]• Increases weapon proc rate\n• Improves riposte/block/parry chance\n• Warrior/Ranger crit chance\n• Increases ranged (bow/throwing) damage\n• Bard song fizzle reduction[/color]"},
+        {4, "[color=#dd8833]WISDOM (WIS)[/color]\n\nAffects: Mana pool for Priests, Mana Regen\nHard Cap: 255 | Soft Cap: 200\n\nWisdom raises maximum mana, mana regeneration, and magic skill-up speed for priest classes: Cleric, Druid, Shaman, Paladin, and Ranger.\n\n[color=#888888]• Primary mana stat for priest classes\n• Cleric, Druid, Shaman, Paladin, Ranger\n• Diminishing returns above 200\n• Also affects mana regen rate\n• Affects skill-up rate if > INT[/color]"},
+        {5, "[color=#dd8833]INTELLIGENCE (INT)[/color]\n\nAffects: Mana pool for Casters, Mana Regen\nHard Cap: 255 | Soft Cap: 200\n\nIntelligence raises maximum mana, mana regeneration, and spell skill-up speed for caster classes: Necromancer, Magician, Enchanter, Wizard, Shadow Knight, and Bard.\n\n[color=#888888]• Primary mana stat for caster classes\n• Necro, Mage, Enchanter, Wizard, SK, Bard\n• Diminishing returns above 200\n• Also affects mana regen rate\n• Affects skill-up rate if > WIS[/color]"},
+        {6, "[color=#dd8833]CHARISMA (CHA)[/color]\n\nAffects: Charm duration, Vendor prices, Lull, Memory Blur\nHard Cap: 255 | Soft Cap: 200\n\nCharisma affects merchant buy/sell prices (caps around 104-125), Charm spell duration for Enchanters and Bards, Lull aggro checks, and memory blur success. Does NOT affect Druid/Necro charm.\n\n[color=#888888]• Better vendor prices (caps ~104-125 CHA)\n• Longer Charm duration (ENC/BRD only)\n• Improved Lull success rate\n• Better memory blur chance\n• 5% chance per tick for charm to break regardless[/color]"},
+    };
+
     // ═══════════════════════════════════════════════════════════════
     //  READY
     // ═══════════════════════════════════════════════════════════════
@@ -134,15 +180,6 @@ public partial class MainMenu : Control
         _charSelectPanel.Hide();
         _loginPanel.Hide();
 
-        // ── Start server & connect ──
-        _loginStatusLabel.Text = "Starting local server...";
-
-        GameState.StartServer();
-        await ToSignal(GetTree().CreateTimer(0.5f), "timeout");
-
-        _loginStatusLabel.Text = "Connecting...";
-        GameClient.Instance.ConnectToServer();
-        
         // Listen to signals
         GameClient.Instance.Connected += OnClientConnected;
         GameClient.Instance.Disconnected += OnClientDisconnected;
@@ -152,6 +189,30 @@ public partial class MainMenu : Control
         GameClient.Instance.CharCreateDataReceived += OnCharCreateDataReceived;
         GameClient.Instance.LoginOkReceived += OnLoginOkReceived;
         GameClient.Instance.MessageReceived += OnClientMessageReceived;
+
+        // Check if we're returning from camp (already connected + authenticated)
+        if (GameClient.Instance.IsSocketConnected && !string.IsNullOrEmpty(GameState.AccountName))
+        {
+            GD.Print("[MENU] Returning from camp — re-requesting character list.");
+            // Re-login with saved credentials to refresh character list
+            LoadSavedCredentials();
+            string username = _usernameInput.Text.Trim();
+            string password = _passwordInput.Text;
+            if (username.Length >= 2 && password.Length >= 4)
+            {
+                GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
+            }
+            else
+            {
+                // Fallback: show login screen
+                ShowPanel("login");
+            }
+            return;
+        }
+
+        // ── Fresh start: wait for user login ──
+        _loginStatusLabel.Text = "Enter credentials and server address.";
+        ShowPanel("login");
     }
 
     public override void _ExitTree()
@@ -232,6 +293,28 @@ public partial class MainMenu : Control
         _passwordInput.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_passwordInput);
 
+        // Remember Me checkbox
+        _rememberCheckbox = new CheckBox();
+        _rememberCheckbox.Text = "Remember Me";
+        _rememberCheckbox.AddThemeFontSizeOverride("font_size", 13);
+        _rememberCheckbox.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        vbox.AddChild(_rememberCheckbox);
+
+        // Server Status Header (Replacing Address Input)
+        var serverStatusHeader = new RichTextLabel();
+        serverStatusHeader.BbcodeEnabled = true;
+        serverStatusHeader.FitContent = true;
+        serverStatusHeader.ScrollActive = false;
+        serverStatusHeader.Text = $"[center]Server: [color=#ddaa22]{_currentServerName}[/color][/center]";
+        serverStatusHeader.AddThemeFontSizeOverride("normal_font_size", 14);
+        serverStatusHeader.AddThemeColorOverride("default_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        vbox.AddChild(serverStatusHeader);
+
+        // Internal address ref for networking logic
+        _serverAddressInput = new LineEdit();
+        _serverAddressInput.Visible = false;
+        _serverAddressInput.Text = ServerConfigs[_currentServerName];
+
         // Login button
         _loginButton = new Button();
         _loginButton.Text = "Login";
@@ -248,6 +331,14 @@ public partial class MainMenu : Control
         _createAccountButton.Pressed += OnCreateAccountPressed;
         vbox.AddChild(_createAccountButton);
 
+        // ── EQ Directory button ──
+        var eqDirButton = new Button();
+        eqDirButton.CustomMinimumSize = new Vector2(0, 32);
+        eqDirButton.AddThemeFontSizeOverride("font_size", 12);
+        UpdateEQButtonText(eqDirButton);
+        eqDirButton.Pressed += () => ShowEQSetupDialog(eqDirButton);
+        vbox.AddChild(eqDirButton);
+
         // Status
         _loginStatusLabel = new Label();
         _loginStatusLabel.Text = "";
@@ -258,6 +349,120 @@ public partial class MainMenu : Control
 
         (_loginPanel as PanelContainer).AddChild(vbox);
         AddChild(_loginPanel);
+
+        // Load saved credentials
+        LoadSavedCredentials();
+    }
+
+    // ── EQ Directory helpers ──
+
+    private void UpdateEQButtonText(Button btn)
+    {
+        if (EQAssetConfig.Instance.IsConfigured)
+        {
+            btn.Text = "⚙ EQ Linked ✓";
+            btn.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
+        }
+        else
+        {
+            btn.Text = "⚙ Link EQ Directory";
+            btn.AddThemeColorOverride("font_color", new Color(0.9f, 0.7f, 0.2f, 1f));
+        }
+    }
+
+    private void ShowEQSetupDialog(Button parentBtn)
+    {
+        var dialog = new AcceptDialog();
+        dialog.Title = "EverQuest Directory";
+        dialog.Size = new Vector2I(520, 280);
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 10);
+
+        // Status label
+        var statusLabel = new Label();
+        statusLabel.AddThemeFontSizeOverride("font_size", 13);
+        statusLabel.AutowrapMode = TextServer.AutowrapMode.Word;
+        if (EQAssetConfig.Instance.IsConfigured)
+        {
+            statusLabel.Text = $"✓ EQ Linked: {EQAssetConfig.Instance.EQPath}";
+            statusLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
+        }
+        else
+        {
+            statusLabel.Text = "Link your EverQuest installation to enable 3D zones, objects, and music.\nYou can download EQ free from Steam or daybreakgames.com.";
+            statusLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.75f, 0.5f, 1f));
+        }
+        vbox.AddChild(statusLabel);
+
+        // Path input
+        var pathRow = new HBoxContainer();
+        pathRow.AddThemeConstantOverride("separation", 6);
+        var pathInput = new LineEdit();
+        pathInput.PlaceholderText = "C:\\EverQuest or D:\\EQ...";
+        pathInput.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        pathInput.Text = EQAssetConfig.Instance.EQPath;
+        pathInput.AddThemeFontSizeOverride("font_size", 13);
+        pathRow.AddChild(pathInput);
+        vbox.AddChild(pathRow);
+
+        // Result label (for validation feedback)
+        var resultLabel = new Label();
+        resultLabel.AddThemeFontSizeOverride("font_size", 12);
+        vbox.AddChild(resultLabel);
+
+        // Button row
+        var btnRow = new HBoxContainer();
+        btnRow.AddThemeConstantOverride("separation", 8);
+
+        var linkBtn = new Button();
+        linkBtn.Text = "Link";
+        linkBtn.CustomMinimumSize = new Vector2(80, 32);
+        linkBtn.AddThemeFontSizeOverride("font_size", 14);
+        linkBtn.Pressed += () =>
+        {
+            string path = pathInput.Text.Trim();
+            if (EQAssetConfig.Instance.SetPath(path))
+            {
+                resultLabel.Text = "✓ EQ directory linked successfully!";
+                resultLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
+                statusLabel.Text = $"✓ EQ Linked: {path}";
+                statusLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
+                UpdateEQButtonText(parentBtn);
+
+                // Show asset summary
+                var (zones, chars, music) = EQAssetConfig.Instance.GetAssetSummary();
+                resultLabel.Text += $"\nFound: {zones} zones, {chars} character sets, {music} music files";
+            }
+            else
+            {
+                resultLabel.Text = "✗ Invalid EQ directory. Missing required files (eqgame.exe, gfaydark.s3d, global_chr.s3d)";
+                resultLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.3f, 0.3f, 1f));
+            }
+        };
+        btnRow.AddChild(linkBtn);
+
+        var unlinkBtn = new Button();
+        unlinkBtn.Text = "Unlink";
+        unlinkBtn.CustomMinimumSize = new Vector2(80, 32);
+        unlinkBtn.AddThemeFontSizeOverride("font_size", 14);
+        unlinkBtn.AddThemeColorOverride("font_color", new Color(0.8f, 0.3f, 0.3f, 1f));
+        unlinkBtn.Pressed += () =>
+        {
+            EQAssetConfig.Instance.Unlink();
+            pathInput.Text = "";
+            resultLabel.Text = "EQ directory unlinked.";
+            resultLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f, 1f));
+            statusLabel.Text = "No EQ installation linked.";
+            statusLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.75f, 0.5f, 1f));
+            UpdateEQButtonText(parentBtn);
+        };
+        btnRow.AddChild(unlinkBtn);
+
+        vbox.AddChild(btnRow);
+        dialog.AddChild(vbox);
+        AddChild(dialog);
+        dialog.PopupCentered();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -360,10 +565,10 @@ public partial class MainMenu : Control
         (_createPanel as PanelContainer).AddThemeStyleboxOverride("panel", style);
 
         _createPanel.SetAnchorsPreset(LayoutPreset.Center);
-        _createPanel.OffsetLeft = -310;
-        _createPanel.OffsetRight = 310;
-        _createPanel.OffsetTop = -300;
-        _createPanel.OffsetBottom = 300;
+        _createPanel.OffsetLeft = -480;
+        _createPanel.OffsetRight = 480;
+        _createPanel.OffsetTop = -340;
+        _createPanel.OffsetBottom = 340;
 
         var mainVbox = new VBoxContainer();
         mainVbox.AddThemeConstantOverride("separation", 8);
@@ -386,16 +591,149 @@ public partial class MainMenu : Control
         header.AddThemeColorOverride("font_color", new Color(0.85f, 0.7f, 0.25f, 1f));
         mainVbox.AddChild(header);
 
-        // ── Two-Column Layout: Left = Selections, Right = Description ──
+        // ── Three-Column Layout: Left = Preview, Center = Selections, Right = Stats/Desc ──
         var hSplit = new HBoxContainer();
-        hSplit.AddThemeConstantOverride("separation", 16);
+        hSplit.AddThemeConstantOverride("separation", 12);
         hSplit.SizeFlagsVertical = SizeFlags.ExpandFill;
 
-        // LEFT COLUMN
+        // ════════ LEFT COLUMN: 3D Preview + Gender/Face ════════
+        var previewCol = new VBoxContainer();
+        previewCol.AddThemeConstantOverride("separation", 6);
+        previewCol.CustomMinimumSize = new Vector2(240, 0);
+
+        // 3D Model Preview using SubViewport
+        _previewContainer = new SubViewportContainer();
+        _previewContainer.CustomMinimumSize = new Vector2(230, 320);
+        _previewContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _previewContainer.Stretch = true;
+        var previewStyle = new StyleBoxFlat();
+        previewStyle.BgColor = new Color(0.02f, 0.02f, 0.04f, 1f);
+        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 1;
+        previewStyle.BorderColor = new Color(0.5f, 0.4f, 0.15f, 0.6f);
+        previewStyle.CornerRadiusTopLeft = previewStyle.CornerRadiusTopRight = previewStyle.CornerRadiusBottomLeft = previewStyle.CornerRadiusBottomRight = 4;
+
+        _previewViewport = new SubViewport();
+        _previewViewport.Size = new Vector2I(230, 320);
+        _previewViewport.TransparentBg = true;
+        _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+        _previewViewport.OwnWorld3D = true;
+
+        // Camera
+        _previewCamera = new Camera3D();
+        _previewCamera.Position = new Vector3(0, 1.0f, 12.0f);
+        _previewCamera.RotationDegrees = new Vector3(-4f, 0, 0); // Slight downward angle
+        _previewCamera.Fov = 30f;
+        _previewViewport.AddChild(_previewCamera);
+
+        // Lighting
+        var previewLight = new DirectionalLight3D();
+        previewLight.RotationDegrees = new Vector3(-30, -45, 0);
+        previewLight.LightEnergy = 1.2f;
+        _previewViewport.AddChild(previewLight);
+        var fillLight = new DirectionalLight3D();
+        fillLight.RotationDegrees = new Vector3(-15, 135, 0);
+        fillLight.LightEnergy = 0.4f;
+        _previewViewport.AddChild(fillLight);
+
+        // Model root (spins)
+        _previewRoot = new Node3D();
+        _previewRoot.Name = "PreviewRoot";
+        _previewViewport.AddChild(_previewRoot);
+
+        _previewContainer.AddChild(_previewViewport);
+        previewCol.AddChild(_previewContainer);
+
+        // Gender toggle
+        var genderRow = new HBoxContainer();
+        genderRow.AddThemeConstantOverride("separation", 4);
+        var genderLabel = new Label();
+        genderLabel.Text = "Gender";
+        genderLabel.CustomMinimumSize = new Vector2(50, 0);
+        genderLabel.AddThemeFontSizeOverride("font_size", 12);
+        genderLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        genderRow.AddChild(genderLabel);
+        _genderMaleBtn = new Button { Text = "Male", ToggleMode = true, ButtonPressed = true };
+        _genderMaleBtn.CustomMinimumSize = new Vector2(70, 28);
+        _genderMaleBtn.AddThemeFontSizeOverride("font_size", 12);
+        _genderMaleBtn.Pressed += () => { _selectedGender = 0; _genderMaleBtn.ButtonPressed = true; _genderFemaleBtn.ButtonPressed = false; _selectedFace = 0; UpdatePreviewModel(); };
+        genderRow.AddChild(_genderMaleBtn);
+        _genderFemaleBtn = new Button { Text = "Female", ToggleMode = true };
+        _genderFemaleBtn.CustomMinimumSize = new Vector2(70, 28);
+        _genderFemaleBtn.AddThemeFontSizeOverride("font_size", 12);
+        _genderFemaleBtn.Pressed += () => { _selectedGender = 1; _genderFemaleBtn.ButtonPressed = true; _genderMaleBtn.ButtonPressed = false; _selectedFace = 0; UpdatePreviewModel(); };
+        genderRow.AddChild(_genderFemaleBtn);
+        previewCol.AddChild(genderRow);
+
+        // Face selector
+        var faceRow = new HBoxContainer();
+        faceRow.AddThemeConstantOverride("separation", 4);
+        var faceLabelTitle = new Label();
+        faceLabelTitle.Text = "Face";
+        faceLabelTitle.CustomMinimumSize = new Vector2(50, 0);
+        faceLabelTitle.AddThemeFontSizeOverride("font_size", 12);
+        faceLabelTitle.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        faceRow.AddChild(faceLabelTitle);
+        _facePrevBtn = new Button { Text = "◀" };
+        _facePrevBtn.CustomMinimumSize = new Vector2(32, 28);
+        _facePrevBtn.AddThemeFontSizeOverride("font_size", 14);
+        _facePrevBtn.Pressed += () => { int max = (_selectedGender == 0) ? _faceCountMale : _faceCountFemale; _selectedFace = (_selectedFace - 1 + max) % max; UpdatePreviewModel(); };
+        faceRow.AddChild(_facePrevBtn);
+        _faceLabel = new Label();
+        _faceLabel.Text = "1 / 1";
+        _faceLabel.CustomMinimumSize = new Vector2(60, 0);
+        _faceLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _faceLabel.AddThemeFontSizeOverride("font_size", 13);
+        faceRow.AddChild(_faceLabel);
+        _faceNextBtn = new Button { Text = "▶" };
+        _faceNextBtn.CustomMinimumSize = new Vector2(32, 28);
+        _faceNextBtn.AddThemeFontSizeOverride("font_size", 14);
+        _faceNextBtn.Pressed += () => { int max = (_selectedGender == 0) ? _faceCountMale : _faceCountFemale; _selectedFace = (_selectedFace + 1) % max; UpdatePreviewModel(); };
+        faceRow.AddChild(_faceNextBtn);
+        previewCol.AddChild(faceRow);
+
+        // Armor material selector
+        var armorRow = new HBoxContainer();
+        armorRow.AddThemeConstantOverride("separation", 4);
+        var armorTitle = new Label();
+        armorTitle.Text = "Armor";
+        armorTitle.CustomMinimumSize = new Vector2(50, 0);
+        armorTitle.AddThemeFontSizeOverride("font_size", 12);
+        armorTitle.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        armorRow.AddChild(armorTitle);
+        _armorPrevBtn = new Button { Text = "◀" };
+        _armorPrevBtn.CustomMinimumSize = new Vector2(32, 28);
+        _armorPrevBtn.AddThemeFontSizeOverride("font_size", 14);
+        _armorPrevBtn.Pressed += () => { _selectedArmorMaterial = (_selectedArmorMaterial - 1 + ArmorMaterialNames.Length) % ArmorMaterialNames.Length; UpdatePreviewModel(); };
+        armorRow.AddChild(_armorPrevBtn);
+        _armorLabel = new Label();
+        _armorLabel.Text = "Cloth";
+        _armorLabel.CustomMinimumSize = new Vector2(70, 0);
+        _armorLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _armorLabel.AddThemeFontSizeOverride("font_size", 13);
+        armorRow.AddChild(_armorLabel);
+        _armorNextBtn = new Button { Text = "▶" };
+        _armorNextBtn.CustomMinimumSize = new Vector2(32, 28);
+        _armorNextBtn.AddThemeFontSizeOverride("font_size", 14);
+        _armorNextBtn.Pressed += () => { _selectedArmorMaterial = (_selectedArmorMaterial + 1) % ArmorMaterialNames.Length; UpdatePreviewModel(); };
+        armorRow.AddChild(_armorNextBtn);
+        previewCol.AddChild(armorRow);
+
+        // Rotate toggle
+        _rotateCheckbox = new CheckBox();
+        _rotateCheckbox.Text = "Rotate";
+        _rotateCheckbox.ButtonPressed = true;
+        _rotateCheckbox.AddThemeFontSizeOverride("font_size", 12);
+        _rotateCheckbox.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        _rotateCheckbox.Toggled += (on) => { _previewAutoRotate = on; if (!on) { _previewRotation = -Mathf.Pi / 2f; _previewRoot.Rotation = new Vector3(0, -Mathf.Pi / 2f, 0); } };
+        previewCol.AddChild(_rotateCheckbox);
+
+        hSplit.AddChild(previewCol);
+
+        // ════════ CENTER COLUMN: Name/Race/Class/Deity ════════
         var leftCol = new VBoxContainer();
         leftCol.AddThemeConstantOverride("separation", 8);
         leftCol.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        leftCol.CustomMinimumSize = new Vector2(260, 0);
+        leftCol.CustomMinimumSize = new Vector2(220, 0);
 
         // Name
         leftCol.AddChild(MakeFieldRow("Name", out _nameInput));
@@ -461,13 +799,23 @@ public partial class MainMenu : Control
         {
             int idx = i; // capture for closure
 
-            // Stat name
-            var nameLabel = new Label();
-            nameLabel.Text = StatNames[i];
-            nameLabel.CustomMinimumSize = new Vector2(35, 0);
-            nameLabel.AddThemeFontSizeOverride("font_size", 12);
-            nameLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.55f, 0.55f, 1f));
-            statsGrid.AddChild(nameLabel);
+            // Stat name (clickable — shows info in description panel)
+            var nameBtn = new Button();
+            nameBtn.Text = StatNames[i];
+            nameBtn.Flat = true;
+            nameBtn.CustomMinimumSize = new Vector2(35, 0);
+            nameBtn.AddThemeFontSizeOverride("font_size", 12);
+            nameBtn.AddThemeColorOverride("font_color", new Color(0.65f, 0.6f, 0.45f, 1f));
+            nameBtn.AddThemeColorOverride("font_hover_color", new Color(0.9f, 0.75f, 0.3f, 1f));
+            nameBtn.MouseDefaultCursorShape = CursorShape.PointingHand;
+            nameBtn.Pressed += () => {
+                if (StatDescriptions.TryGetValue(idx, out string desc))
+                {
+                    _classDescription.Clear();
+                    _classDescription.AppendText(desc);
+                }
+            };
+            statsGrid.AddChild(nameBtn);
 
             // Minus button
             _statMinusBtns[i] = new Button();
@@ -532,7 +880,7 @@ public partial class MainMenu : Control
 
         hSplit.AddChild(leftCol);
 
-        // RIGHT COLUMN — Class description
+        // ════════ RIGHT COLUMN: Stats + Class description ════════
         var rightCol = new VBoxContainer();
         rightCol.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
@@ -693,6 +1041,12 @@ public partial class MainMenu : Control
                 _classDescription.AppendText("[color=#888888]No classes available for this race.[/color]");
             }
 
+            // Extract face variant counts
+            _faceCountMale = root.TryGetProperty("faceCountMale", out var fcm) ? fcm.GetInt32() : 1;
+            _faceCountFemale = root.TryGetProperty("faceCountFemale", out var fcf) ? fcf.GetInt32() : 1;
+            _selectedFace = 0;
+            UpdatePreviewModel();
+
             ValidateCreateForm();
         }
         catch (Exception ex)
@@ -837,36 +1191,78 @@ public partial class MainMenu : Control
     //  LOGIN ACTIONS
     // ═══════════════════════════════════════════════════════════════
 
-    private void OnLoginPressed()
+    private async void OnLoginPressed()
     {
-        string username = _usernameInput.Text.Trim();
-        string password = _passwordInput.Text;
-
-        if (username.Length < 2) { _loginStatusLabel.Text = "Name too short."; return; }
-        if (password.Length < 4) { _loginStatusLabel.Text = "Password too short (min 4)."; return; }
-
-        _loginStatusLabel.Text = "Logging in...";
-        _loginButton.Disabled = true;
-        _createAccountButton.Disabled = true;
-
-        GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
-        GD.Print($"[MENU] Sent LOGIN_ACCOUNT: {username}");
+        if (ValidateInputs())
+        {
+            _pendingAction = "login";
+            await InitiateConnection();
+        }
     }
 
-    private void OnCreateAccountPressed()
+    private async void OnCreateAccountPressed()
+    {
+        if (ValidateInputs())
+        {
+            _pendingAction = "create";
+            await InitiateConnection();
+        }
+    }
+
+    private bool ValidateInputs()
+    {
+        string username = _usernameInput.Text.Trim();
+        string password = _passwordInput.Text;
+        string serverUrl = _serverAddressInput.Text.Trim();
+
+        if (username.Length < 2) { _loginStatusLabel.Text = "Name too short."; return false; }
+        if (password.Length < 4) { _loginStatusLabel.Text = "Password too short (min 4)."; return false; }
+        if (string.IsNullOrEmpty(serverUrl)) { _loginStatusLabel.Text = "Server address required."; return false; }
+        return true;
+    }
+
+    private async System.Threading.Tasks.Task InitiateConnection()
+    {
+        _loginButton.Disabled = true;
+        _createAccountButton.Disabled = true;
+
+        GameClient.Instance.ServerUrl = ServerConfigs[_currentServerName];
+
+        if (!GameClient.Instance.IsSocketConnected)
+        {
+            _loginStatusLabel.Text = "Connecting to server...";
+            GameClient.Instance.ConnectToServer();
+        }
+        else
+        {
+            ProcessPendingAction();
+        }
+    }
+
+    private void ProcessPendingAction()
     {
         string username = _usernameInput.Text.Trim();
         string password = _passwordInput.Text;
 
-        if (username.Length < 2) { _loginStatusLabel.Text = "Name too short."; return; }
-        if (password.Length < 4) { _loginStatusLabel.Text = "Password too short (min 4)."; return; }
+        if (_pendingAction == "login")
+        {
+            _loginStatusLabel.Text = "Logging in...";
+            GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
+            GD.Print($"[MENU] Sent LOGIN_ACCOUNT: {username}");
+        }
+        else if (_pendingAction == "create")
+        {
+            _loginStatusLabel.Text = "Creating account...";
+            GameClient.Instance.SendMessage("CREATE_ACCOUNT", new { username, password });
+            GD.Print($"[MENU] Sent CREATE_ACCOUNT: {username}");
+        }
 
-        _loginStatusLabel.Text = "Creating account...";
-        _loginButton.Disabled = true;
-        _createAccountButton.Disabled = true;
+        _pendingAction = null;
 
-        GameClient.Instance.SendMessage("CREATE_ACCOUNT", new { username, password });
-        GD.Print($"[MENU] Sent CREATE_ACCOUNT: {username}");
+        if (_rememberCheckbox.ButtonPressed)
+            SaveCredentials(username, password);
+        else
+            ClearSavedCredentials();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -933,11 +1329,11 @@ public partial class MainMenu : Control
         _statusLabel.Text = "Creating character...";
         _playButton.Disabled = true;
 
-        // Send stat allocations
+        // Send stat allocations + appearance
         var statsPayload = $"\"stats\": {{\"str\": {_allocStats[0]}, \"sta\": {_allocStats[1]}, \"agi\": {_allocStats[2]}, \"dex\": {_allocStats[3]}, \"wis\": {_allocStats[4]}, \"int\": {_allocStats[5]}, \"cha\": {_allocStats[6]}}}";
-        var json = $"{{\"type\": \"CREATE_CHARACTER\", \"name\": \"{name}\", \"class\": \"{classKey}\", \"race\": \"{race}\", \"deity\": {deity}, {statsPayload}}}";
+        var json = $"{{\"type\": \"CREATE_CHARACTER\", \"name\": \"{name}\", \"class\": \"{classKey}\", \"race\": \"{race}\", \"deity\": {deity}, \"gender\": {_selectedGender}, \"face\": {_selectedFace}, {statsPayload}}}";
         GameClient.Instance.SendRaw(json);
-        GD.Print($"[MENU] Sent CREATE_CHARACTER: {name} ({classKey}/{race}) deity={deity}");
+        GD.Print($"[MENU] Sent CREATE_CHARACTER: {name} ({classKey}/{race}) gender={_selectedGender} face={_selectedFace} deity={deity}");
     }
 
     private void PopulateCharacterList(JsonElement characters)
@@ -1006,11 +1402,14 @@ public partial class MainMenu : Control
     private void OnClientConnected()
     {
         if (!IsInstanceValid(this)) return;
-        _loginStatusLabel.Text = "Connected. Login or create an account.";
+        _loginStatusLabel.Text = "Connected.";
         _loginButton.Disabled = false;
         _createAccountButton.Disabled = false;
 
-        ShowPanel("login");
+        if (_pendingAction != null)
+            ProcessPendingAction();
+        else
+            ShowPanel("login");
         GD.Print("[MENU] Connected to server.");
     }
 
@@ -1058,7 +1457,6 @@ public partial class MainMenu : Control
             _enterWorldButton.Disabled = false;
             _enterWorldButton.Text = $"Enter World as {newName}";
 
-            // Auto-select the new character button
             foreach (Node child in _charListContainer.GetChildren())
             {
                 if (child is Button b && b.Text.Contains(newName))
@@ -1101,7 +1499,6 @@ public partial class MainMenu : Control
                 using var doc = JsonDocument.Parse(msg);
                 string errMsg = doc.RootElement.GetProperty("message").GetString();
 
-                // Show error on whichever panel is visible
                 if (_loginPanel.Visible)
                 {
                     _loginStatusLabel.Text = $"Error: {errMsg}";
@@ -1137,16 +1534,245 @@ public partial class MainMenu : Control
         _playButton.Disabled = !valid;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    //  3D MODEL PREVIEW
+    // ═══════════════════════════════════════════════════════════════
+
+    private static readonly Dictionary<int, string[]> RaceModelCodes = new() {
+        {1, new[]{"hum","huf"}}, {2, new[]{"bam","baf"}}, {3, new[]{"erm","erf"}},
+        {4, new[]{"elm","elf"}}, {5, new[]{"him","hif"}}, {6, new[]{"dam","daf"}},
+        {7, new[]{"ham","haf"}}, {8, new[]{"dwm","dwf"}}, {9, new[]{"trm","trf"}},
+        {10, new[]{"ogm","ogf"}}, {11, new[]{"hom","hof"}}, {12, new[]{"gnm","gnf"}},
+        {128, new[]{"ikm","ikf"}}, {130, new[]{"kem","kef"}}, {330, new[]{"frm","frf"}}
+    };
+
+    private void UpdatePreviewModel()
+    {
+        if (_previewRoot == null) return;
+
+        if (_previewModel != null)
+        {
+            _previewModel.QueueFree();
+            _previewModel = null;
+        }
+
+        int raceId = RaceIds[_raceSelect.Selected];
+        int maxFaces = (_selectedGender == 0) ? _faceCountMale : _faceCountFemale;
+        if (_selectedFace >= maxFaces) _selectedFace = 0;
+
+        if (_faceLabel != null)
+            _faceLabel.Text = $"{_selectedFace + 1} / {maxFaces}";
+
+        if (_armorLabel != null)
+            _armorLabel.Text = ArmorMaterialNames[_selectedArmorMaterial];
+
+        if (!RaceModelCodes.ContainsKey(raceId)) return;
+        string modelCode = RaceModelCodes[raceId][_selectedGender == 0 ? 0 : 1];
+
+        string modelPath;
+        if (_selectedFace > 0)
+        {
+            string facePath = $"res://Data/Characters/{modelCode}_face{_selectedFace}.glb";
+            modelPath = ResourceLoader.Exists(facePath) ? facePath : $"res://Data/Characters/{modelCode}.glb";
+        }
+        else
+        {
+            modelPath = $"res://Data/Characters/{modelCode}.glb";
+        }
+
+        if (!ResourceLoader.Exists(modelPath))
+        {
+            GD.Print($"[MENU] Preview model not found: {modelPath}");
+            return;
+        }
+
+        try
+        {
+            var gltfDoc = new GltfDocument();
+            var gltfState = new GltfState();
+            using var file = FileAccess.Open(modelPath, FileAccess.ModeFlags.Read);
+            byte[] glbBytes = file.GetBuffer((long)file.GetLength());
+            var err = gltfDoc.AppendFromBuffer(glbBytes, "", gltfState);
+            if (err != Error.Ok) return;
+
+            Node scene = gltfDoc.GenerateScene(gltfState);
+            if (scene == null) return;
+
+            _previewModel = new Node3D();
+            _previewModel.AddChild(scene);
+            _previewRoot.AddChild(_previewModel);
+
+            float scale = 1.0f;
+            float yRotation = 0f;
+            _previewCamHeight = 1.0f;
+            _previewLookAtY = 0.7f;
+            _previewZoom = 12.0f;
+
+            if (raceId == 9 || raceId == 10) scale = 0.7f;
+            else if (raceId == 2) scale = 0.85f;
+            else if (raceId == 11 || raceId == 12) scale = 1.4f;
+
+            if (raceId == 128)
+            {
+                yRotation = Mathf.Pi;
+                _previewCamHeight = 5.0f;
+                _previewLookAtY = 3.5f;
+                _previewZoom = 24.0f;
+            }
+
+            _previewModel.Scale = Vector3.One * scale;
+            _previewModel.RotationDegrees = new Vector3(0, Mathf.RadToDeg(yRotation), 0);
+
+            var animPlayer = FindPreviewAnimationPlayer(scene);
+            if (animPlayer != null)
+            {
+                string idleAnim = null;
+                if (animPlayer.HasAnimation("p01"))
+                    idleAnim = "p01";
+                else
+                {
+                    foreach (var animName in animPlayer.GetAnimationList())
+                    {
+                        if (animName.StartsWith("p"))
+                        {
+                            idleAnim = animName;
+                            break;
+                        }
+                    }
+                    if (idleAnim == null && animPlayer.GetAnimationList().Length > 0)
+                        idleAnim = animPlayer.GetAnimationList()[0];
+                }
+                if (idleAnim != null)
+                {
+                    animPlayer.Play(idleAnim);
+                    GD.Print($"[MENU] Preview playing animation: {idleAnim}");
+                }
+            }
+
+            GD.Print($"[MENU] Preview loaded: {modelPath}");
+
+            if (_selectedArmorMaterial > 0)
+            {
+                ApplyArmorTextures(scene, modelCode, _selectedArmorMaterial);
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MENU] Preview load error: {ex.Message}");
+        }
+    }
+
+    private static AnimationPlayer FindPreviewAnimationPlayer(Node root)
+    {
+        if (root is AnimationPlayer ap) return ap;
+        foreach (var child in root.GetChildren())
+        {
+            var found = FindPreviewAnimationPlayer(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static readonly string[] ArmorBodyParts = { "ch", "lg", "ft", "ua", "fa", "hn" };
+
+    private void ApplyArmorTextures(Node modelRoot, string raceCode, int material)
+    {
+        string matStr = material.ToString("D2");
+        int swapped = 0;
+
+        ApplyArmorToNode(modelRoot, raceCode, matStr, ref swapped);
+        GD.Print($"[MENU] Armor material {material}: swapped {swapped} textures on {raceCode}");
+    }
+
+    private void ApplyArmorToNode(Node node, string raceCode, string matStr, ref int swapped)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat is not StandardMaterial3D stdMat) continue;
+
+                string matName = stdMat.ResourceName;
+                if (string.IsNullOrEmpty(matName)) continue;
+
+                foreach (var part in ArmorBodyParts)
+                {
+                    string partPrefix = $"{raceCode}{part}";
+                    int idx = matName.IndexOf(partPrefix, StringComparison.OrdinalIgnoreCase);
+                    if (idx < 0) continue;
+
+                    string afterPart = matName.Substring(idx + partPrefix.Length);
+                    string digits = "";
+                    foreach (char c in afterPart) { if (char.IsDigit(c)) digits += c; }
+                    if (digits.Length < 2) break;
+                    string piece = digits.Substring(digits.Length - 2);
+
+                    string texFile = $"{raceCode}{part}{matStr}{piece}.png";
+                    string texPath = $"res://Data/Characters/Textures/{texFile}";
+
+                    if (!ResourceLoader.Exists(texPath)) break;
+
+                    var armorTex = GD.Load<Texture2D>(texPath);
+                    if (armorTex == null) break;
+
+                    var newMat = (StandardMaterial3D)stdMat.Duplicate();
+                    newMat.AlbedoTexture = armorTex;
+                    meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                    swapped++;
+                    break;
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            ApplyArmorToNode(child, raceCode, matStr, ref swapped);
+        }
+    }
+
     public override void _Process(double delta)
     {
-        // WebSocket polling handled by GameClient singleton
+        if (_previewRoot != null && _createPanel != null && _createPanel.Visible)
+        {
+            if (_previewAutoRotate)
+            {
+                _previewRotation += (float)delta * 0.5f;
+                _previewRoot.Rotation = new Vector3(0, _previewRotation, 0);
+            }
+
+            if (_previewCamera != null && _previewCamera.IsInsideTree())
+            {
+                _previewCamera.Position = new Vector3(0, _previewCamHeight, _previewZoom);
+                _previewCamera.LookAt(new Vector3(0, _previewLookAtY, 0), Vector3.Up);
+            }
+        }
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (_createPanel != null && _createPanel.Visible && @event is InputEventMouseButton mb)
+        {
+            if (_previewContainer != null && _previewContainer.GetGlobalRect().HasPoint(mb.GlobalPosition))
+            {
+                if (mb.ButtonIndex == MouseButton.WheelUp)
+                {
+                    _previewZoom = Mathf.Max(2.0f, _previewZoom - 0.5f);
+                    GetViewport().SetInputAsHandled();
+                }
+                else if (mb.ButtonIndex == MouseButton.WheelDown)
+                {
+                    _previewZoom = Mathf.Min(12.0f, _previewZoom + 0.5f);
+                    GetViewport().SetInputAsHandled();
+                }
+            }
+        }
     }
 
     public override void _Notification(int what)
     {
         if (what == NotificationWMCloseRequest)
         {
-            GameState.StopServer();
             GetTree().Quit();
         }
     }
@@ -1155,5 +1781,52 @@ public partial class MainMenu : Control
     {
         GameState.CharacterName = characterName;
         GetTree().ChangeSceneToFile("res://Scenes/MainUI.tscn");
+    }
+
+    private const string CredentialsPath = "user://login.cfg";
+
+    private void SaveCredentials(string username, string password)
+    {
+        var config = new ConfigFile();
+        config.SetValue("login", "username", username);
+        config.SetValue("login", "password", password);
+        config.SetValue("login", "remember", true);
+        config.SetValue("server", "address", _serverAddressInput.Text.Trim());
+        config.Save(CredentialsPath);
+        GD.Print("[MENU] Credentials and server settings saved");
+    }
+
+    private void ClearSavedCredentials()
+    {
+        var config = new ConfigFile();
+        if (config.Load(CredentialsPath) == Error.Ok)
+        {
+            config.SetValue("login", "remember", false);
+            config.SetValue("server", "address", _serverAddressInput.Text.Trim());
+            config.Save(CredentialsPath);
+        }
+    }
+
+    private void LoadSavedCredentials()
+    {
+        var config = new ConfigFile();
+        if (config.Load(CredentialsPath) != Error.Ok) return;
+
+        string serverAddr = (string)config.GetValue("server", "address", "ws://localhost:3005");
+        if (_serverAddressInput != null) _serverAddressInput.Text = serverAddr;
+
+        bool remember = (bool)config.GetValue("login", "remember", false);
+        if (!remember) return;
+
+        string user = (string)config.GetValue("login", "username", "");
+        string pass = (string)config.GetValue("login", "password", "");
+
+        if (user.Length > 0 && _usernameInput != null && _passwordInput != null)
+        {
+            _usernameInput.Text = user;
+            _passwordInput.Text = pass;
+            if (_rememberCheckbox != null) _rememberCheckbox.ButtonPressed = true;
+            GD.Print($"[MENU] Loaded saved credentials for: {user}");
+        }
     }
 }

@@ -112,6 +112,7 @@ theme = SubResource("Theme_global")
 script = ExtResource("1_x0y0p")
 
 [node name="Background" type="ColorRect" parent="." unique_id=872526795]
+visible = false
 custom_minimum_size = Vector2(250, 0)
 layout_mode = 1
 anchors_preset = 15
@@ -152,10 +153,6 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "CAMP"
 
-[node name="HelpBtn" type="Button" parent="MenuWindow/VBox" unique_id=1740330105]
-layout_mode = 2
-text = "HELP"
-
 [node name="OptionsBtn" type="Button" parent="MenuWindow/VBox" unique_id=555447017]
 layout_mode = 2
 text = "OPTIONS"
@@ -178,35 +175,11 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "MAP"
 
-[node name="StatsWindow" type="Window" parent="." unique_id=147605915]
-oversampling_override = 1.0
-position = Vector2i(1700, 100)
-size = Vector2i(200, 300)
-visible = false
-metadata/_edit_lock_ = true
-
-[node name="StatsText" type="RichTextLabel" parent="StatsWindow" unique_id=1072825500]
-unique_name_in_owner = true
-anchors_preset = -1
-anchor_right = 1.0
-anchor_bottom = 0.77300006
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = 0.019989014
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/default_color = Color(0.8, 0.7, 0.5, 1)
-theme_override_font_sizes/normal_font_size = 14
-text = "Lvl : [1]
-Gold: [0]"
-
 [node name="ActionBarWindow" type="Window" parent="." unique_id=107450837]
 oversampling_override = 1.0
-position = Vector2i(1700, 600)
+position = Vector2i(1700, 545)
 size = Vector2i(200, 175)
 visible = false
-metadata/_edit_lock_ = true
 
 [node name="AbilitiesGrid" type="GridContainer" parent="ActionBarWindow" unique_id=987654321]
 unique_name_in_owner = true
@@ -264,7 +237,7 @@ text = "Look"
 [node name="SpellBarWindow" type="Window" parent="." unique_id=1284903787]
 oversampling_override = 1.0
 position = Vector2i(291, 359)
-size = Vector2i(50, 400)
+size = Vector2i(160, 410)
 metadata/_edit_lock_ = true
 
 [node name="SpellBar" type="VBoxContainer" parent="SpellBarWindow" unique_id=1230005433]
@@ -548,10 +521,9 @@ vertical_alignment = 1
 
 [node name="PartyWindow" type="Window" parent="." unique_id=1893413473]
 oversampling_override = 1.0
-position = Vector2i(15, 530)
+position = Vector2i(15, 539)
 size = Vector2i(260, 240)
 visible = false
-metadata/_edit_lock_ = true
 
 [node name="VBoxContainer" type="VBoxContainer" parent="PartyWindow" unique_id=706458889]
 anchors_preset = 15
@@ -605,9 +577,11 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="TargetListWindow" type="Window" parent="." unique_id=451079970]
+unique_name_in_owner = true
 oversampling_override = 1.0
-position = Vector2i(15, 719)
+position = Vector2i(15, 803)
 size = Vector2i(260, 240)
+visible = false
 metadata/_edit_lock_ = true
 
 [node name="VScrollBar" type="VScrollBar" parent="TargetListWindow" unique_id=1832522836]
@@ -690,7 +664,7 @@ text = "[1]"
 [node name="TargetWindow" type="Window" parent="." unique_id=27210106]
 unique_name_in_owner = true
 oversampling_override = 1.0
-position = Vector2i(15, 300)
+position = Vector2i(15, 289)
 size = Vector2i(260, 100)
 visible = false
 metadata/_edit_lock_ = true

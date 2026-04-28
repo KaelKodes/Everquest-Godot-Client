@@ -10,11 +10,18 @@ public partial class GameClient : Node
     [Signal] public delegate void MessageReceivedEventHandler(string type, string json);
     [Signal] public delegate void CharacterStatusReceivedEventHandler(Variant data);
     [Signal] public delegate void SpellbookUpdatedEventHandler(Variant data);
+    [Signal] public delegate void SpellbookFullReceivedEventHandler(Variant data);
     [Signal] public delegate void CombatLogReceivedEventHandler(Variant data);
     [Signal] public delegate void BuffsUpdatedEventHandler(Variant data);
     [Signal] public delegate void InventoryUpdatedEventHandler(Variant data);
     [Signal] public delegate void ZoneStateReceivedEventHandler(Variant data);
+    [Signal] public delegate void EnvironmentUpdatedEventHandler(Variant data);
     [Signal] public delegate void EntitySneakReceivedEventHandler(Variant data);
+    [Signal] public delegate void EntityHideReceivedEventHandler(Variant data);
+    [Signal] public delegate void SneakResultReceivedEventHandler(Variant data);
+    [Signal] public delegate void HideResultReceivedEventHandler(Variant data);
+    [Signal] public delegate void SneakBrokenReceivedEventHandler();
+    [Signal] public delegate void HideBrokenReceivedEventHandler();
     [Signal] public delegate void LoginOkReceivedEventHandler(Variant data);
     [Signal] public delegate void NpcSayReceivedEventHandler(Variant data);
     [Signal] public delegate void MerchantOpenedEventHandler(Variant data);
@@ -25,16 +32,20 @@ public partial class GameClient : Node
     [Signal] public delegate void DeityListReceivedEventHandler(Variant data);
     [Signal] public delegate void CharCreateDataReceivedEventHandler(Variant data);
     [Signal] public delegate void CharacterDeletedEventHandler(Variant data);
+    [Signal] public delegate void ChatReceivedEventHandler(Variant data);
+    [Signal] public delegate void CampCompleteEventHandler();
 
     public static GameClient Instance { get; private set; }
     
     public string LastStatusPayload { get; private set; }
     public string LastSpellbookPayload { get; private set; }
+    public string LastSpellbookFullPayload { get; private set; }
     public string LastInventoryPayload { get; private set; }
     public string LastBuffsPayload { get; private set; }
 
     private WebSocketPeer _socket = new WebSocketPeer();
-    private string _url = "ws://localhost:3000";
+    private string _url = "ws://localhost:3005";
+    public string ServerUrl { get => _url; set => _url = value; }
     private bool _connected = false;
     public bool IsSocketConnected => _connected;
 
@@ -135,11 +146,33 @@ public partial class GameClient : Node
                     LastSpellbookPayload = message;
                     EmitSignal(SignalName.SpellbookUpdated, message);
                     break;
+                case "SPELLBOOK_FULL":
+                    LastSpellbookFullPayload = message;
+                    EmitSignal(SignalName.SpellbookFullReceived, message);
+                    break;
                 case "ZONE_STATE":
                     EmitSignal(SignalName.ZoneStateReceived, message);
                     break;
+                case "ENVIRONMENT_UPDATE":
+                    EmitSignal(SignalName.EnvironmentUpdated, message);
+                    break;
                 case "ENTITY_SNEAK":
                     EmitSignal(SignalName.EntitySneakReceived, message);
+                    break;
+                case "ENTITY_HIDE":
+                    EmitSignal(SignalName.EntityHideReceived, message);
+                    break;
+                case "SNEAK_RESULT":
+                    EmitSignal(SignalName.SneakResultReceived, message);
+                    break;
+                case "HIDE_RESULT":
+                    EmitSignal(SignalName.HideResultReceived, message);
+                    break;
+                case "SNEAK_BROKEN":
+                    EmitSignal(SignalName.SneakBrokenReceived);
+                    break;
+                case "HIDE_BROKEN":
+                    EmitSignal(SignalName.HideBrokenReceived);
                     break;
                 case "COMBAT_LOG":
                     EmitSignal(SignalName.CombatLogReceived, message);
@@ -164,6 +197,23 @@ public partial class GameClient : Node
                 case "OPEN_BANK":
                     EmitSignal(SignalName.BankOpened, message);
                     break;
+                case "CHAT":
+                    EmitSignal(SignalName.ChatReceived, message);
+                    break;
+                case "CAMP_COMPLETE":
+                    EmitSignal(SignalName.CampComplete);
+                    break;
+                case "TELEPORT":
+                {
+                    float tx = root.TryGetProperty("x", out var txp) ? txp.GetSingle() : 0f;
+                    float ty = root.TryGetProperty("y", out var typ) ? typ.GetSingle() : 0f;
+                    float tz = root.TryGetProperty("z", out var tzp) ? tzp.GetSingle() : 0f;
+                    GD.Print($"[NET] Teleport to EQ ({tx}, {ty}, {tz})");
+                    var wm = GetTree().Root.GetNodeOrNull<WorldManager>("MainUI/ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+                    if (wm != null)
+                        wm.TeleportPlayer(tx, ty, tz);
+                    break;
+                }
                 case "WELCOME":
                     GD.Print($"[NET] {type}: Server ready.");
                     break;

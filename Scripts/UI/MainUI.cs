@@ -16,21 +16,40 @@ public partial class MainUI : Control
 	private Button _sitStandBtn;
 	private Button _autoFightBtn;
 	private Button _bagsBtn;
-	private Button _lookBtn;
 	private Button _campBtn;
-	private RichTextLabel _statsText;
-	private RichTextLabel _skillsText;
+	private RichTextLabel _invSkillsText;    // skills tab in inventory
+	private bool _draggingInventory = false;
+	private Vector2 _dragOffset;
 	
 	// Action & Buff Containers
 	private VBoxContainer _actionBar;
 	private HBoxContainer _buffBar;
 	private RichTextLabel _combatLog;
 	private Texture2D _spellGemTexture;
+	private Button[] _spellSlotButtons = new Button[8];
+	private Label[] _spellSlotLabels = new Label[8]; // Spell name overlay
+	
+	// Hotbar System
+	private HotbarManager _hotbarManager;
 	
 	// Inventory & Equipment Window
 	private Control _inventoryWindow;
-	private VBoxContainer _inventoryList;
-	private GridContainer _equipmentGrid;
+	private Button[] _invSlots = new Button[10]; // 10 general inventory slots
+	private GridContainer _slotsGrid;        // container for inventory slot buttons
+	private VBoxContainer _equipGrid;        // equipment slot container
+	private RichTextLabel _invStatsText;     // stats panel in inventory
+	private readonly Dictionary<string, Button> _equipSlots = new();
+
+	// Item Interaction System
+	private JsonElement? _heldItem = null;
+	private int _heldFromSlotId = -1;
+	private Label _cursorLabel;
+	private Panel _itemDetailPopup;
+	private Button _autoEquipBtn;
+	private double _rightClickTimer = -1;
+	private Button _rightClickTarget = null;
+	private JsonElement? _rightClickItemData = null;
+	private readonly Dictionary<Button, JsonElement> _slotItemData = new(); // map button â†’ item JSON
 
 	// Target Frame
 	private Window _targetWindow;
@@ -64,9 +83,49 @@ public partial class MainUI : Control
 	private Control _merchantWindow;
 	private VBoxContainer _merchantItemList;
 	private Label _merchantTitle;
+	private string _activeMerchantId = null; // Track open merchant for sell transactions
+
+	// Merchant sort/filter state
+	private struct MerchantItem
+	{
+		public string Name;
+		public string ItemKey;
+		public int Price;
+		public string PriceText;
+		public string StatsStr;
+		public int ScrollLevel;
+		public int ItemType;
+		public int Classes;
+		public int RecLevel;
+		public string NpcId;
+	}
+	private List<MerchantItem> _merchantItems = new List<MerchantItem>();
+	private int _merchantPlayerClassBitmask = 65535;
+	private int _merchantPlayerLevel = 60;
+	private string _merchantSortMode = "name";
+	private bool _merchantShowUsable = false;
+	private HBoxContainer _merchantSortBar = null;
+
+	// Chat input
+	private LineEdit _chatInput;
+	private string _lastWhisperSender = "";
+	private bool _chatInputFocused = false;
 	private bool _autoFight = false;
 	private bool _isSitting = false;
+	private bool _isSelfTargeted = false;
+	private Spellbook _spellbookUI;
+	private string _pendingMemorizeSpellKey = null; // Set when player clicks a spell in the book
+	private string _pendingMemorizeSpellName = null;
 	private bool _isOutOfRange = false;
+
+	// Action tab state (upgraded ActionBarWindow)
+	private Button[] _actionTabButtons;
+	private GridContainer _actionGrid;
+	private int _actionCurrentTab = 1; // 0=Socials, 1=Abilities, 2=Skills
+	private Window _actionBarWindow;
+	private int _socialPage = 0;
+	private HBoxContainer _socialNavRow;
+	private Label _socialPageLabel;
 	
 	private CanvasLayer _loadingLayer;
 	private ColorRect _loadingOverlay;
@@ -75,9 +134,11 @@ public partial class MainUI : Control
 	private Label _flavorLabel;
 	private bool _isInitialLoadPending = true;
 	private float _pendingSpawnX = 0;
+	private float _pendingSpawnY = 0;
 	private float _pendingSpawnZ = 0;
 
-	// Spellbook state — tracks what's memorized in each slot
+	// Spellbook state â€” tracks what's memorized in each slot
+	internal string _visionModeName = "Normal Vision";
 	private struct MemorizedSpell
 	{
 		public int SpellId;
@@ -85,9 +146,41 @@ public partial class MainUI : Control
 		public int ManaCost;
 		public float CastTime;
 		public float CooldownRemaining;
+		public string Description;
 	}
 	private MemorizedSpell[] _spells = new MemorizedSpell[8];
 	private double _currentMana = 0;
+	private double _currentHp = 0;
+	private double _maxHp = 0;
+	private string _charName;
+	private int _charLevel = 1;
+
+	// All known (scribed) spells — for the right-click memorize picker
+	private struct KnownSpell
+	{
+		public int SpellId;
+		public string SpellKey;
+		public string Name;
+		public int ManaCost;
+		public float CastTime;
+		public string Effect; // heal, dd, dot, buff, debuff, root, snare, cure, info
+		public int Level;
+		public string Description;
+	}
+	private List<KnownSpell> _knownSpells = new List<KnownSpell>();
+
+	// Cast bar state
+	private bool _isCasting = false;
+	private float _castTimeTotal = 0;
+	private float _castTimeElapsed = 0;
+	private string _castingSpellName = "";
+	private ProgressBar _castBar;
+	private Label _castBarLabel;
+	private Panel _castBarPanel;
+
+	// Options state
+	private bool _showPlayerName = false;
+	private Panel _optionsPanel;
 
 	// Buff tracking for duration ticking
 	private class ActiveBuff
@@ -107,6 +200,15 @@ public partial class MainUI : Control
 
 	private Dictionary<string, double> _localAbilityCooldowns = new Dictionary<string, double>();
 	private List<string> _availableAbilities = new List<string>();
+	private List<string> _availableSkills = new List<string>();
+
+	// ── Companion Window (Pet / future Mercenary) ──
+	private Window _companionWindow;
+	private Label _companionNameLabel;
+	private Label _companionStateLabel;
+	private ProgressBar _companionHpBar;
+	private Label _companionHpLabel;
+	private bool _hasPet = false;
 
 	public override void _Ready()
 	{
@@ -114,23 +216,59 @@ public partial class MainUI : Control
 		_client = GameClient.Instance;
 		_client.CharacterStatusReceived += OnCharacterStatusReceived;
 		_client.SpellbookUpdated += OnSpellbookUpdated;
+		_client.SpellbookFullReceived += OnSpellbookFullReceived;
 		_client.CombatLogReceived += OnCombatLogReceived;
 		_client.BuffsUpdated += OnBuffsUpdated;
 		_client.InventoryUpdated += OnInventoryUpdated;
 		_client.ZoneStateReceived += OnZoneStateReceived;
+		_client.EnvironmentUpdated += OnEnvironmentUpdated;
 		_client.EntitySneakReceived += OnEntitySneakReceived;
+		_client.EntityHideReceived += OnEntityHideReceived;
+		_client.SneakResultReceived += OnSneakResultReceived;
+		_client.HideResultReceived += OnHideResultReceived;
+		_client.SneakBrokenReceived += OnSneakBrokenReceived;
+		_client.HideBrokenReceived += OnHideBrokenReceived;
 		_client.NpcSayReceived += OnNpcSayReceived;
 		_client.MerchantOpened += OnMerchantOpened;
 		_client.TrainerOpened += OnTrainerOpened;
 		_client.BankOpened += OnBankOpened;
+		_client.ChatReceived += OnChatReceived;
+		_client.CampComplete += OnCampComplete;
+		_client.MessageReceived += OnGenericMessage;
+
+		// Wire up chat input
+		_chatInput = GetNode<LineEdit>("%ChatInput");
+		if (_chatInput != null)
+		{
+			_chatInput.TextSubmitted += OnChatSubmitted;
+			_chatInput.FocusEntered += () => _chatInputFocused = true;
+			_chatInput.FocusExited += () => _chatInputFocused = false;
+		}
 
 		// Create Windows (hidden by default)
 		_inventoryWindow = _inventoryWindowScene.Instantiate<Control>();
 		AddChild(_inventoryWindow);
 		_inventoryWindow.Hide();
 		
-		_inventoryList = _inventoryWindow.GetNode<VBoxContainer>("TabContainer/Inventory/VBox");
-		_equipmentGrid = _inventoryWindow.GetNode<GridContainer>("TabContainer/Equipment/Grid");
+		_slotsGrid = _inventoryWindow.GetNode<GridContainer>("MainVBox/SlotsSection/SlotsGrid");
+		_equipGrid = _inventoryWindow.GetNode<VBoxContainer>("MainVBox/ContentHBox/EquipPanel/EquipScroll/EquipGrid");
+		_invStatsText = _inventoryWindow.GetNode<RichTextLabel>("MainVBox/ContentHBox/StatsPanel/StatsScroll/StatsText");
+		BuildInventorySlots();
+		
+		// Close / Done buttons
+		_inventoryWindow.GetNode<Button>("MainVBox/TitleBar/HBox/CloseBtn").Pressed += () => { _inventoryWindow.Hide(); _activeMerchantId = null; };
+		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DoneBtn").Pressed += () => { _inventoryWindow.Hide(); _activeMerchantId = null; };
+		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DestroyBtn").Pressed += () => {
+			Log("SYSTEM", "[color=yellow]Click the X on an item to destroy it.[/color]");
+		};
+		
+		// Build equipment paperdoll slots
+		BuildEquipmentGrid();
+		BuildAutoEquipSlot();
+		BuildSkillsTab();
+		SetupInventoryDrag();
+		BuildCursorLabel();
+		BuildItemDetailPopup();
 
 		// Merchant Window
 		_merchantWindow = _merchantWindowScene.Instantiate<Control>();
@@ -138,7 +276,13 @@ public partial class MainUI : Control
 		_merchantWindow.Hide();
 		_merchantItemList = _merchantWindow.GetNode<VBoxContainer>("VBox/Scroll/ItemList");
 		_merchantTitle = _merchantWindow.GetNode<Label>("VBox/Title");
-		_merchantWindow.GetNode<Button>("VBox/CloseBtn").Pressed += () => _merchantWindow.Hide();
+		_merchantWindow.GetNode<Button>("VBox/CloseBtn").Pressed += () => {
+			_merchantWindow.Hide();
+			_activeMerchantId = null;
+			// Refresh inventory to hide sell buttons
+			if (!string.IsNullOrEmpty(_client.LastInventoryPayload))
+				OnInventoryUpdated(_client.LastInventoryPayload);
+		};
 
 		// Link HUD UI nodes
 		_hpBar = GetNode<ProgressBar>("%HPBar");
@@ -150,35 +294,8 @@ public partial class MainUI : Control
 		
 		_sitStandBtn = GetNodeOrNull<Button>("%SitStandBtn");
 		_autoFightBtn = GetNodeOrNull<Button>("%AutoFightBtn");
-		_lookBtn = GetNodeOrNull<Button>("%LookBtn");
 		_campBtn = GetNodeOrNull<Button>("%CampBtn");
-		_statsText = GetNode<RichTextLabel>("%StatsText");
-		_statsText.BbcodeEnabled = true;
-		
-		// Build HBox layout in StatsWindow: stats left, skills right
-		var statsWindow = _statsText.GetParent();
-		if (statsWindow != null)
-		{
-			// Reparent StatsText into an HBox
-			var hbox = new HBoxContainer();
-			hbox.Name = "StatsHBox";
-			hbox.SetAnchorsPreset(LayoutPreset.FullRect);
-			hbox.AddThemeConstantOverride("separation", 10);
-			
-			statsWindow.RemoveChild(_statsText);
-			hbox.AddChild(_statsText);
-			_statsText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-			
-			_skillsText = new RichTextLabel();
-			_skillsText.Name = "SkillsText";
-			_skillsText.BbcodeEnabled = true;
-			_skillsText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-			_skillsText.AddThemeColorOverride("default_color", new Color(0.8f, 0.7f, 0.5f, 1f));
-			_skillsText.AddThemeFontSizeOverride("normal_font_size", 12);
-			hbox.AddChild(_skillsText);
-			
-			statsWindow.AddChild(hbox);
-		}
+		// Stats panel removed â€” now embedded in inventory window
 		
 		if (_campBtn != null) _campBtn.Pressed += OnCampPressed;
 		
@@ -213,12 +330,8 @@ public partial class MainUI : Control
 							string tId = btn.GetMeta("targetId").AsString();
 							// Set backend explicitly
 							_client.SendRaw($"{{\"type\": \"SET_TARGET\", \"targetId\": \"{tId}\"}}");
-							
-							// Auto fight hook logic
-							if (_autoFight)
-							{
-								_client.SendRaw($"{{\"type\": \"ATTACK_TARGET\", \"targetId\": \"{tId}\"}}");
-							}
+							// Note: auto-fight does NOT auto-send ATTACK_TARGET here.
+							// Aggro only happens via explicit attack or when a swing lands in range.
 							
 							// We can also tell the WorldManager to physically light up the mob natively
 							var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
@@ -294,7 +407,7 @@ public partial class MainUI : Control
 		_loadingOverlay.AddChild(vbox);
 
 		_loadingLabel = new Label();
-		_loadingLabel.Text = "HYDRATING WORLD...";
+		_loadingLabel.Text = "Loading...";
 		_loadingLabel.HorizontalAlignment = HorizontalAlignment.Center;
 		_loadingLabel.AddThemeFontSizeOverride("font_size", 28);
 		_loadingLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.7f, 1.0f));
@@ -347,25 +460,326 @@ public partial class MainUI : Control
 		// Load the classic EQ spell gems sprite sheet
 		_spellGemTexture = GD.Load<Texture2D>("res://Assets/UI/ClassicUI/gemicons01.tga");
 
-		// Wire spell bar slot buttons to cast
+		// Wire spell bar slot buttons — rebuild as styled slots matching hotbar aesthetic
+		// Remove original scene buttons and create new styled ones
+		var existingSlots = new List<Node>();
+		foreach (var child in _actionBar.GetChildren())
+		{
+			if (child is Button) existingSlots.Add(child);
+		}
+		foreach (var old in existingSlots) old.QueueFree();
+
+		// Rebuild 8 spell gem slots with hotbar-style panels
 		for (int i = 0; i < 8; i++)
 		{
 			int slotIndex = i; // capture for closure
-			var slotBtn = _actionBar.GetNode<Button>($"Slot{i + 1}");
-			slotBtn.Pressed += () => OnSpellSlotPressed(slotIndex);
+
+			// Slot container panel (matches hotbar styling)
+			var slotPanel = new Panel();
+			slotPanel.Name = $"Slot{i + 1}";
+			slotPanel.CustomMinimumSize = new Vector2(0, 40);
+			slotPanel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+			var panelStyle = new StyleBoxFlat();
+			panelStyle.BgColor = new Color(0.1f, 0.1f, 0.12f, 0.85f);
+			panelStyle.BorderWidthLeft = 1; panelStyle.BorderWidthTop = 1;
+			panelStyle.BorderWidthRight = 1; panelStyle.BorderWidthBottom = 1;
+			panelStyle.BorderColor = new Color(0.4f, 0.35f, 0.2f, 0.7f);
+			panelStyle.CornerRadiusTopLeft = 3; panelStyle.CornerRadiusTopRight = 3;
+			panelStyle.CornerRadiusBottomLeft = 3; panelStyle.CornerRadiusBottomRight = 3;
+			slotPanel.AddThemeStyleboxOverride("panel", panelStyle);
+
+			// Invisible button overlay for click handling
+			var slotBtn = new Button();
+			slotBtn.Flat = true;
+			slotBtn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+			slotBtn.ClipText = true;
+			slotBtn.AddThemeFontSizeOverride("font_size", 1); // Tiny — we use a label for text
+			slotBtn.AddThemeColorOverride("font_color", new Color(0, 0, 0, 0)); // Invisible text
+
+			// Hover style — gold highlight
+			var hoverStyle = new StyleBoxFlat();
+			hoverStyle.BgColor = new Color(0.2f, 0.2f, 0.25f, 0.5f);
+			hoverStyle.BorderWidthLeft = 1; hoverStyle.BorderWidthTop = 1;
+			hoverStyle.BorderWidthRight = 1; hoverStyle.BorderWidthBottom = 1;
+			hoverStyle.BorderColor = new Color(0.8f, 0.7f, 0.3f, 0.9f);
+			hoverStyle.CornerRadiusTopLeft = 3; hoverStyle.CornerRadiusTopRight = 3;
+			hoverStyle.CornerRadiusBottomLeft = 3; hoverStyle.CornerRadiusBottomRight = 3;
+			slotBtn.AddThemeStyleboxOverride("hover", hoverStyle);
+
+			// Normal + pressed: transparent
+			var normalStyle = new StyleBoxFlat();
+			normalStyle.BgColor = new Color(0, 0, 0, 0);
+			slotBtn.AddThemeStyleboxOverride("normal", normalStyle);
+			slotBtn.AddThemeStyleboxOverride("pressed", normalStyle);
+
+			// Disabled style — dimmed
+			var disabledStyle = new StyleBoxFlat();
+			disabledStyle.BgColor = new Color(0.05f, 0.05f, 0.07f, 0.6f);
+			slotBtn.AddThemeStyleboxOverride("disabled", disabledStyle);
+
+			slotBtn.GuiInput += (ev) => {
+				if (ev is not InputEventMouseButton mb || !mb.Pressed) return;
+				if (mb.ButtonIndex == MouseButton.Left)
+				{
+					if (_pendingMemorizeSpellKey != null)
+					{
+						if (!_isSitting)
+						{
+							Log("SYSTEM", "You must be sitting to memorize spells.");
+							_pendingMemorizeSpellKey = null;
+							_pendingMemorizeSpellName = null;
+							return;
+						}
+						_client.SendRaw($"{{\"type\":\"MEMORIZE_SPELL\",\"spellKey\":\"{_pendingMemorizeSpellKey}\",\"slot\":{slotIndex}}}");
+						Log("SYSTEM", $"[color=cyan]Memorizing {_pendingMemorizeSpellName} in gem {slotIndex + 1}...[/color]");
+						_pendingMemorizeSpellKey = null;
+						_pendingMemorizeSpellName = null;
+						return;
+					}
+					OnSpellSlotPressed(slotIndex);
+				}
+				else if (mb.ButtonIndex == MouseButton.Middle)
+				{
+					if (_spells[slotIndex].SpellId > 0 && _hotbarManager != null)
+						_hotbarManager.StartSpellDrag(slotIndex, _spells[slotIndex].Name);
+				}
+				else if (mb.ButtonIndex == MouseButton.Right)
+				{
+					if (_spells[slotIndex].SpellId <= 0)
+						ShowSpellMemorizePicker(slotIndex, slotBtn);
+					else
+						ShowSpellSlotContextMenu(slotIndex, slotBtn);
+				}
+			};
+
+			slotPanel.AddChild(slotBtn);
+
+			// Spell name label — centered, wraps
+			var nameLabel = new Label();
+			nameLabel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+			nameLabel.OffsetLeft = 4; nameLabel.OffsetRight = -18;
+			nameLabel.OffsetTop = 2; nameLabel.OffsetBottom = -2;
+			nameLabel.AddThemeFontSizeOverride("font_size", 11);
+			nameLabel.AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
+			nameLabel.HorizontalAlignment = HorizontalAlignment.Left;
+			nameLabel.VerticalAlignment = VerticalAlignment.Center;
+			nameLabel.ClipText = true;
+			nameLabel.Text = $"Gem {i + 1}";
+			nameLabel.MouseFilter = MouseFilterEnum.Ignore;
+			slotPanel.AddChild(nameLabel);
+
+			// Slot number label — centered over the icon area (right side)
+			var numLabel = new Label();
+			numLabel.Text = (i + 1).ToString();
+			numLabel.AnchorLeft = 1; numLabel.AnchorTop = 0;
+			numLabel.AnchorRight = 1; numLabel.AnchorBottom = 1;
+			numLabel.OffsetLeft = -28; numLabel.OffsetRight = 0;
+			numLabel.AddThemeFontSizeOverride("font_size", 9);
+			numLabel.AddThemeColorOverride("font_color", new Color(1.0f, 0.95f, 0.7f, 0.85f));
+			numLabel.HorizontalAlignment = HorizontalAlignment.Center;
+			numLabel.VerticalAlignment = VerticalAlignment.Center;
+			numLabel.MouseFilter = MouseFilterEnum.Ignore;
+			slotPanel.AddChild(numLabel);
+
+			_actionBar.AddChild(slotPanel);
+			_spellSlotButtons[i] = slotBtn;
+			_spellSlotLabels[i] = nameLabel;
 		}
+
+		// ── Create Cast Bar (hidden by default) ──
+		_castBarPanel = new Panel();
+		_castBarPanel.CustomMinimumSize = new Vector2(250, 28);
+		_castBarPanel.AnchorLeft = 0.5f;
+		_castBarPanel.AnchorRight = 0.5f;
+		_castBarPanel.AnchorTop = 0.55f;
+		_castBarPanel.AnchorBottom = 0.55f;
+		_castBarPanel.OffsetLeft = -125;
+		_castBarPanel.OffsetRight = 125;
+		_castBarPanel.OffsetTop = -14;
+		_castBarPanel.OffsetBottom = 14;
+		_castBarPanel.MouseFilter = Control.MouseFilterEnum.Stop; // Capture clicks for dragging
+
+		// Make cast bar draggable
+		bool castBarDragging = false;
+		Vector2 castBarDragOffset = Vector2.Zero;
+		_castBarPanel.GuiInput += (ev) =>
+		{
+			if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
+			{
+				if (mb.Pressed) { castBarDragging = true; castBarDragOffset = mb.GlobalPosition - _castBarPanel.GlobalPosition; }
+				else castBarDragging = false;
+			}
+			else if (ev is InputEventMouseMotion mm && castBarDragging)
+			{
+				_castBarPanel.AnchorLeft = 0; _castBarPanel.AnchorRight = 0;
+				_castBarPanel.AnchorTop = 0; _castBarPanel.AnchorBottom = 0;
+				_castBarPanel.GlobalPosition = mm.GlobalPosition - castBarDragOffset;
+				_castBarPanel.Size = new Vector2(250, 28);
+			}
+		};
+		var castPanelStyle = new StyleBoxFlat();
+		castPanelStyle.BgColor = new Color(0.1f, 0.1f, 0.15f, 0.85f);
+		castPanelStyle.BorderWidthBottom = 1;
+		castPanelStyle.BorderWidthTop = 1;
+		castPanelStyle.BorderWidthLeft = 1;
+		castPanelStyle.BorderWidthRight = 1;
+		castPanelStyle.BorderColor = new Color(0.6f, 0.5f, 0.2f, 0.9f);
+		castPanelStyle.CornerRadiusBottomLeft = 3;
+		castPanelStyle.CornerRadiusBottomRight = 3;
+		castPanelStyle.CornerRadiusTopLeft = 3;
+		castPanelStyle.CornerRadiusTopRight = 3;
+		_castBarPanel.AddThemeStyleboxOverride("panel", castPanelStyle);
+
+		_castBar = new ProgressBar();
+		_castBar.AnchorRight = 1;
+		_castBar.AnchorBottom = 1;
+		_castBar.OffsetLeft = 4;
+		_castBar.OffsetRight = -4;
+		_castBar.OffsetTop = 4;
+		_castBar.OffsetBottom = -4;
+		_castBar.MinValue = 0;
+		_castBar.MaxValue = 100;
+		_castBar.Value = 0;
+		_castBar.ShowPercentage = false;
+		_castBar.MouseFilter = Control.MouseFilterEnum.Pass; // Let clicks pass through to panel for dragging
+		var castFillStyle = new StyleBoxFlat();
+		castFillStyle.BgColor = new Color(0.85f, 0.65f, 0.15f, 0.9f);
+		castFillStyle.CornerRadiusBottomLeft = 2;
+		castFillStyle.CornerRadiusBottomRight = 2;
+		castFillStyle.CornerRadiusTopLeft = 2;
+		castFillStyle.CornerRadiusTopRight = 2;
+		_castBar.AddThemeStyleboxOverride("fill", castFillStyle);
+		var castBgStyle = new StyleBoxFlat();
+		castBgStyle.BgColor = new Color(0.05f, 0.05f, 0.08f, 0.8f);
+		_castBar.AddThemeStyleboxOverride("background", castBgStyle);
+		_castBarPanel.AddChild(_castBar);
+
+		_castBarLabel = new Label();
+		_castBarLabel.AnchorRight = 1;
+		_castBarLabel.AnchorBottom = 1;
+		_castBarLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_castBarLabel.VerticalAlignment = VerticalAlignment.Center;
+		_castBarLabel.AddThemeFontSizeOverride("font_size", 12);
+		_castBarLabel.AddThemeColorOverride("font_color", Colors.White);
+		_castBarLabel.MouseFilter = Control.MouseFilterEnum.Pass; // Let clicks pass through to panel for dragging
+		_castBarPanel.AddChild(_castBarLabel);
+
+		AddChild(_castBarPanel);
+		_castBarPanel.Hide();
 
 		// Connect buttons
 		if (_sitStandBtn != null) _sitStandBtn.Pressed += OnSitStandPressed;
 		if (_autoFightBtn != null) _autoFightBtn.Pressed += OnAutoFightPressed;
-		if (_lookBtn != null) _lookBtn.Pressed += OnLookPressed;
 		if (_bagsBtn != null) _bagsBtn.Pressed += () => _inventoryWindow.Visible = !_inventoryWindow.Visible;
 
-		var abilitiesGrid = GetNode<GridContainer>("%AbilitiesGrid");
-		for (int i = 0; i < 8; i++) {
-			int slotIndex = i;
-			var btn = abilitiesGrid.GetNodeOrNull<Button>($"BtnAbility{i + 1}");
-			if (btn != null) btn.Pressed += () => OnAbilityPressed(slotIndex);
+		// Wire ABILITIES button on Simple Panel to toggle ActionBarWindow
+		var abilitiesBtn = GetNodeOrNull<Button>("MenuWindow/VBox/AbilitiesBtn");
+		if (abilitiesBtn != null) abilitiesBtn.Pressed += () => ToggleActionBarWindow();
+
+		// Wire SPELLS button on Simple Panel to toggle Spellbook
+		var spellsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/SpellsBtn");
+		if (spellsBtn != null) spellsBtn.Pressed += () => ToggleSpellbook();
+
+		// Wire OPTIONS button to toggle options panel
+		var optionsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/OptionsBtn");
+		if (optionsBtn != null) optionsBtn.Pressed += () => ToggleOptionsPanel();
+
+		// Upgrade existing ActionBarWindow with title + 3 tabs
+		_actionBarWindow = GetNodeOrNull<Window>("ActionBarWindow");
+		if (_actionBarWindow != null)
+		{
+			// Make it taller to fit header + tabs above the grid
+			_actionBarWindow.Size = new Vector2I(200, 260);
+			_actionBarWindow.Title = "";
+			
+			var grid = _actionBarWindow.GetNodeOrNull<GridContainer>("AbilitiesGrid");
+			if (grid != null)
+			{
+				// Shift grid down to make room for header + tabs + social nav
+				grid.OffsetTop = 60;
+			}
+			
+			// Add "Actions" header label (centered)
+			var titleLabel = new Label();
+			titleLabel.Text = "Actions";
+			titleLabel.Position = new Vector2(10, 6);
+			titleLabel.Size = new Vector2(180, 20);
+			titleLabel.HorizontalAlignment = HorizontalAlignment.Center;
+			titleLabel.AddThemeFontSizeOverride("font_size", 13);
+			titleLabel.AddThemeColorOverride("font_color", new Color(0.85f, 0.75f, 0.4f));
+			_actionBarWindow.AddChild(titleLabel);
+			
+			// Add 3 tab buttons
+			var tabRow = new HBoxContainer();
+			tabRow.Position = new Vector2(10, 28);
+			tabRow.Size = new Vector2(180, 26);
+			tabRow.AddThemeConstantOverride("separation", 2);
+			_actionBarWindow.AddChild(tabRow);
+			
+			string[] tabNames = { "Socials", "Abilities", "Skills" };
+			Button[] tabBtns = new Button[3];
+			for (int t = 0; t < 3; t++)
+			{
+				int tabIdx = t;
+				var tabBtn = new Button();
+				tabBtn.Text = tabNames[t];
+				tabBtn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+				tabBtn.CustomMinimumSize = new Vector2(55, 24);
+				tabBtn.AddThemeFontSizeOverride("font_size", 11);
+				tabBtn.Pressed += () => SwitchActionTab(tabIdx, tabBtns, grid);
+				tabRow.AddChild(tabBtn);
+				tabBtns[t] = tabBtn;
+			}
+			
+			// Social page navigation (< Page# >) — only visible on Socials tab
+			_socialNavRow = new HBoxContainer();
+			_socialNavRow.Position = new Vector2(10, 54);
+			_socialNavRow.Size = new Vector2(180, 22);
+			_socialNavRow.AddThemeConstantOverride("separation", 4);
+			_socialNavRow.Alignment = BoxContainer.AlignmentMode.Center;
+			_socialNavRow.Visible = false; // hidden until Socials tab
+			_actionBarWindow.AddChild(_socialNavRow);
+			
+			var prevSocialBtn = new Button();
+			prevSocialBtn.Text = "<";
+			prevSocialBtn.CustomMinimumSize = new Vector2(24, 20);
+			prevSocialBtn.AddThemeFontSizeOverride("font_size", 11);
+			prevSocialBtn.Pressed += () => { ChangeSocialPage(-1); SwitchActionTab(0, _actionTabButtons, _actionGrid); };
+			_socialNavRow.AddChild(prevSocialBtn);
+			
+			_socialPageLabel = new Label();
+			_socialPageLabel.Text = "1";
+			_socialPageLabel.CustomMinimumSize = new Vector2(20, 0);
+			_socialPageLabel.HorizontalAlignment = HorizontalAlignment.Center;
+			_socialPageLabel.AddThemeFontSizeOverride("font_size", 12);
+			_socialPageLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.8f, 0.5f));
+			_socialNavRow.AddChild(_socialPageLabel);
+			
+			var nextSocialBtn = new Button();
+			nextSocialBtn.Text = ">";
+			nextSocialBtn.CustomMinimumSize = new Vector2(24, 20);
+			nextSocialBtn.AddThemeFontSizeOverride("font_size", 11);
+			nextSocialBtn.Pressed += () => { ChangeSocialPage(1); SwitchActionTab(0, _actionTabButtons, _actionGrid); };
+			_socialNavRow.AddChild(nextSocialBtn);
+			
+			// Wire Pressed handlers on grid buttons
+			for (int bi = 0; bi < 8; bi++)
+			{
+				int btnIdx = bi; // capture for closure
+				var btn = grid.GetChildOrNull<Button>(bi);
+				if (btn != null)
+				{
+					btn.GuiInput += (ev) => OnActionGridSlotInput(ev, btnIdx, btn);
+				}
+			}
+
+			// Start on Abilities tab
+			_actionTabButtons = tabBtns;
+			_actionGrid = grid;
+			_actionCurrentTab = 1;
+			StyleActionTabs(tabBtns, 1);
+			SwitchActionTab(1, tabBtns, grid);
 		}
 		
 		wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
@@ -380,6 +794,10 @@ public partial class MainUI : Control
 			wm.SneakToggled += (isSneaking) => {
 				_client.SendRaw($"{{\"type\": \"UPDATE_SNEAK\", \"sneaking\": {isSneaking.ToString().ToLower()}}}");
 			};
+
+			wm.HideToggled += (isHiding) => {
+				_client.SendRaw($"{{\"type\": \"USE_HIDE\", \"hiding\": {isHiding.ToString().ToLower()}}}");
+			};
 			
 			wm.ZoneLineCrossed += (targetZoneId) => {
 				_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
@@ -388,7 +806,23 @@ public partial class MainUI : Control
 			wm.TargetChanged += (name, type) => {
 				if (wm.CurrentTargetId != null)
 				{
-					_client.SendRaw($"{{\"type\": \"SET_TARGET\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
+					// Self-target: show player's own info in target window
+				if (wm.CurrentTargetId == "Player")
+					{
+						_isSelfTargeted = true;
+						_targetWindow.Visible = true;
+						string charName = _charName ?? "You";
+						_targetNameLabel.Text = $"{charName} (Lv {_charLevel})";
+						_targetHpBar.MaxValue = _maxHp;
+						_targetHpBar.Value = Math.Max(0, _currentHp);
+						double pct = _maxHp > 0 ? (_currentHp / (double)_maxHp * 100) : 100;
+						_targetHpLabel.Text = $"{pct:F0}%";
+					}
+					else
+					{
+						_isSelfTargeted = false;
+						_client.SendRaw($"{{\"type\": \"SET_TARGET\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
+					}
 				}
 			};
 			wm.TargetCleared += () => {
@@ -405,6 +839,22 @@ public partial class MainUI : Control
 			}
 		}
 
+		// ── Hotbar System ──
+		_hotbarManager = new HotbarManager();
+		_hotbarManager.Name = "HotbarManager";
+		AddChild(_hotbarManager);
+
+		// Wire spell data callbacks so hotbar buttons can fire spells
+		_hotbarManager.GetSpellIdForSlot = (slot) => (slot >= 0 && slot < 8) ? _spells[slot].SpellId : -1;
+		_hotbarManager.GetSpellNameForSlot = (slot) => (slot >= 0 && slot < 8) ? _spells[slot].Name : "";
+		_hotbarManager.GetTargetName = () => _targetNameLabel?.Text ?? "";
+		_hotbarManager.EquipItemById = (itemId) => {
+			_client.SendRaw($"{{\"type\": \"AUTO_EQUIP\", \"itemId\": {itemId}}}");
+		};
+
+		// Wire ActionPanel ability/skill activation signals
+		// ActionPanel is now a persistent node handled by ActionPanel.cs
+
 		Log("SYSTEM", "Initialized EQMUD Client...");
 		GD.Print("[UI] MainUI Ready with Inventory & Combat Log enabled!");
 		
@@ -418,6 +868,22 @@ public partial class MainUI : Control
 		{
 			GD.Print("[UI] Caught up on cached Spellbook.");
 			OnSpellbookUpdated(_client.LastSpellbookPayload);
+		}
+
+		// Create Spellbook UI (hidden by default) — must be created BEFORE catch-up
+		_spellbookUI = new Spellbook();
+		_spellbookUI.Name = "SpellbookUI";
+		_spellbookUI.Visible = false;
+		_spellbookUI.ZIndex = 55;
+		AddChild(_spellbookUI);
+		_spellbookUI.SpellSelectedForMemorize += OnSpellSelectedForMemorize;
+		_spellbookUI.SpellbookClosed += () => { _pendingMemorizeSpellKey = null; _pendingMemorizeSpellName = null; };
+
+		// NOW catch up on the full spellbook (after UI exists)
+		if (!string.IsNullOrEmpty(_client.LastSpellbookFullPayload))
+		{
+			GD.Print("[UI] Caught up on cached Spellbook Full.");
+			OnSpellbookFullReceived(_client.LastSpellbookFullPayload);
 		}
 		if (!string.IsNullOrEmpty(_client.LastInventoryPayload))
 		{
@@ -435,6 +901,38 @@ public partial class MainUI : Control
 	{
 		if (@event is InputEventKey k && k.Pressed && !k.Echo)
 		{
+			// Enter key: toggle chat input focus
+			if (k.Keycode == Key.Enter || k.Keycode == Key.KpEnter)
+			{
+				if (_chatInput != null)
+				{
+					if (!_chatInputFocused)
+					{
+						_chatInput.GrabFocus();
+						GetViewport().SetInputAsHandled();
+						return;
+					}
+					else if (string.IsNullOrEmpty(_chatInput.Text))
+					{
+						// Empty enter = unfocus
+						_chatInput.ReleaseFocus();
+						GetViewport().SetInputAsHandled();
+						return;
+					}
+					// If there's text, TextSubmitted will handle it
+				}
+			}
+
+			// Escape key: unfocus chat
+			if (k.Keycode == Key.Escape && _chatInputFocused)
+			{
+				_chatInput.ReleaseFocus();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+
+			// Suppress all game hotkeys while chat is focused
+			if (_chatInputFocused) return;
 			if (k.Keycode == Key.H)
 			{
 				// Key H is our Hail key
@@ -455,10 +953,6 @@ public partial class MainUI : Control
 				{
 					_mudMap.Visible = !_mudMap.Visible;
 					GD.Print($"[UI] Map toggled: {_mudMap.Visible}");
-					if (_mudMap.Visible) {
-						// Request fresh status to update map position immediately
-						_client.SendRaw("{\"type\": \"LOOK\"}");
-					}
 				}
 			}
 			else if (k.Keycode == Key.I || k.Keycode == Key.B)
@@ -470,14 +964,65 @@ public partial class MainUI : Control
 					GD.Print($"[UI] Inventory toggled: {_inventoryWindow.Visible}");
 				}
 			}
+			else if (k.Keycode == Key.Escape)
+			{
+				// ESC drops the current target
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null)
+				{
+					wm.ClearTarget();
+				}
+				_client.SendRaw("{\"type\": \"CLEAR_TARGET\"}");
+				_isSelfTargeted = false;
+				if (_targetWindow != null) _targetWindow.Visible = false;
+			}
+			// Auto-stand when pressing movement or jump keys while sitting
+			else if (_isSitting && (k.Keycode == Key.W || k.Keycode == Key.S || k.Keycode == Key.Space))
+			{
+				_client.SendRaw("{\"type\": \"STAND\"}");
+				_isSitting = false;
+				if (_sitStandBtn != null) _sitStandBtn.Text = "Sit";
+			}
 		}
+	}
+
+	public override void _ExitTree()
+	{
+		// Disconnect all GameClient signal handlers to prevent
+		// "Cannot access a disposed object" errors when switching characters
+		if (_client != null)
+		{
+			_client.CharacterStatusReceived -= OnCharacterStatusReceived;
+			_client.SpellbookUpdated -= OnSpellbookUpdated;
+			_client.SpellbookFullReceived -= OnSpellbookFullReceived;
+			_client.CombatLogReceived -= OnCombatLogReceived;
+			_client.BuffsUpdated -= OnBuffsUpdated;
+			_client.InventoryUpdated -= OnInventoryUpdated;
+			_client.ZoneStateReceived -= OnZoneStateReceived;
+			_client.EnvironmentUpdated -= OnEnvironmentUpdated;
+			_client.EntitySneakReceived -= OnEntitySneakReceived;
+			_client.EntityHideReceived -= OnEntityHideReceived;
+			_client.SneakResultReceived -= OnSneakResultReceived;
+			_client.HideResultReceived -= OnHideResultReceived;
+			_client.SneakBrokenReceived -= OnSneakBrokenReceived;
+			_client.HideBrokenReceived -= OnHideBrokenReceived;
+			_client.NpcSayReceived -= OnNpcSayReceived;
+			_client.MerchantOpened -= OnMerchantOpened;
+			_client.TrainerOpened -= OnTrainerOpened;
+			_client.BankOpened -= OnBankOpened;
+			_client.ChatReceived -= OnChatReceived;
+			_client.CampComplete -= OnCampComplete;
+			_client.MessageReceived -= OnGenericMessage;
+		}
+		base._ExitTree();
 	}
 
 	public override void _Notification(int what)
 	{
 		if (what == NotificationWMCloseRequest)
 		{
-			GameState.StopServer();
+			// Clear session-scoped EQ asset cache
+			EQAssetCache.Instance.ClearCache();
 			GetTree().Quit();
 		}
 	}
@@ -495,24 +1040,35 @@ public partial class MainUI : Control
 				if (_spells[i].CooldownRemaining < 0) _spells[i].CooldownRemaining = 0;
 			}
 
-			var slotBtn = _actionBar.GetNode<Button>($"Slot{i + 1}");
+			var slotBtn = _spellSlotButtons[i];
 			if (_spells[i].SpellId > 0)
 			{
 				bool canCast = _currentMana >= _spells[i].ManaCost 
 					&& _spells[i].CooldownRemaining <= 0
-					&& !_isSitting;
+					&& !_isSitting
+					&& !_isCasting;
 				slotBtn.Disabled = !canCast;
 
 				// Show cooldown remaining via a subtle text overlay or just rely on tooltip
+				string descTip = !string.IsNullOrEmpty(_spells[i].Description) ? $"\n{_spells[i].Description}" : "";
 				if (_spells[i].CooldownRemaining > 0)
 				{
-					slotBtn.TooltipText = $"{_spells[i].Name} ({_spells[i].CooldownRemaining:F1}s)";
+					slotBtn.TooltipText = $"{_spells[i].Name} (Cooldown: {_spells[i].CooldownRemaining:F1}s)\n[{_spells[i].ManaCost}m] Cast: {_spells[i].CastTime:F1}s{descTip}";
 				}
 				else
 				{
-					slotBtn.TooltipText = $"{_spells[i].Name} [{_spells[i].ManaCost}m]";
+					slotBtn.TooltipText = $"{_spells[i].Name} [{_spells[i].ManaCost}m] Cast: {_spells[i].CastTime:F1}s{descTip}";
 				}
 			}
+		}
+
+		// Tick cast bar
+		if (_isCasting)
+		{
+			_castTimeElapsed += dt;
+			if (_castTimeTotal > 0)
+				_castBar.Value = (_castTimeElapsed / _castTimeTotal) * 100.0;
+			_castBarLabel.Text = $"{_castingSpellName} ({(_castTimeTotal - _castTimeElapsed):F1}s)";
 		}
 
 		// Tick buff durations
@@ -533,69 +1089,14 @@ public partial class MainUI : Control
 				durationBar.Value = (buff.DurationRemaining / buff.DurationMax) * 100.0;
 		}
 
-		// Tick local abilities
-		var abilitiesGrid = GetNodeOrNull<GridContainer>("%AbilitiesGrid");
-		if (abilitiesGrid != null)
+		// Tick local ability cooldowns
+		var keys = new List<string>(_localAbilityCooldowns.Keys);
+		foreach (var k in keys)
 		{
-			var keys = new List<string>(_localAbilityCooldowns.Keys);
-			foreach (var k in keys)
+			if (_localAbilityCooldowns[k] > 0)
 			{
-				if (_localAbilityCooldowns[k] > 0)
-				{
-					_localAbilityCooldowns[k] -= dt;
-					if (_localAbilityCooldowns[k] < 0) _localAbilityCooldowns[k] = 0;
-				}
-			}
-
-			for (int j = 0; j < 8; j++)
-			{
-				var btn = abilitiesGrid.GetNodeOrNull<Button>($"BtnAbility{j + 1}");
-				if (btn != null)
-				{
-					btn.Visible = true; // Always visible
-					btn.ClipText = true; // Text shrinks, button stays same size
-					btn.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-
-					// Slot 1 = Attack (fixed), Slot 8 = Look (fixed)
-					if (j == 0)
-					{
-						btn.Text = _autoFight ? "Stop" : "Attack";
-						btn.Disabled = false;
-					}
-					else if (j == 7)
-					{
-						btn.Text = "Look";
-						btn.Disabled = false;
-					}
-					else
-					{
-						// Slots 2-7 (index 1-6) map to _availableAbilities[0-5]
-						int abilIndex = j - 1;
-						if (abilIndex < _availableAbilities.Count)
-						{
-							string abil = _availableAbilities[abilIndex];
-
-							double cd = 0;
-							_localAbilityCooldowns.TryGetValue(abil.ToLower(), out cd);
-
-							if (cd > 0)
-							{
-								btn.Disabled = true;
-								btn.Text = $"{abil} ({cd:F1}s)";
-							}
-							else
-							{
-								btn.Disabled = false;
-								btn.Text = abil;
-							}
-						}
-						else
-						{
-							btn.Text = $"{j + 1}";
-							btn.Disabled = true;
-						}
-					}
-				}
+				_localAbilityCooldowns[k] -= dt;
+				if (_localAbilityCooldowns[k] < 0) _localAbilityCooldowns[k] = 0;
 			}
 		}
 
@@ -616,82 +1117,180 @@ public partial class MainUI : Control
 			_client.SendRaw("{\"type\":\"UPDATE_RANGE\",\"outOfRange\":false}");
 		}
 
+		// ── Item Interaction: cursor label follows mouse ──
+		if (_cursorLabel != null && _cursorLabel.Visible) {
+			_cursorLabel.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
+		}
+
+		// ── Right-click hold timer for item detail popup ──
+		if (_rightClickTimer >= 0) {
+			_rightClickTimer += delta;
+			if (_rightClickTimer >= 1.0 && _rightClickItemData.HasValue) {
+				ShowItemDetail(_rightClickItemData.Value, GetGlobalMousePosition());
+				_rightClickTimer = -1;
+				_rightClickTarget = null;
+				_rightClickItemData = null;
+			}
+		}
+
+		// ── Escape to cancel held item ──
+		if (Input.IsActionJustPressed("ui_cancel") && _heldItem.HasValue) {
+			CancelHeldItem();
+		}
+
 	}
 
-	// ─── Spell System ───────────────────────────────────────────────
-	private void OnAbilityPressed(int index)
+	// â”€â”€â”€ Spell System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+	/// <summary>Handles ability activation from the new ActionPanel (by name instead of slot index).</summary>
+
+	/// <summary>Handles skill activation from the new ActionPanel (utility skills like Hide, Sneak, etc.).</summary>
+
+	// ── Action Tab Switching (for the upgraded ActionBarWindow) ──────
+
+	// Non-slotable skills that shouldn't appear in the Skills tab
+
+	/// <summary>Shorten skill/ability names for the grid buttons.</summary>
+
+
+
+
+
+
+
+
+	// ── Spell Bar Right-Click Menus ─────────────────────────────────
+
+	/// <summary>Show a categorized spell picker for memorizing into an empty gem slot.</summary>
+
+	/// <summary>Show context menu when right-clicking a filled spell gem.</summary>
+
+
+
+	/// <summary>
+	/// Handle cast events (CAST_START, CAST_COMPLETE, CAST_INTERRUPTED)
+	/// </summary>
+	private void OnGenericMessage(string type, string json)
 	{
-		// Slot 0 = Attack toggle
-		if (index == 0)
+		if (!IsInstanceValid(this)) return;
+		try
 		{
-			if (_autoFight)
+			switch (type)
 			{
-				_client.SendRaw("{\"type\":\"STOP_COMBAT\"}");
+				case "CAST_START":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					_castingSpellName = root.TryGetProperty("spellName", out var n) ? n.GetString() : "Casting...";
+					_castTimeTotal = root.TryGetProperty("castTime", out var ct) ? (float)ct.GetDouble() : 1.5f;
+					_castTimeElapsed = 0;
+					_isCasting = true;
+					_castBar.Value = 0;
+					_castBarLabel.Text = $"{_castingSpellName} ({_castTimeTotal:F1}s)";
+					_castBarPanel.Show();
+
+					// Trigger casting animation on 3D model
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) 
+					{
+						wm.SetPlayerCasting(true);
+						wm.TriggerEntityAction("You", "cast");
+					}
+					break;
+				}
+				case "CAST_COMPLETE":
+				{
+					_isCasting = false;
+					_castBar.Value = 100;
+					_castBarPanel.Hide();
+
+					// Stop casting animation
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) wm.SetPlayerCasting(false);
+					break;
+				}
+				case "CAST_INTERRUPTED":
+				{
+					_isCasting = false;
+					_castBarLabel.Text = "Interrupted!";
+					// Flash red briefly then hide
+					var fillStyle = _castBar.GetThemeStylebox("fill") as StyleBoxFlat;
+					if (fillStyle != null) fillStyle.BgColor = new Color(0.9f, 0.2f, 0.2f, 0.9f);
+					// Hide after a short delay
+					GetTree().CreateTimer(0.8).Timeout += () => {
+						_castBarPanel.Hide();
+						// Restore fill color
+						if (fillStyle != null) fillStyle.BgColor = new Color(0.85f, 0.65f, 0.15f, 0.9f);
+					};
+
+					// Stop casting animation
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) wm.SetPlayerCasting(false);
+					break;
+				}
+				case "EMOTE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string charName = root.TryGetProperty("charName", out var cn) ? cn.GetString() : "Someone";
+					string emote = root.TryGetProperty("emote", out var em) ? em.GetString() : "";
+					string anim = root.TryGetProperty("anim", out var an) && an.ValueKind == JsonValueKind.String ? an.GetString() : null;
+
+					// Display emote text
+					Log("EMOTE", $"{charName} {emote}s.");
+
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null)
+					{
+						var entity = wm.GetEntityByName(charName);
+						if (entity != null)
+						{
+							entity.PlayEmote(emote);
+						}
+						// Fallback to player if it was a player emote
+						else if (!string.IsNullOrEmpty(anim) && (charName == _charName || string.IsNullOrEmpty(_charName)))
+						{
+							wm.PlayPlayerAnimation(anim);
+						}
+					}
+					break;
+				}
+				case "NODE_DESTROYED":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string nodeId = root.TryGetProperty("nodeId", out var nid) ? nid.GetString() : null;
+					if (!string.IsNullOrEmpty(nodeId))
+					{
+						var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+						if (wm != null) wm.RemoveEntity(nodeId);
+					}
+					break;
+				}
+				case "TARGET_UPDATE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("target", out var tgt))
+					{
+						string tName = tgt.TryGetProperty("name", out var tn) ? tn.GetString() : "Unknown";
+						int tHp = tgt.TryGetProperty("hp", out var th) ? th.GetInt32() : 0;
+						int tMaxHp = tgt.TryGetProperty("maxHp", out var tmh) ? tmh.GetInt32() : 1;
+						int tLevel = tgt.TryGetProperty("level", out var tl) ? tl.GetInt32() : 0;
+						string tType = tgt.TryGetProperty("type", out var tt) ? tt.GetString() : "";
+
+						_targetWindow.Visible = true;
+						_targetNameLabel.Text = tType == "mining_node" ? $"{tName} (T{tLevel})" : $"{tName} (Lv {tLevel})";
+						_targetHpBar.MaxValue = tMaxHp;
+						_targetHpBar.Value = Math.Max(0, tHp);
+						double pct = tMaxHp > 0 ? ((double)tHp / tMaxHp * 100) : 100;
+						_targetHpLabel.Text = $"{pct:F0}%";
+					}
+					break;
+				}
 			}
-			else
-			{
-				// Check melee range before engaging
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null && !wm.IsTargetInRange(WorldManager.MELEE_RANGE))
-				{
-					Log("COMBAT", "Your target is too far away!");
-					return;
-				}
-				if (wm != null && wm.CurrentTargetId != null)
-				{
-					_client.SendRaw($"{{\"type\":\"ATTACK_TARGET\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
-				}
-				else
-				{
-					_client.SendRaw("{\"type\":\"START_COMBAT\"}");
-				}
-			}
-			return;
 		}
-		// Slot 7 = Look
-		if (index == 7)
-		{
-			OnLookPressed();
-			return;
-		}
-		// Slots 1-6 map to _availableAbilities[0-5]
-		int abilIndex = index - 1;
-		if (abilIndex < 0 || abilIndex >= _availableAbilities.Count) return;
-		string ability = _availableAbilities[abilIndex].ToLower();
-
-		// Melee abilities (kick, bash, taunt, etc.) require melee range
-		var wmCheck = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-		if (wmCheck != null && !wmCheck.IsTargetInRange(WorldManager.MELEE_RANGE))
-		{
-			Log("COMBAT", "Your target is too far away!");
-			return;
-		}
-
-		_client.SendRaw($"{{\"type\":\"ABILITY\",\"ability\":\"{ability}\"}}");
-	}
-
-	private void OnSpellSlotPressed(int slotIndex)
-	{
-		var spell = _spells[slotIndex];
-		if (spell.SpellId <= 0) return;
-		if (spell.CooldownRemaining > 0) return;
-		if (_currentMana < spell.ManaCost) 
-		{
-			Log("SYSTEM", "Insufficient mana.");
-			return;
-		}
-		if (_isSitting)
-		{
-			Log("SYSTEM", "You must stand before casting.");
-			return;
-		}
-
-		_client.SendRaw($"{{\"type\": \"CAST_SPELL\", \"spellId\": {spell.SpellId}, \"slot\": {slotIndex}}}");
-		
-		// Start local cooldown (cast time acts as a GCD)
-		_spells[slotIndex].CooldownRemaining = spell.CastTime > 0 ? spell.CastTime : 1.5f;
-		
-		Log("SPELL", $"Casting {spell.Name}...");
+		catch (Exception ex) { GD.PrintErr($"[UI] Cast event error: {ex.Message}"); }
 	}
 
 	/// <summary>
@@ -701,65 +1300,104 @@ public partial class MainUI : Control
 	/// ]}
 	/// Empty slots are either absent or have spellId = 0.
 	/// </summary>
-	private void OnSpellbookUpdated(Variant data)
+
+	/// <summary>Handle the full spellbook payload (all scribed spells with book positions).</summary>
+
+	/// <summary>Called when the player left-clicks a spell in the spellbook UI.</summary>
+
+	/// <summary>Toggle the spellbook UI. Must be sitting to open.</summary>
+
+	// ── Options Panel ───────────────────────────────────────────────
+
+	private void ToggleOptionsPanel()
 	{
-		try
+		if (_optionsPanel == null)
+			BuildOptionsPanel();
+
+		_optionsPanel.Visible = !_optionsPanel.Visible;
+	}
+
+	private void BuildOptionsPanel()
+	{
+		_optionsPanel = new Panel();
+		_optionsPanel.CustomMinimumSize = new Vector2(240, 160);
+		_optionsPanel.Size = new Vector2(240, 160);
+
+		// Center on screen
+		var screenSize = GetViewport().GetVisibleRect().Size;
+		_optionsPanel.GlobalPosition = (screenSize - _optionsPanel.Size) / 2;
+
+		// EQ-style dark panel
+		var panelStyle = new StyleBoxFlat();
+		panelStyle.BgColor = new Color(0.06f, 0.06f, 0.08f, 0.95f);
+		panelStyle.BorderWidthLeft = 2; panelStyle.BorderWidthTop = 2;
+		panelStyle.BorderWidthRight = 2; panelStyle.BorderWidthBottom = 2;
+		panelStyle.BorderColor = new Color(0.6f, 0.5f, 0.2f, 1.0f);
+		panelStyle.CornerRadiusTopLeft = 3; panelStyle.CornerRadiusTopRight = 3;
+		panelStyle.CornerRadiusBottomLeft = 3; panelStyle.CornerRadiusBottomRight = 3;
+		panelStyle.ContentMarginLeft = 8; panelStyle.ContentMarginRight = 8;
+		panelStyle.ContentMarginTop = 6; panelStyle.ContentMarginBottom = 6;
+		_optionsPanel.AddThemeStyleboxOverride("panel", panelStyle);
+		_optionsPanel.MouseFilter = Control.MouseFilterEnum.Stop;
+
+		var vbox = new VBoxContainer();
+		vbox.SetAnchorsPreset(LayoutPreset.FullRect);
+		vbox.OffsetLeft = 8; vbox.OffsetRight = -8;
+		vbox.OffsetTop = 6; vbox.OffsetBottom = -6;
+		vbox.AddThemeConstantOverride("separation", 6);
+		_optionsPanel.AddChild(vbox);
+
+		// Title row with close button
+		var titleRow = new HBoxContainer();
+		var titleLabel = new Label();
+		titleLabel.Text = "Options";
+		titleLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		titleLabel.AddThemeFontSizeOverride("font_size", 14);
+		titleLabel.AddThemeColorOverride("font_color", new Color(0.85f, 0.75f, 0.4f));
+		titleRow.AddChild(titleLabel);
+
+		var closeBtn = new Button();
+		closeBtn.Text = "✕";
+		closeBtn.CustomMinimumSize = new Vector2(22, 22);
+		closeBtn.AddThemeFontSizeOverride("font_size", 11);
+		closeBtn.Pressed += () => _optionsPanel.Visible = false;
+		titleRow.AddChild(closeBtn);
+		vbox.AddChild(titleRow);
+
+		// Separator
+		vbox.AddChild(new HSeparator());
+
+		// Show Player Name checkbox
+		var nameCheck = new CheckBox();
+		nameCheck.Text = "Show Player Name";
+		nameCheck.ButtonPressed = _showPlayerName;
+		nameCheck.AddThemeFontSizeOverride("font_size", 12);
+		nameCheck.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		nameCheck.Toggled += (toggled) =>
 		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
+			_showPlayerName = toggled;
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null) wm.SetPlayerNameVisible(_showPlayerName);
+		};
+		vbox.AddChild(nameCheck);
 
-			if (!root.TryGetProperty("spells", out var spells)) return;
-
-			// Reset all slots
-			for (int i = 0; i < 8; i++)
+		// Make the panel draggable
+		bool optsDragging = false;
+		Vector2 optsDragOffset = Vector2.Zero;
+		_optionsPanel.GuiInput += (ev) =>
+		{
+			if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
 			{
-				_spells[i] = new MemorizedSpell();
-				var slotBtn = _actionBar.GetNode<Button>($"Slot{i + 1}");
-				slotBtn.Text = "";
-				slotBtn.TooltipText = $"Empty Action Slot {i + 1}";
-				slotBtn.Disabled = true;
-				slotBtn.Icon = null;
+				if (mb.Pressed) { optsDragging = true; optsDragOffset = mb.GlobalPosition - _optionsPanel.GlobalPosition; }
+				else optsDragging = false;
 			}
-
-			// Populate from server data
-			foreach (var spell in spells.EnumerateArray())
+			else if (ev is InputEventMouseMotion mm && optsDragging)
 			{
-				int slot = spell.GetProperty("slot").GetInt32();
-				if (slot < 0 || slot >= 8) continue;
-
-				int spellId = spell.GetProperty("spellId").GetInt32();
-				if (spellId <= 0) continue;
-
-				string name = spell.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : $"Spell #{spellId}";
-				int manaCost = spell.TryGetProperty("manaCost", out var manaProp) ? manaProp.GetInt32() : 0;
-				float castTime = spell.TryGetProperty("castTime", out var ctProp) ? (float)ctProp.GetDouble() : 1.5f;
-
-				_spells[slot] = new MemorizedSpell
-				{
-					SpellId = spellId,
-					Name = name,
-					ManaCost = manaCost,
-					CastTime = castTime,
-					CooldownRemaining = 0
-				};
-
-				var slotBtn = _actionBar.GetNode<Button>($"Slot{slot + 1}");
-				slotBtn.Text = "";
-				slotBtn.TooltipText = $"{name} [{manaCost}m]";
-				slotBtn.Disabled = _currentMana < manaCost;
-				
-				var atlas = new AtlasTexture();
-				atlas.Atlas = _spellGemTexture;
-				atlas.Region = GetSpellIconRect(name);
-				slotBtn.Icon = atlas;
-				slotBtn.ExpandIcon = false;
-				slotBtn.IconAlignment = HorizontalAlignment.Center;
+				_optionsPanel.GlobalPosition = mm.GlobalPosition - optsDragOffset;
 			}
+		};
 
-			GD.Print("[UI] Spellbook updated.");
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Spellbook Error: {ex.Message}"); }
+		AddChild(_optionsPanel);
 	}
 
 	private Rect2 GetSpellIconRect(string spellName)
@@ -784,16 +1422,17 @@ public partial class MainUI : Control
 		}
 	}
 
-	// ─── 3D World Integration ───────────────────────────────────────
+	// â”€â”€â”€ 3D World Integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	private async void OnZoneStateReceived(Variant data)
 	{
+		if (!IsInstanceValid(this)) return;
 		try
 		{
 			var dict = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
 			
 			if (dict.TryGetProperty("entities", out var entitiesArray))
 			{
-				GD.Print($"[UI] ZONE_STATE received with {entitiesArray.GetArrayLength()} entities.");
+				// ZONE_STATE entities received — sync silently
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null)
 				{
@@ -803,8 +1442,27 @@ public partial class MainUI : Control
 					// Load terrain FIRST so entities have ground to stand on
 					if (_isInitialLoadPending)
 					{
+						// On-demand EQ asset extraction if configured
+						if (EQAssetConfig.Instance.IsConfigured && !EQAssetCache.Instance.HasZone(_currentZoneId))
+						{
+							_flavorLabel.Text = "Extracting Zone Assets...";
+							await ToSignal(GetTree().CreateTimer(0.1f), SceneTreeTimer.SignalName.Timeout);
+							
+							var extractor = LanternExtractorRunner.Instance;
+							if (extractor.IsAvailable)
+							{
+								bool extracted = await extractor.ExtractZone(_currentZoneId);
+								if (extracted)
+									GD.Print($"[UI] Zone '{_currentZoneId}' extracted successfully.");
+								else
+									GD.PrintErr($"[UI] Zone extraction failed for '{_currentZoneId}', will use fallback.");
+							}
+						}
+
+						_flavorLabel.Text = "Building Zone Geometry...";
 						await ToSignal(GetTree().CreateTimer(0.1f), SceneTreeTimer.SignalName.Timeout);
 						wm.LoadZoneMap(_currentZoneId);
+						wm.PlayZoneMusic(_currentZoneId);
 						
 						_flavorLabel.Text = "Populating World Spawns...";
 						await ToSignal(GetTree().CreateTimer(0.3f), SceneTreeTimer.SignalName.Timeout);
@@ -825,12 +1483,31 @@ public partial class MainUI : Control
 						await ToSignal(GetTree().CreateTimer(0.2f), SceneTreeTimer.SignalName.Timeout);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
-						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ);
+						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);
 						_isInitialLoadPending = false;
 						if (_loadingLayer != null) 
 						{
 							_loadingLayer.Hide();
 						}
+					}
+					
+					if (dict.TryGetProperty("vision", out var visionDict))
+					{
+						int worldHour = visionDict.TryGetProperty("worldHour", out var wh) ? wh.GetInt32() : 12;
+						int dawn = visionDict.TryGetProperty("dawn", out var d) ? d.GetInt32() : 6;
+						int dusk = visionDict.TryGetProperty("dusk", out var dk) ? dk.GetInt32() : 18;
+						
+						string drinalPhase = "Full";
+						if (visionDict.TryGetProperty("moons", out var mDict) && mDict.TryGetProperty("drinal", out var dDict) && dDict.TryGetProperty("phase", out var pProp))
+						{
+							drinalPhase = pProp.GetString();
+						}
+						
+						wm.UpdateEnvironmentTime(worldHour, dawn, dusk, drinalPhase, true); // true = initial load
+					
+						// Wire up player light source from server vision data
+						bool hasLight = visionDict.TryGetProperty("hasLightSource", out var hlProp) && hlProp.GetBoolean();
+						wm.SetPlayerLightSource(hasLight);
 					}
 				}
 			}
@@ -845,30 +1522,14 @@ public partial class MainUI : Control
 		}
 	}
 
-	private void OnEntitySneakReceived(Variant data)
-	{
-		try
-		{
-			var dict = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
-			string id = dict.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-			bool sneaking = dict.TryGetProperty("sneaking", out var sProp) && sProp.GetBoolean();
-			
-			if (id != null)
-			{
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null)
-				{
-					wm.UpdateEntitySneak(id, sneaking);
-				}
-			}
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[UI] OnEntitySneakReceived error: {ex.Message}");
-		}
-	}
 
-	// ─── Combat Log ─────────────────────────────────────────────────
+
+
+
+
+
+
+	// â”€â”€â”€ Combat Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	/// <summary>
 	/// Expected JSON: { "type": "COMBAT_LOG", "events": [
 	///   { "event": "MELEE_HIT", "source": "You", "target": "a fire beetle", "damage": 12 },
@@ -885,202 +1546,31 @@ public partial class MainUI : Control
 	///   { "event": "MESSAGE", "text": "You feel yourself getting better." }
 	/// ]}
 	/// </summary>
-	private void OnCombatLogReceived(Variant data)
-	{
-		try
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
 
-			if (!root.TryGetProperty("events", out var events)) return;
 
-			foreach (var evt in events.EnumerateArray())
-			{
-				string eventType = evt.GetProperty("event").GetString();
-				FormatAndLogEvent(evt, eventType);
-			}
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] CombatLog Error: {ex.Message}"); }
-	}
 
-	private void FormatAndLogEvent(JsonElement evt, string eventType)
-	{
-		switch (eventType)
-		{
-			case "MELEE_HIT":
-			{
-				string src = evt.GetProperty("source").GetString();
-				string tgt = evt.GetProperty("target").GetString();
-				int dmg = evt.GetProperty("damage").GetInt32();
-				if (src == "You")
-					Log("HIT", $"You hit {tgt} for {dmg} points of damage.");
-				else
-					Log("HIT_TAKEN", $"{src} hits YOU for {dmg} points of damage.");
-				break;
-			}
-			case "MELEE_MISS":
-			{
-				string src = evt.GetProperty("source").GetString();
-				string tgt = evt.GetProperty("target").GetString();
-				if (src == "You")
-					Log("MISS", $"You try to hit {tgt}, but miss!");
-				else
-					Log("MISS", $"{src} tries to hit YOU, but misses!");
-				break;
-			}
-			case "SPELL_DAMAGE":
-			{
-				string src = evt.GetProperty("source").GetString();
-				string tgt = evt.GetProperty("target").GetString();
-				string spell = evt.GetProperty("spell").GetString();
-				int dmg = evt.GetProperty("damage").GetInt32();
-				Log("SPELL", $"{src} hit {tgt} for {dmg} points of non-melee damage. ({spell})");
-				break;
-			}
-			case "SPELL_HEAL":
-			{
-				string src = evt.GetProperty("source").GetString();
-				string tgt = evt.GetProperty("target").GetString();
-				string spell = evt.GetProperty("spell").GetString();
-				int amt = evt.GetProperty("amount").GetInt32();
-				Log("HEAL", $"{spell} heals {tgt} for {amt} hit points.");
-				break;
-			}
-			case "DOT_TICK":
-			{
-				string tgt = evt.GetProperty("target").GetString();
-				string spell = evt.GetProperty("spell").GetString();
-				int dmg = evt.GetProperty("damage").GetInt32();
-				Log("DOT", $"{tgt} has taken {dmg} damage from {spell}.");
-				break;
-			}
-			case "DEATH":
-			{
-				string who = evt.GetProperty("who").GetString();
-				Log("DEATH", $"{who} has been slain!");
-				break;
-			}
-			case "XP_GAIN":
-			{
-				int amt = evt.GetProperty("amount").GetInt32();
-				Log("XP", $"You gained {amt} experience!");
-				break;
-			}
-			case "LOOT":
-			{
-				string item = evt.GetProperty("item").GetString();
-				string from = evt.TryGetProperty("source", out var src) ? src.GetString() : "a corpse";
-				Log("LOOT", $"You loot {item} from {from}.");
-				break;
-			}
-			case "LEVEL_UP":
-			{
-				int lvl = evt.GetProperty("level").GetInt32();
-				Log("DING", $"You have reached level {lvl}! Congratulations!");
-				break;
-			}
-			case "FIZZLE":
-			{
-				string spell = evt.GetProperty("spell").GetString();
-				Log("FIZZLE", $"Your {spell} spell fizzles!");
-				break;
-			}
-			case "RESIST":
-			{
-				string tgt = evt.GetProperty("target").GetString();
-				string spell = evt.GetProperty("spell").GetString();
-				Log("RESIST", $"{tgt} resisted your {spell}!");
-				break;
-			}
-			case "MESSAGE":
-			{
-				string text = evt.GetProperty("text").GetString();
-				GD.Print($"[CLIENT DEBUG] Received MESSAGE: {text}");
-				Log("SYSTEM", text);
-				break;
-			}
-			case "NPC_SAY":
-			{
-				string npcName = evt.GetProperty("npcName").GetString();
-				string text = evt.GetProperty("text").GetString();
-				// Meta-clickable keywords might be in the text as [keyword]
-				// We format them on the client for the RichTextLabel
-				LogNPC(npcName, text);
-				break;
-			}
-			default:
-				GD.Print($"[UI] Unhandled combat event: {eventType}");
-				break;
-		}
-	}
 
-	private void OnNpcSayReceived(Variant data)
-	{
-		try
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
-			string npcName = root.GetProperty("npcName").GetString();
-			string text = root.GetProperty("text").GetString();
-			LogNPC(npcName, text);
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] NPC_SAY Error: {ex.Message}"); }
-	}
+	// ── Chat System ─────────────────────────────────────────────────────
 
-	private void OnMetaClicked(Variant meta)
-	{
-		string keyword = meta.ToString();
-		GD.Print($"[UI] Meta clicked: {keyword}");
-		_client.SendRaw($"{{\"type\": \"SAY\", \"text\": \"{keyword}\"}}");
-	}
 
-	private void OnMerchantOpened(Variant data)
-	{
-		try
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
-			string npcName = root.GetProperty("npcName").GetString();
-			string npcId = root.GetProperty("npcId").GetString();
-			var items = root.GetProperty("items");
 
-			_merchantTitle.Text = $"{npcName} ({_copper} cp)";
-			
-			// Clear old items
-			foreach (Node child in _merchantItemList.GetChildren()) child.QueueFree();
 
-			foreach (var item in items.EnumerateArray())
-			{
-				string iName = item.GetProperty("name").GetString();
-				string iKey = item.GetProperty("itemKey").GetString();
-				double price = item.GetProperty("price").GetDouble();
 
-				var row = new HBoxContainer();
-				var label = new Label { Text = $"{iName} - {price}cp", SizeFlagsHorizontal = SizeFlags.ExpandFill };
-				var buyBtn = new Button { Text = "Buy" };
-				
-				buyBtn.Pressed += () => {
-					_client.SendRaw($"{{\"type\": \"BUY\", \"npcId\": \"{npcId}\", \"itemKey\": \"{iKey}\"}}");
-				};
 
-				row.AddChild(label);
-				row.AddChild(buyBtn);
-				_merchantItemList.AddChild(row);
-			}
 
-			_merchantWindow.Show();
-			Log("SYSTEM", $"[color=cyan]{npcName} opens their shop...[/color]");
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Merchant Error: {ex.Message}"); }
-	}
+	// ═══════════════════════════════════════════════════════════════
+	//  TRAINER WINDOW
+	// ═══════════════════════════════════════════════════════════════
 
-	private void OnTrainerOpened(Variant data) { Log("SYSTEM", "Trainer window opened (Placeholder)"); }
-	private void OnBankOpened(Variant data) { Log("SYSTEM", "Bank window opened (Placeholder)"); }
 
-	// ─── Buff System ────────────────────────────────────────────────
+	// ═══════════════════════════════════════════════════════════════
+	//  COMPANION WINDOW (Pet / future Mercenary)
+	// ═══════════════════════════════════════════════════════════════
+
+
+
+
+	// â”€â”€â”€ Buff System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	/// <summary>
 	/// Expected JSON: { "type": "BUFFS_UPDATE", "buffs": [
 	///   { "name": "Spirit of Wolf", "duration": 36.0, "maxDuration": 60.0, "beneficial": true },
@@ -1088,638 +1578,59 @@ public partial class MainUI : Control
 	///   ...
 	/// ]}
 	/// </summary>
-	private void OnBuffsUpdated(Variant data)
-	{
-		try
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
 
-			if (!root.TryGetProperty("buffs", out var buffs)) return;
-
-			// Clear existing buff icons
-			foreach (var existing in _activeBuffs)
-				existing.IconNode.QueueFree();
-			_activeBuffs.Clear();
-
-			foreach (var buff in buffs.EnumerateArray())
-			{
-				string name = buff.GetProperty("name").GetString();
-				float duration = buff.TryGetProperty("duration", out var durProp) ? (float)durProp.GetDouble() : 0f;
-				float maxDuration = buff.TryGetProperty("maxDuration", out var maxDurProp) ? (float)maxDurProp.GetDouble() : duration;
-				bool beneficial = buff.TryGetProperty("beneficial", out var benProp) ? benProp.GetBoolean() : true;
-
-				// Instantiate icon from scene
-				var icon = _buffIconScene.Instantiate<Panel>();
-				_buffBar.AddChild(icon);
-
-				// Set label text (abbreviate long names)
-				var label = icon.GetNode<Label>("Label");
-				label.Text = name.Length > 5 ? name[..5] : name;
-				label.TooltipText = name; // Full name on hover
-
-				// Color code: beneficial = blue border, harmful = red border
-				if (!beneficial)
-				{
-					var style = new StyleBoxFlat();
-					style.BgColor = new Color(0.15f, 0.08f, 0.08f, 0.9f);
-					style.BorderWidthLeft = 1;
-					style.BorderWidthTop = 1;
-					style.BorderWidthRight = 1;
-					style.BorderWidthBottom = 1;
-					style.BorderColor = new Color(1f, 0.3f, 0.3f, 1f);
-					style.CornerRadiusTopLeft = 2;
-					style.CornerRadiusTopRight = 2;
-					style.CornerRadiusBottomRight = 2;
-					style.CornerRadiusBottomLeft = 2;
-					icon.AddThemeStyleboxOverride("panel", style);
-					label.AddThemeColorOverride("font_color", new Color(1f, 0.7f, 0.7f, 1f));
-				}
-
-				// Set initial duration bar
-				var durationBar = icon.GetNode<ProgressBar>("Duration");
-				if (maxDuration > 0)
-					durationBar.Value = (duration / maxDuration) * 100.0;
-				else
-					durationBar.Value = 100.0;
-
-				_activeBuffs.Add(new ActiveBuff
-				{
-					Name = name,
-					DurationMax = maxDuration,
-					DurationRemaining = duration,
-					IconNode = icon
-				});
-			}
-
-			GD.Print($"[UI] Buffs updated: {_activeBuffs.Count} active.");
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Buff Error: {ex.Message}"); }
-	}
-
-	// ─── Sit / Stand / Combat ───────────────────────────────────────
-	private void OnSitStandPressed()
-	{
-		if (_isSitting)
-			_client.SendRaw("{\"type\": \"STAND\"}");
-		else
-			_client.SendRaw("{\"type\": \"SIT\"}");
-	}
-
-	private void OnAutoFightPressed()
-	{
-		if (_autoFight)
-		{
-			_client.SendRaw("{\"type\": \"STOP_COMBAT\"}");
-		}
-		else
-		{
-			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-			if (wm != null && wm.CurrentTargetId != null)
-			{
-				_client.SendRaw($"{{\"type\":\"ATTACK_TARGET\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
-			}
-			else
-			{
-				_client.SendRaw("{\"type\": \"START_COMBAT\"}");
-			}
-		}
-	}
-
-	private void OnLookPressed()
-	{
-		GD.Print("[CLIENT DEBUG] 'Look' Button hit! Transmitting LOOK.");
-		_client.SendRaw("{\"type\": \"LOOK\"}");
-	}
-
-	private void OnCampPressed()
-	{
-		_client.SendRaw("{\"type\": \"CAMP\"}");
-	}
-
-	// ─── Status Handling ────────────────────────────────────────────
-	private void OnCharacterStatusReceived(Variant data)
-	{
-		try 
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
-			var character = root.GetProperty("character");
-
-			UpdateBars(character);
-			UpdateStatsUI(character);
-			
-			// Sit/Stand state
-			if (character.TryGetProperty("state", out var stateProp))
-			{
-				string state = stateProp.GetString();
-				_isSitting = (state == "medding"); 
-				if (_sitStandBtn != null) _sitStandBtn.Text = _isSitting ? "Stand" : "Sit";
-
-				// Trigger sit/stand animation on player model
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.SetPlayerSitting(_isSitting);
-			}
-
-			// Auto-fight state (use autoFight flag, not inCombat)
-			if (character.TryGetProperty("autoFight", out var autoFightProp))
-			{
-				_autoFight = autoFightProp.GetBoolean();
-				if (_autoFightBtn != null) _autoFightBtn.Text = _autoFight ? "Stop Combat" : "Start Combat";
-			}
-
-			// Target frame
-			if (character.TryGetProperty("target", out var targetProp) && targetProp.ValueKind != JsonValueKind.Null)
-			{
-				_targetWindow.Visible = true;
-				string targetName = targetProp.GetProperty("name").GetString();
-				double targetHp = targetProp.GetProperty("hp").GetDouble();
-				double targetMaxHp = targetProp.GetProperty("maxHp").GetDouble();
-				int targetLevel = targetProp.TryGetProperty("level", out var lvlProp) ? lvlProp.GetInt32() : 0;
-				string targetId = targetProp.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-
-				_targetNameLabel.Text = targetLevel > 0 ? $"{targetName} (Lv {targetLevel})" : targetName;
-				_targetHpBar.MaxValue = targetMaxHp;
-				_targetHpBar.Value = Math.Max(0, targetHp);
-				double pct = targetMaxHp > 0 ? (targetHp / targetMaxHp * 100) : 0;
-				_targetHpLabel.Text = $"{pct:F0}%";
-
-				// Give the target a ChaseAI instruction in the 3D world ONLY if we are in combat
-				bool inCombat = character.TryGetProperty("inCombat", out var icProp) && icProp.GetBoolean();
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null)
-				{
-					if (targetId != null && inCombat)
-						wm.SetCombatTarget(targetId);
-					else
-						wm.SetCombatTarget(null);
-				}
-			}
-			else
-			{
-				_targetWindow.Visible = false;
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.SetCombatTarget(null);
-			}
-			// Extended Targets
-			if (character.TryGetProperty("extendedTargets", out var extArr) && extArr.ValueKind == JsonValueKind.Array)
-			{
-				int i = 0;
-				foreach (var extMob in extArr.EnumerateArray())
-				{
-					if (i >= 10) break; // Hardcap at 10 buttons
-					
-					string mId = extMob.GetProperty("id").GetString();
-					string mName = extMob.GetProperty("name").GetString();
-					double mHp = extMob.GetProperty("hp").GetDouble();
-					double mMax = extMob.GetProperty("maxHp").GetDouble();
-					
-					double pct = mMax > 0 ? (mHp / mMax * 100) : 0;
-					
-					if (_extendedTargetBtns[i] != null)
-					{
-						// GD.Print($"[EXT] Assigning slot {i} to {mName}");
-						_extendedTargetBtns[i].Text = $"{mName} [{pct:F0}%]";
-						_extendedTargetBtns[i].Show();
-						
-						// Safety cleanup old signals by re-assigning (this avoids memory leak accumulation)
-						var btn = _extendedTargetBtns[i];
-						btn.SetMeta("targetId", mId);
-					}
-					else
-					{
-						GD.PrintErr($"[EXT ERROR] Slot {i} button was strictly null!");
-					}
-					i++;
-				}
-				
-				// Hide remaining unused buttons
-				for (int j = i; j < 10; j++)
-				{
-					if (_extendedTargetBtns[j] != null)
-					{
-						_extendedTargetBtns[j].Hide();
-					}
-				}
-			}
-			else
-			{
-				for (int j = 0; j < 10; j++)
-				{
-					if (_extendedTargetBtns[j] != null) _extendedTargetBtns[j].Hide();
-				}
-			}
-
-			// Abilities
-			if (character.TryGetProperty("availableAbilities", out var availArr) && availArr.ValueKind == JsonValueKind.Array)
-			{
-				_availableAbilities.Clear();
-				foreach (var abil in availArr.EnumerateArray())
-				{
-					string aName = abil.GetString();
-					// Format to title case
-					if (!string.IsNullOrEmpty(aName))
-					{
-						aName = char.ToUpper(aName[0]) + aName.Substring(1);
-						_availableAbilities.Add(aName);
-					}
-				}
-			}
-
-			if (character.TryGetProperty("abilityCooldowns", out var cdsVar) && cdsVar.ValueKind == JsonValueKind.Object)
-			{
-				foreach (var prop in cdsVar.EnumerateObject())
-				{
-					_localAbilityCooldowns[prop.Name] = prop.Value.GetDouble();
-				}
-			}
-
-			// XP / Level / Zone
-			if (character.TryGetProperty("level", out var levelProp))
-			{
-				int level = levelProp.GetInt32();
-				_levelLabel.Text = $"Level {level}";
-			}
-
-			if (character.TryGetProperty("experience", out var xpProp) &&
-				character.TryGetProperty("nextLevelXp", out var nextXpProp))
-			{
-				double xp = xpProp.GetDouble();
-				double nextXp = nextXpProp.GetDouble();
-				if (nextXp > 0)
-				{
-					_xpBar.MaxValue = nextXp;
-					_xpBar.Value = xp;
-					double xpPct = xp / nextXp * 100;
-					_xpLabel.Text = $"EXP: {xpPct:F1}%";
-				}
-			}
-
-			if (character.TryGetProperty("zone", out var zoneProp))
-			{
-				_zoneLabel.Text = zoneProp.GetString();
-				string locText = $"[center][b]{zoneProp.GetString()}[/b][/center]";
-				if (character.TryGetProperty("roomName", out var roomProp) && roomProp.ValueKind != JsonValueKind.Null) {
-					locText = $"[center][b]{zoneProp.GetString()}[/b]\n[color=white]{roomProp.GetString()}[/color][/center]";
-				}
-				_locationLabel.Text = locText;
-			}
-
-			// Topographical data for Map Radar
-			float px = character.TryGetProperty("x", out var xProp) ? xProp.GetSingle() : 0f;
-			float py = character.TryGetProperty("y", out var yProp) ? yProp.GetSingle() : 0f;
-			Vector2 playerPos = new Vector2(px, py);
-			
-			Vector2 mSize = new Vector2(400, 400);
-			if (character.TryGetProperty("mapSize", out var ms) && ms.ValueKind == JsonValueKind.Object)
-			{
-				mSize.X = ms.TryGetProperty("width", out var mw) ? mw.GetSingle() : 400f;
-				mSize.Y = ms.TryGetProperty("length", out var ml) ? ml.GetSingle() : 400f;
-			}
-			
-			Vector2 cOff = Vector2.Zero;
-			if (character.TryGetProperty("centerOffset", out var co) && co.ValueKind == JsonValueKind.Object)
-			{
-				cOff.X = co.TryGetProperty("x", out var ox) ? ox.GetSingle() : 0f;
-				cOff.Y = co.TryGetProperty("y", out var oy) ? oy.GetSingle() : 0f;
-			}
-			
-			JsonElement zoneLines = character.TryGetProperty("zoneLines", out var zl) ? zl : default;
-
-			if (_mudMap != null && _mapPanel.Visible) {
-				// We no longer need mapData or roomId, replacing them with a null literal and "" string
-				_mudMap.UpdateMap(default, "", playerPos, mSize, cOff, zoneLines);
-			}
+	// â”€â”€â”€ Sit / Stand / Combat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
-			// Zone connections — rebuild buttons only when zone changes
-			if (character.TryGetProperty("zoneId", out var zoneIdProp))
-			{
-				string zoneId = zoneIdProp.GetString();
-				if (zoneId != _currentZoneId)
-				{
-					_currentZoneId = zoneId;
-					RebuildZoneData(character);
-				}
-			}
 
-			// Topographical Zone Entry Spawning
-			if (character.TryGetProperty("spawnPos", out var spawnProp) && spawnProp.ValueKind == JsonValueKind.Object)
-			{
-				_pendingSpawnX = spawnProp.TryGetProperty("x", out var xp) ? xp.GetSingle() : 0f;
-				_pendingSpawnZ = spawnProp.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
-				_isInitialLoadPending = true;
-				
-				if (_loadingLayer != null) 
-				{
-					_loadingLayer.Show();
-					_flavorLabel.Text = "Constructing Terrain...";
-					_loadingBar.Value = 10;
-				}
-				
-				GD.Print($"[UI] Server requested spawn at {_pendingSpawnX}, {_pendingSpawnZ}. Delaying until entities ready...");
-			}
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Status Error: {ex.Message}"); }
-	}
+	// â”€â”€â”€ Status Handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-	private void RebuildZoneData(JsonElement character)
-	{
-		// Clear old buttons
-		foreach (Node child in _zoneConnections.GetChildren()) child.QueueFree();
 
-		if (!character.TryGetProperty("connections", out var connections)) return;
 
-		foreach (var conn in connections.EnumerateArray())
-		{
-			string targetZoneId = conn.GetString();
-			// Format zone ID into display name: "west_karana" → "West Karana"
-			string displayName = FormatZoneName(targetZoneId);
+	// â”€â”€â”€ Inventory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-			var btn = new Button
-			{
-				Text = $"→ {displayName}",
-				CustomMinimumSize = new Vector2(0, 28),
-			};
-			btn.AddThemeFontSizeOverride("font_size", 11);
-			btn.Pressed += () =>
-			{
-				_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
-			};
-			_zoneConnections.AddChild(btn);
-		}
-		
-		var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-		if (wm != null)
-		{
-			wm.ClearWorld(); // This purges all old enemies
-			
-			JsonElement mapSize = default;
-			JsonElement zoneLines = default;
-			JsonElement centerOffset = default;
-			
-			if (character.TryGetProperty("mapSize", out var ms)) mapSize = ms;
-			if (character.TryGetProperty("zoneLines", out var zl)) zoneLines = zl;
-			if (character.TryGetProperty("centerOffset", out var co)) centerOffset = co;
-			
-			wm.RebuildZoneBoundaries(mapSize, zoneLines, centerOffset);
-		}
-	}
+	/// <summary>
+	/// Create 10 identical slot buttons in the inventory grid (2 columns, 5 rows).
+	/// </summary>
 
-	private string FormatZoneName(string zoneId)
-	{
-		var parts = zoneId.Split('_');
-		for (int i = 0; i < parts.Length; i++)
-		{
-			if (parts[i].Length > 0)
-				parts[i] = char.ToUpper(parts[i][0]) + parts[i][1..];
-		}
-		return string.Join(" ", parts);
-	}
+	// ─── Auto-Equip Slot ────────────────────────────────────────────
 
-	// ─── Inventory ──────────────────────────────────────────────────
-	private void OnInventoryUpdated(Variant data)
-	{
-		try
-		{
-			string json = (string)data;
-			using var doc = JsonDocument.Parse(json);
-			var root = doc.RootElement;
-			
-			if (!root.TryGetProperty("inventory", out var inventory)) return;
+	// ─── Cursor Label (floating item name on cursor) ────────────────
 
-			// Update Log if message provided
-			if (root.TryGetProperty("message", out var msg)) Log("SYSTEM", msg.GetString());
+	// ─── Item Detail Popup ──────────────────────────────────────────
 
-			// Clear Inventory List
-			foreach (Node child in _inventoryList.GetChildren()) child.QueueFree();
-			
-			// Clear Equipment Button Texts and disconnect old handlers
-			foreach (var slot in new[] { "Head", "Chest", "Arms", "Hands", "Primary", "Secondary" }) {
-				var slotBtn = _equipmentGrid.GetNode<Button>($"{slot}/Item");
-				slotBtn.Text = "Empty";
-				foreach (var conn in slotBtn.GetSignalConnectionList("pressed"))
-					slotBtn.Disconnect("pressed", (Callable)conn["callable"]);
-			}
+	// ─── Slot Input Handling (all slots use this) ───────────────────
 
-			foreach (var item in inventory.EnumerateArray())
-			{
-				int item_id = item.GetProperty("item_id").GetInt32();
-				string name = item.GetProperty("itemName").GetString();
-				int equipped = item.GetProperty("equipped").GetInt32();
-				int slot = item.GetProperty("slot").GetInt32();
 
-				// Build stat summary for the item
-				string statText = BuildItemStatText(item);
 
-				if (equipped == 1) {
-					string slotName = MapSlotToName(slot);
-					if (slotName != null)
-					{
-						var slotBtn = _equipmentGrid.GetNode<Button>($"{slotName}/Item");
-						slotBtn.Text = name;
-						// Wire unequip on click
-						int capturedId = item_id;
-						// Disconnect any previous handler by replacing the button's connections
-						foreach (var conn in slotBtn.GetSignalConnectionList("pressed"))
-							slotBtn.Disconnect("pressed", (Callable)conn["callable"]);
-						slotBtn.Pressed += () => _client.SendRaw($"{{\"type\": \"UNEQUIP_ITEM\", \"itemId\": {capturedId}}}");
-					}
-				} else {
-					var itemUI = _inventoryItemScene.Instantiate<Panel>();
-					_inventoryList.AddChild(itemUI);
-					itemUI.GetNode<Label>("HBox/Info/ItemName").Text = name;
-					itemUI.GetNode<Label>("HBox/Info/Stats").Text = statText;
-					
-					var equipBtn = itemUI.GetNode<Button>("HBox/EquipBtn");
-					int targetSlot = item.TryGetProperty("slot", out var slotProp) ? slotProp.GetInt32() : 13;
-					equipBtn.Pressed += () => _client.SendRaw($"{{\"type\": \"EQUIP_ITEM\", \"itemId\": {item_id}, \"slot\": {targetSlot}}}");
-				}
-			}
-		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Inv Error: {ex.Message}"); }
-	}
 
-	private string BuildItemStatText(JsonElement item)
-	{
-		var parts = new List<string>();
-		if (item.TryGetProperty("damage", out var dmg) && dmg.GetInt32() > 0) parts.Add($"Dmg: {dmg.GetInt32()}");
-		if (item.TryGetProperty("delay", out var delay) && delay.GetInt32() > 0) parts.Add($"Delay: {delay.GetInt32()}");
-		if (item.TryGetProperty("ac", out var ac) && ac.GetInt32() > 0) parts.Add($"AC: {ac.GetInt32()}");
-		if (item.TryGetProperty("hp", out var hp) && hp.GetInt32() > 0) parts.Add($"HP: +{hp.GetInt32()}");
-		if (item.TryGetProperty("mana", out var mana) && mana.GetInt32() > 0) parts.Add($"Mana: +{mana.GetInt32()}");
-		if (item.TryGetProperty("str", out var str) && str.GetInt32() != 0) parts.Add($"STR: +{str.GetInt32()}");
-		if (item.TryGetProperty("sta", out var sta) && sta.GetInt32() != 0) parts.Add($"STA: +{sta.GetInt32()}");
-		if (item.TryGetProperty("agi", out var agi) && agi.GetInt32() != 0) parts.Add($"AGI: +{agi.GetInt32()}");
-		if (item.TryGetProperty("dex", out var dex) && dex.GetInt32() != 0) parts.Add($"DEX: +{dex.GetInt32()}");
-		if (item.TryGetProperty("wis", out var wis) && wis.GetInt32() != 0) parts.Add($"WIS: +{wis.GetInt32()}");
-		if (item.TryGetProperty("int", out var intel) && intel.GetInt32() != 0) parts.Add($"INT: +{intel.GetInt32()}");
-		if (item.TryGetProperty("cha", out var cha) && cha.GetInt32() != 0) parts.Add($"CHA: +{cha.GetInt32()}");
-		return parts.Count > 0 ? string.Join(" | ", parts) : "";
-	}
 
-	private string MapSlotToName(int slot) {
-		if (slot == 2) return "Head";
-		if (slot == 7) return "Arms";
-		if (slot == 12) return "Hands";
-		if (slot == 13) return "Primary";
-		if (slot == 14) return "Secondary";
-		if (slot == 17) return "Chest";
-		return null;
-	}
 
-	// ─── Logging ────────────────────────────────────────────────────
-	private void Log(string type, string message)
-	{
-		// Trim old lines if we're getting too long
-		if (_logLineCount > MaxLogLines)
-		{
-			_combatLog.Clear();
-			_logLineCount = 0;
-			_combatLog.AppendText("[color=gray]--- log trimmed ---[/color]\n");
-		}
 
-		string color = type switch
-		{
-			"MISS"      => "#888888",   // Gray
-			"HIT"       => "#55cc55",   // Green — your hits
-			"HIT_TAKEN" => "#cc5555",   // Red — damage taken
-			"SPELL"     => "#55cccc",   // Cyan
-			"HEAL"      => "#88ee88",   // Light green
-			"DOT"       => "#cccc55",   // Yellow
-			"DEATH"     => "#ff4444",   // Bright red
-			"XP"        => "#ddaa44",   // Gold
-			"LOOT"      => "#ddaa44",   // Gold
-			"DING"      => "#ffdd00",   // Bright gold
-			"FIZZLE"    => "#aa55aa",   // Purple
-			"RESIST"    => "#aa55aa",   // Purple
-			"SYSTEM"    => "#dd8833",   // Orange
-			_           => "#cccccc",   // Default light gray
-		};
+	/// <summary>
+	/// Build the equipment paperdoll grid programmatically.
+	/// Creates labeled slot rows arranged in pairs for a compact paperdoll look.
+	/// </summary>
 
-		_combatLog.AppendText($"[color={color}]{message}[/color]\n");
-		_logLineCount++;
-	}
 
-	private void LogNPC(string npcName, string text)
-	{
-		if (_logLineCount > MaxLogLines)
-		{
-			_combatLog.Clear();
-			_logLineCount = 0;
-			_combatLog.AppendText("[color=gray]--- log trimmed ---[/color]\n");
-		}
 
-		// Replace [keyword] with [url=keyword][color=blue][b]keyword[/b][/color][/url]
-		string formattedText = text;
-		var matches = System.Text.RegularExpressions.Regex.Matches(text, @"\[([^\]]+)\]");
-		foreach (System.Text.RegularExpressions.Match match in matches)
-		{
-			string keyword = match.Groups[1].Value;
-			string replacement = $"[url={keyword}][color=blue][b]{keyword}[/b][/color][/url]";
-			formattedText = formattedText.Replace(match.Value, replacement);
-		}
+	/// <summary>
+	/// Update the inventory window's built-in stats panel with current character data.
+	/// Called from OnCharacterStatusReceived.
+	/// </summary>
 
-		_combatLog.AppendText($"[color=lightblue]{npcName} says, '{formattedText}'[/color]\n");
-		_logLineCount++;
-	}
 
-	// ─── Status Bars ────────────────────────────────────────────────
-	private void UpdateBars(JsonElement source)
-	{
-		double hp = 0, maxHp = 0, mana = 0, maxMana = 0;
-		bool hasHp = false, hasMana = false;
+	/// <summary>
+	/// Format copper into EQ-style pp/gp/sp/cp string.
+	/// </summary>
 
-		if (source.TryGetProperty("playerHp", out var php)) { hp = php.GetDouble(); hasHp = true; }
-		else if (source.TryGetProperty("hp", out var h2)) { hp = h2.GetDouble(); hasHp = true; }
+	// â”€â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-		if (source.TryGetProperty("playerMaxHp", out var pmhp)) { maxHp = pmhp.GetDouble(); hasHp = true; }
-		else if (source.TryGetProperty("maxHp", out var mh2)) { maxHp = mh2.GetDouble(); hasHp = true; }
 
-		if (source.TryGetProperty("playerMana", out var pman)) { mana = pman.GetDouble(); hasMana = true; }
-		else if (source.TryGetProperty("mana", out var m2)) { mana = m2.GetDouble(); hasMana = true; }
+	// â”€â”€â”€ Status Bars â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-		if (source.TryGetProperty("playerMaxMana", out var pmman)) { maxMana = pmman.GetDouble(); hasMana = true; }
-		else if (source.TryGetProperty("maxMana", out var mm2)) { maxMana = mm2.GetDouble(); hasMana = true; }
 
-		if (source.TryGetProperty("copper", out var cpProp)) { _copper = cpProp.GetInt32(); }
 
-		if (hasHp && maxHp > 0)
-		{
-			_hpBar.MaxValue = maxHp;
-			_hpBar.Value = hp;
-			_hpLabel.Text = $"HP: {hp}/{maxHp}";
-		}
-		if (hasMana && maxMana > 0)
-		{
-			_manaBar.Visible = true;
-			_manaBar.MaxValue = maxMana;
-			_manaBar.Value = mana;
-			_manaLabel.Text = $"MANA: {mana}/{maxMana}";
-			_currentMana = mana;
-		}
-		else if (hasMana && maxMana <= 0)
-		{
-			_manaBar.Visible = false;
-			_currentMana = 0;
-		}
-	}
 
-	private void UpdateStatsUI(JsonElement source)
-	{
-		if (_statsText == null) return;
-		
-		if (source.TryGetProperty("name", out var nProp)) _playerNameLabel.Text = nProp.GetString();
-		
-		int lvl = source.TryGetProperty("level", out var lProp) ? lProp.GetInt32() : 1;
-		int str = source.TryGetProperty("str", out var strProp) ? strProp.GetInt32() : 0;
-		int sta = source.TryGetProperty("sta", out var staProp) ? staProp.GetInt32() : 0;
-		int agi = source.TryGetProperty("agi", out var agiProp) ? agiProp.GetInt32() : 0;
-		int dex = source.TryGetProperty("dex", out var dexProp) ? dexProp.GetInt32() : 0;
-		int wis = source.TryGetProperty("wis", out var wisProp) ? wisProp.GetInt32() : 0;
-		int intel = source.TryGetProperty("intel", out var intProp) ? intProp.GetInt32() : 0;
-		int cha = source.TryGetProperty("cha", out var chaProp) ? chaProp.GetInt32() : 0;
-		int ac = source.TryGetProperty("ac", out var acProp) ? acProp.GetInt32() : 0;
 
-		_statsText.Text = $"[center]Stats[/center]\n" +
-						  $"Str : [{str}]\n" +
-						  $"Sta : [{sta}]\n" +
-						  $"Agi : [{agi}]\n" +
-						  $"Dex : [{dex}]\n" +
-						  $"Wis : [{wis}]\n" +
-						  $"Int : [{intel}]\n" +
-						  $"Cha : [{cha}]\n" +
-						  $"AC  : [{ac}]\n" +
-						  $"\n" +
-						  $"Money: [{_copper} cp]\n" +
-						  $"Lvl : [{lvl}]";
-		
-		// Update Skills panel
-		if (_skillsText != null && source.TryGetProperty("skills", out var skillsProp) && skillsProp.ValueKind == JsonValueKind.Object)
-		{
-			var sb = new System.Text.StringBuilder();
-			sb.AppendLine("[center]Skills[/center]");
-			foreach (var skill in skillsProp.EnumerateObject())
-			{
-				string skillName = FormatSkillName(skill.Name);
-				int val = skill.Value.GetInt32();
-				sb.AppendLine($"{skillName}: {val}");
-			}
-			_skillsText.Text = sb.ToString();
-		}
-	}
-	
-	private string FormatSkillName(string key)
-	{
-		// "1h_slashing" → "1H Slash", "defense" → "Defense"
-		var parts = key.Split('_');
-		for (int i = 0; i < parts.Length; i++)
-		{
-			if (parts[i].Length > 0)
-				parts[i] = char.ToUpper(parts[i][0]) + parts[i].Substring(1);
-		}
-		return string.Join(" ", parts);
-	}
 }

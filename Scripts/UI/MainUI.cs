@@ -180,6 +180,7 @@ public partial class MainUI : Control
 
 	// Options state
 	private bool _showPlayerName = false;
+	private bool _dynamicShadows = true;
 	private Panel _optionsPanel;
 
 	// Buff tracking for duration ticking
@@ -1380,6 +1381,20 @@ public partial class MainUI : Control
 			if (wm != null) wm.SetPlayerNameVisible(_showPlayerName);
 		};
 		vbox.AddChild(nameCheck);
+
+		// Dynamic Shadows checkbox
+		var shadowCheck = new CheckBox();
+		shadowCheck.Text = "Dynamic Shadows";
+		shadowCheck.ButtonPressed = _dynamicShadows;
+		shadowCheck.AddThemeFontSizeOverride("font_size", 12);
+		shadowCheck.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		shadowCheck.Toggled += (toggled) =>
+		{
+			_dynamicShadows = toggled;
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null) wm.SetDynamicShadows(_dynamicShadows);
+		};
+		vbox.AddChild(shadowCheck);
 
 		// Make the panel draggable
 		bool optsDragging = false;

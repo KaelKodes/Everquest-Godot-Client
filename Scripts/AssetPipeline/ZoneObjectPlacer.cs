@@ -13,11 +13,21 @@ public partial class ZoneObjectPlacer : RefCounted
     // Cache loaded object scenes to avoid re-loading duplicates (e.g., 50 trees)
     private readonly Dictionary<string, PackedScene> _objectSceneCache = new();
     
+    // Graphics Settings
+    public bool ShadowsEnabled { get; set; } = true;
+
+    public static Vector3 EQToGodot(float x, float y, float z)
+    {
+        // Reverting to the mapping that matches the Zone Root Basis (Z, Y, -X)
+        // With Z as EQ Height mapping to Godot X? No, let's keep it consistent.
+        return new Vector3(-z, y, -x);
+    }
+    
     /// <summary>
     /// Place all objects defined in a zone's object_instances.txt.
     /// Returns the container node with all placed objects.
     /// </summary>
-    public Node3D PlaceObjects(string zoneId, string cachePath, Node3D parent, bool isBundledMap = false)
+    public Node3D PlaceObjects(string zoneId, string cachePath, Node3D parent)
     {
         string instancesFile = Path.Combine(cachePath, "Zone", "object_instances.txt");
         string objectsDir = Path.Combine(cachePath, "Objects");
@@ -73,33 +83,19 @@ public partial class ZoneObjectPlacer : RefCounted
                 var instance = scene.Instantiate<Node3D>();
                 instance.Name = $"{modelName}_{placed}";
 
-                // LanternExtractor uses EQ coordinate system:
-                // EQ: X=east/west, Y=height, Z=north/south
-                // The Lantern GLB mesh has a baked transform of scale(-0.1) + rot(180,0,0).
-                // The zone root compensates with a basis that maps:
-                //   world.X = -local.Z,  world.Y = local.Y,  world.Z = -local.X
-                // Object instance positions are in the SAME local coordinate space
-                // as the mesh vertices, so we apply the same mapping here.
-                float worldX, worldY, worldZ;
-                if (isBundledMap)
-                {
-                    // Bundled maps use: Godot.X = -EQ_X, Godot.Z = -EQ_Y
-                    worldX = -posX;
-                    worldY = posY;
-                    worldZ = -posZ;
-                }
-                else
-                {
-                    // LanternExtractor maps use: Godot.X = -EQ_Y, Godot.Z = -EQ_X
-                    worldX = -posZ;
-                    worldY = posY;
-                    worldZ = -posX;
-                }
-                instance.Position = new Vector3(worldX, worldY, worldZ);
-                instance.RotationDegrees = new Vector3(rotX, rotY, rotZ);
+                // Use the previous working mapping
+                Vector3 worldPos = EQToGodot(posX, posY, posZ);
+                instance.Position = worldPos;
+                
+                // Reverting rotation to raw values
+                instance.Rotation = new Vector3(
+                    Mathf.DegToRad(rotX), 
+                    Mathf.DegToRad(rotY), 
+                    Mathf.DegToRad(rotZ)
+                );
                 instance.Scale = new Vector3(scaleX, scaleY, scaleZ);
 
-                AddLightIfSource(instance, modelName, container);
+                AddLightIfSource(instance, modelName, container, worldPos.X, worldPos.Y, worldPos.Z);
 
                 container.AddChild(instance);
                 placed++;
@@ -196,7 +192,7 @@ public partial class ZoneObjectPlacer : RefCounted
     /// <summary>
     /// Adds an OmniLight3D to objects that act as light sources.
     /// </summary>
-    private void AddLightIfSource(Node3D instance, string modelName, Node3D container)
+    private void AddLightIfSource(Node3D instance, string modelName, Node3D container, float worldX, float worldY, float worldZ)
     {
         string lowerName = modelName.ToLower();
         
@@ -205,41 +201,124 @@ public partial class ZoneObjectPlacer : RefCounted
         bool isTorch = lowerName.Contains("tfi") || lowerName.Contains("torch") || lowerName.Contains("sconce") || lowerName.Contains("wfi");
         bool isLantern = lowerName.Contains("lfi") || lowerName.Contains("lantern") || lowerName.Contains("lamp");
         bool isForge = lowerName.Contains("ffi") || lowerName.Contains("forge");
+        bool isCandelabra = lowerName.Contains("candle") || lowerName.Contains("cndl") || lowerName.Contains("candel") || lowerName.Contains("candelabra");
+        bool isChandelier = lowerName.Contains("chandelier") || lowerName.Contains("chndlr") || lowerName.Contains("chand");
         bool isOtherFire = lowerName.Contains("fire") || lowerName.EndsWith("fi") || lowerName.Contains("fi_act") || lowerName.StartsWith("pfi");
 
-        if (isCampfire || isBrazier || isTorch || isLantern || isForge || isOtherFire)
+        if (isCampfire || isBrazier || isTorch || isLantern || isForge || isCandelabra || isChandelier || isOtherFire)
         {
             var light = new OmniLight3D();
             
-            // Shadows are disabled by default for performance
-            light.ShadowEnabled = false; 
-
             if (isCampfire || isBrazier || isForge)
             {
-                light.LightEnergy = 50.0f; // Boosted heavily for Godot 4 inverse square falloff
-                light.OmniRange = 25.0f;
-                // Add light DIRECTLY to the instance, so it inherently follows the object's exact world position and scale
-                light.Position = new Vector3(0, 0.5f, 0); 
+                if (instance.HasNode("BrazierLight")) return;
+                
+                light.Name = "BrazierLight";
+                light.LightEnergy = 10.0f; 
+                light.OmniRange = 35.0f; 
+                light.LightSize = 0.0f; 
+                light.OmniAttenuation = 1.0f;
+                light.LightColor = new Color(1.0f, 0.6f, 0.25f);
+                light.Position = new Vector3(0, 7.5f, 0);
+                light.ShadowEnabled = ShadowsEnabled;
+                light.ShadowBias = 0.1f;
+                instance.AddChild(light);
                 
                 AttachAudio(instance, "fire001_loop.wav");
             }
             else if (isTorch)
             {
-                light.LightEnergy = 30.0f; // Boosted heavily
-                light.OmniRange = 15.0f;
+                if (instance.HasNode("TorchLight")) return;
+                light.Name = "TorchLight";
+                light.LightEnergy = 6.0f; // BUMPED from 3.0
+                light.OmniRange = 25.0f; // BUMPED from 15.0
+                light.LightColor = new Color(1.0f, 0.7f, 0.3f);
                 light.Position = new Vector3(0, 0.2f, 0);
+                instance.AddChild(light);
                 
                 AttachAudio(instance, "fire001_loop.wav", 0.5f);
             }
+            else if (isChandelier)
+            {
+                if (instance.HasNode("ChandelierLight")) return;
+                light.Name = "ChandelierLight";
+                light.LightEnergy = 6.0f;
+                light.OmniRange = 30.0f;
+                light.LightColor = new Color(1.0f, 0.8f, 0.45f);
+                light.Position = new Vector3(0, -0.3f, 0);
+                instance.AddChild(light);
+            }
+            else if (isCandelabra)
+            {
+                if (instance.HasNode("CandelabraLight")) return;
+                light.Name = "CandelabraLight";
+                light.LightEnergy = 5.0f;
+                light.OmniRange = 20.0f;
+                light.LightColor = new Color(1.0f, 0.8f, 0.4f);
+                light.Position = new Vector3(0, 0.5f, 0);
+                instance.AddChild(light);
+            }
+            else if (isLantern)
+            {
+                if (instance.HasNode("LanternLight")) return;
+                light.Name = "LanternLight";
+                light.LightEnergy = 5.0f; // BUMPED from 2.5
+                light.OmniRange = 20.0f; // BUMPED from 12.0
+                light.LightColor = new Color(1.0f, 0.75f, 0.35f);
+                light.Position = new Vector3(0, 0.3f, 0);
+                instance.AddChild(light);
+            }
             else
             {
-                light.LightEnergy = 25.0f; // Boosted heavily
+                if (instance.HasNode("GenericLight")) return;
+                light.Name = "GenericLight";
+                light.LightEnergy = 2.0f;
                 light.OmniRange = 10.0f;
+                light.LightColor = new Color(1.0f, 0.65f, 0.3f);
                 light.Position = new Vector3(0, 0.5f, 0);
+                instance.AddChild(light);
             }
-
-            // By attaching directly to the instance, the light "goes along for the ride" mathematically perfectly.
-            instance.AddChild(light);
+            
+            // CRITICAL FIX: Disable shadow casting on the object's geometry itself!
+            // This prevents the brazier bowl, the torch stick, or the flame texture from blocking
+            // the OmniLight3D and casting massive shadows onto the surrounding walls.
+            // The dungeon walls behind it will STILL cast shadows to stop light bleed, which is perfect.
+            DisableShadowsRecursive(instance);
+        }
+    }
+    
+    private void DisableShadowsRecursive(Node node)
+    {
+        if (node is GeometryInstance3D geom)
+        {
+            geom.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            
+            // Also ensure the material is double-sided so the light can pass through "from the inside" 
+            // of the bowl or flame and still illuminate the other side.
+            if (geom is MeshInstance3D meshInst)
+            {
+                for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+                {
+                    if (meshInst.GetSurfaceOverrideMaterial(i) is StandardMaterial3D mat)
+                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                }
+                if (meshInst.Mesh != null)
+                {
+                    for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
+                    {
+                        if (meshInst.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D mat)
+                        {
+                            var newMat = (StandardMaterial3D)mat.Duplicate();
+                            newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                            meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                        }
+                    }
+                }
+            }
+        }
+        foreach (Node child in node.GetChildren())
+        {
+            DisableShadowsRecursive(child);
         }
     }
     
@@ -266,7 +345,7 @@ public partial class ZoneObjectPlacer : RefCounted
     /// <summary>
     /// Reads light_instances.txt to place baked zone lighting (illuminates wall torches, etc.)
     /// </summary>
-    public Node3D PlaceLights(string zoneId, string cachePath, Node3D parent, bool isBundledMap = false)
+    public Node3D PlaceLights(string zoneId, string cachePath, Node3D parent)
     {
         string lightsFile = Path.Combine(cachePath, "Zone", "light_instances.txt");
         if (!File.Exists(lightsFile)) return null;
@@ -294,24 +373,22 @@ public partial class ZoneObjectPlacer : RefCounted
                 var light = new OmniLight3D();
                 light.Name = $"Light_{placed}";
                 
-                float worldX, worldY, worldZ;
-                if (isBundledMap)
-                {
-                    worldX = -x;
-                    worldY = y;
-                    worldZ = -z;
-                }
-                else
-                {
-                    worldX = -z;
-                    worldY = y;
-                    worldZ = -x;
-                }
+                float worldX = -z;
+                float worldY = y;
+                float worldZ = -x;
                 
                 light.Position = new Vector3(worldX, worldY, worldZ);
                 
-                // EQ colors are often 0-1 range
-                light.LightColor = new Color(r, g, b);
+                // EQ colors are often 0-1 range. Pure white lights look sterile —
+                // tint them warm since most EQ light sources are fire-based.
+                if (r > 0.9f && g > 0.9f && b > 0.9f)
+                {
+                    light.LightColor = new Color(1.0f, 0.75f, 0.4f); // Warm fire tint
+                }
+                else
+                {
+                    light.LightColor = new Color(r, g, b);
+                }
                 
                 // EQ Radiuses are massive, which causes 100s of lights to overlap in Godot.
                 // This overwhelms the Forward+ clustered renderer (max 512 per cluster), causing it to cull ALL lights.
@@ -319,8 +396,8 @@ public partial class ZoneObjectPlacer : RefCounted
                 float scaledRadius = radius * 0.2f;
                 light.OmniRange = Mathf.Clamp(scaledRadius, 5.0f, 20.0f); 
                 
-                // Boost energy, but keep it reasonable so it doesn't blow out performance
-                light.LightEnergy = 50.0f; 
+                // Keep energy reasonable so it doesn't blow out performance
+                light.LightEnergy = 2.0f; 
                 light.ShadowEnabled = false;
 
                 container.AddChild(light);

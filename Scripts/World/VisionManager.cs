@@ -32,8 +32,6 @@ public partial class VisionManager : Node
 			_environment.Environment.AdjustmentBrightness = 1.0f;
 			_environment.Environment.AdjustmentContrast = 1.0f;
 			_environment.Environment.AdjustmentSaturation = 1.0f;
-			_environment.Environment.AmbientLightEnergy = 1.0f;
-			_environment.Environment.BackgroundEnergyMultiplier = 1.0f;
 		}
 
 		switch (styleName)
@@ -57,10 +55,6 @@ public partial class VisionManager : Node
 					_environment.Environment.AdjustmentBrightness = 1.5f; // Boost overall exposure
 					_environment.Environment.AdjustmentContrast = 1.1f;   // Slight contrast boost
 					_environment.Environment.AdjustmentSaturation = 1.1f; 
-					
-					// Directly boost ambient lighting drastically to reveal the unlit areas
-					_environment.Environment.AmbientLightEnergy = 4.0f;
-					_environment.Environment.BackgroundEnergyMultiplier = 2.0f;
 				}
 				break;
 			case "cateye":

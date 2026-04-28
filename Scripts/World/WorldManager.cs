@@ -19,6 +19,9 @@ public partial class WorldManager : Node3D
 
     public enum CameraMode { FreeLook, Drive }
     public CameraMode CurrentCameraMode { get; private set; } = CameraMode.Drive;
+    
+    // Graphics Settings
+    public bool DynamicShadowsEnabled { get; set; } = true;
 
     // Camera settings
     private float _cameraDistance = 10f;
@@ -305,6 +308,11 @@ public partial class WorldManager : Node3D
                     bgEnergy = Mathf.Max(bgEnergy, 2.0f);
                     ambEnergy = Mathf.Max(ambEnergy, 4.0f);
                 }
+                else if (_currentVisionStyle == "infravision")
+                {
+                    bgEnergy = Mathf.Max(bgEnergy, 1.0f);
+                    ambEnergy = Mathf.Max(ambEnergy, 1.5f);
+                }
                 
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
                 _environment.Environment.AmbientLightEnergy = ambEnergy;
@@ -342,6 +350,11 @@ public partial class WorldManager : Node3D
                 {
                     bgEnergy = Mathf.Max(bgEnergy, 2.0f);
                     ambEnergy = Mathf.Max(ambEnergy, 4.0f);
+                }
+                else if (_currentVisionStyle == "infravision")
+                {
+                    bgEnergy = Mathf.Max(bgEnergy, 1.0f);
+                    ambEnergy = Mathf.Max(ambEnergy, 1.5f);
                 }
                 
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
@@ -568,7 +581,14 @@ public partial class WorldManager : Node3D
         {
             _f5Held = true;
             _flyMode = !_flyMode;
-            GD.Print($"[WORLD] Fly mode: {(_flyMode ? "ON" : "OFF")}");
+            GD.Print($"[WORLD] Fly mode: {(_flyMode ? "ON (noclip)" : "OFF")}");
+            
+            // Toggle collision — noclip while flying for easy environment inspection
+            if (_playerCapsule != null)
+            {
+                _playerCapsule.CollisionLayer = _flyMode ? 0u : 1u;
+                _playerCapsule.CollisionMask = _flyMode ? 0u : 1u;
+            }
         }
         if (!Input.IsPhysicalKeyPressed(Key.F5)) _f5Held = false;
 
@@ -925,6 +945,35 @@ public partial class WorldManager : Node3D
             _playerCapsule.SetNameVisible(visible);
     }
 
+    /// <summary>Toggle dynamic shadows for object-attached lights (torches, braziers).</summary>
+    public void SetDynamicShadows(bool enabled)
+    {
+        DynamicShadowsEnabled = enabled;
+        
+        if (_objectPlacer != null)
+            _objectPlacer.ShadowsEnabled = enabled;
+            
+        // Recursively find all OmniLight3D nodes in the zone objects container and update them
+        if (_zoneObjectsContainer != null)
+        {
+            UpdateShadowsRecursive(_zoneObjectsContainer, enabled);
+        }
+    }
+
+    private void UpdateShadowsRecursive(Node node, bool shadowsEnabled)
+    {
+        if (node is OmniLight3D light && light.Name != null && !light.Name.ToString().StartsWith("Light_")) 
+        {
+            // Only toggle shadows on dynamic lights attached to objects, NOT the static baked ones ("Light_XX")
+            light.ShadowEnabled = shadowsEnabled;
+        }
+
+        foreach (Node child in node.GetChildren())
+        {
+            UpdateShadowsRecursive(child, shadowsEnabled);
+        }
+    }
+
     /// <summary>Update the player's 3D equipment visuals (weapons, armor textures).</summary>
     public void UpdatePlayerEquipVisuals(string equipVisualsJson)
     {
@@ -1224,24 +1273,7 @@ public partial class WorldManager : Node3D
 
         var cache = EQAssetCache.Instance;
 
-        // --- Priority 1: Try bundled GLB (res://Data/Maps/) — known-working coordinate space ---
-        string glbPath = $"res://Data/Maps/{zoneId}_raw.glb";
-        if (Godot.FileAccess.FileExists(glbPath))
-        {
-            GD.Print($"[WORLD] Found bundled GLB zone model: {glbPath}");
-            if (LoadZoneGlb(zoneId, glbPath))
-            {
-                if (cache.HasZone(zoneId))
-                {
-                    PlaceZoneObjects(zoneId, cache.GetZonePath(zoneId), true);
-                }
-                PlayZoneMusic(zoneId);
-                return;
-            }
-            GD.PrintErr($"[WORLD] GLB load failed, trying Lantern cache...");
-        }
-
-        // --- Priority 2: Try extracted EQ asset cache (from player's EQ install) ---
+        // Try extracted EQ asset cache (from player's EQ install)
         if (cache.HasZone(zoneId))
         {
             string cachedGlb = cache.GetZoneGlbPath(zoneId);
@@ -1262,78 +1294,6 @@ public partial class WorldManager : Node3D
         // --- Fallback: Brewall line-based map ---
         LoadZoneBrewall(zoneId);
         PlayZoneMusic(zoneId);
-    }
-
-    /// <summary>
-    /// Loads a real 3D zone model from a GLB file (sourced from EQ Advanced Maps CDN).
-    /// The GLB is in Three.js coordinate space; we rotate -90° around Y to match our Godot mapping.
-    /// Generates trimesh collision from all mesh surfaces for accurate walkable geometry.
-    /// </summary>
-    private bool LoadZoneGlb(string zoneId, string glbPath)
-    {
-        try
-        {
-            var gltfDoc = new GltfDocument();
-            var gltfState = new GltfState();
-
-            // Load the GLB file bytes
-            using var file = Godot.FileAccess.Open(glbPath, Godot.FileAccess.ModeFlags.Read);
-            byte[] glbBytes = file.GetBuffer((long)file.GetLength());
-
-            var err = gltfDoc.AppendFromBuffer(glbBytes, "", gltfState);
-            if (err != Error.Ok)
-            {
-                GD.PrintErr($"[WORLD] GLTF parse error: {err}");
-                return false;
-            }
-
-            Node scene = gltfDoc.GenerateScene(gltfState);
-            if (scene == null)
-            {
-                GD.PrintErr("[WORLD] GLTF generated null scene");
-                return false;
-            }
-
-            // The GLB is in Three.js space (EQ.y*-1, EQ.z, EQ.x).
-            // Our Godot uses (-EQ.x, EQ.z, -EQ.y).
-            // Transform: Godot.X = -Three.Z, Godot.Y = Three.Y, Godot.Z = Three.X
-            // This equals a -90° rotation around the Y axis.
-            var zoneRoot = new Node3D { Name = $"GLB_{zoneId}" };
-            zoneRoot.RotationDegrees = new Vector3(0, -90, 0);
-            zoneRoot.AddChild(scene);
-            _zoneGeometryContainer.AddChild(zoneRoot);
-
-            // Walk the scene tree and generate trimesh collision for every MeshInstance3D
-            int meshCount = 0;
-            int collisionCount = 0;
-            GenerateCollisionRecursive(scene, ref meshCount, ref collisionCount);
-
-            // Calculate bounds from the zone geometry for floor/boundaries
-            var aabb = CalculateWorldAabb(zoneRoot);
-            if (aabb.Size.Length() > 0)
-            {
-                float pad = 50f;
-                float mapWidth = aabb.Size.X + pad * 2;
-                float mapLength = aabb.Size.Z + pad * 2;
-                float centerX = aabb.Position.X + aabb.Size.X / 2f;
-                float centerZ = aabb.Position.Z + aabb.Size.Z / 2f;
-
-                GD.Print($"[WORLD] GLB bounds: pos=({aabb.Position}), size=({aabb.Size})");
-                GD.Print($"[WORLD] Floor center=({centerX},{centerZ}), size=({mapWidth}x{mapLength})");
-                
-                // Remove the old flat floor since we have real geometry now.
-                // Only rebuild invisible boundary walls (no visual floor — the GLB IS the floor).
-                RebuildBoundaryWallsOnly(centerX, centerZ, mapWidth, mapLength, aabb.Position.Y - 10f);
-            }
-
-            GD.Print($"[WORLD] GLB loaded: {meshCount} meshes, {collisionCount} collision shapes for {zoneId}");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"[WORLD] GLB load exception: {ex.Message}\n{ex.StackTrace}");
-            return false;
-        }
     }
 
     /// <summary>
@@ -1379,6 +1339,9 @@ public partial class WorldManager : Node3D
             zoneRoot.AddChild(scene);
             _zoneGeometryContainer.AddChild(zoneRoot);
 
+            // Fix Materials: Strip Unshaded and apply proper roughness so clustered lighting works.
+            FixZoneMaterials(zoneRoot);
+
             // Generate collision for walkable geometry
             int meshCount = 0;
             int collisionCount = 0;
@@ -1411,14 +1374,15 @@ public partial class WorldManager : Node3D
     /// <summary>
     /// Place zone objects (trees, buildings, torches, etc.) from extracted data.
     /// </summary>
-    private void PlaceZoneObjects(string zoneId, string cachePath, bool isBundledMap = false)
+    private void PlaceZoneObjects(string zoneId, string cachePath)
     {
         _objectPlacer ??= new ZoneObjectPlacer();
+        _objectPlacer.ShadowsEnabled = DynamicShadowsEnabled;
 
         if (_zoneGeometryContainer == null) return;
 
-        _zoneObjectsContainer = _objectPlacer.PlaceObjects(zoneId, cachePath, _zoneGeometryContainer, isBundledMap);
-        _objectPlacer.PlaceLights(zoneId, cachePath, _zoneGeometryContainer, isBundledMap);
+        _zoneObjectsContainer = _objectPlacer.PlaceObjects(zoneId, cachePath, _zoneGeometryContainer);
+        _objectPlacer.PlaceLights(zoneId, cachePath, _zoneGeometryContainer);
     }
 
     /// <summary>
@@ -1452,6 +1416,60 @@ public partial class WorldManager : Node3D
         foreach (var child in node.GetChildren())
         {
             GenerateCollisionRecursive(child, ref meshCount, ref collisionCount);
+        }
+    }
+
+    /// <summary>
+    /// Recursively strips Unshaded flags and sets roughness for proper lighting.
+    /// </summary>
+    private void FixZoneMaterials(Node node)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetSurfaceOverrideMaterial(i) as StandardMaterial3D;
+                if (mat != null)
+                {
+                    mat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
+                    mat.Roughness = 0.9f;
+                    mat.Metallic = 0.0f;
+                    mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled; 
+                    
+                    // UNIVERSAL BACKLIGHT FIX: 
+                    // This forces the polygon to receive light from BOTH SIDES.
+                    // This fixes the "half-black room" issue caused by flipped normals in the map.
+                    mat.BacklightEnabled = true;
+                    mat.Backlight = new Color(1, 1, 1);
+                }
+            }
+
+            if (meshInst.Mesh != null)
+            {
+                for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
+                {
+                    var mat = meshInst.Mesh.SurfaceGetMaterial(i) as StandardMaterial3D;
+                    if (mat != null)
+                    {
+                        var newMat = mat.Duplicate(true) as StandardMaterial3D;
+                        newMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
+                        newMat.Roughness = 0.9f;
+                        newMat.Metallic = 0.0f;
+                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                        
+                        // Apply backlight to surface overrides too
+                        newMat.BacklightEnabled = true;
+                        newMat.Backlight = new Color(1, 1, 1);
+                        
+                        meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                    }
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            FixZoneMaterials(child);
         }
     }
 

@@ -164,6 +164,7 @@ public partial class MainUI : Control
 	}
 	private MemorizedSpell[] _spells = new MemorizedSpell[8];
 	private double _currentMana = 0;
+	private double _maxMana = 0;
 	private double _currentHp = 0;
 	private double _maxHp = 0;
 	private string _charName;
@@ -939,6 +940,11 @@ public partial class MainUI : Control
 			GD.Print("[UI] Caught up on cached Inventory.");
 			OnInventoryUpdated(_client.LastInventoryPayload);
 		}
+		if (!string.IsNullOrEmpty(_client.LastZoneStatePayload))
+		{
+			GD.Print("[UI] Caught up on cached Zone State.");
+			OnZoneStateReceived(_client.LastZoneStatePayload);
+		}
 		if (!string.IsNullOrEmpty(_client.LastBuffsPayload))
 		{
 			GD.Print("[UI] Caught up on cached Buffs.");
@@ -1574,18 +1580,18 @@ public partial class MainUI : Control
 						}
 
 						_loadingBar.Value = 80;
-						if (_flavorLabel != null) _flavorLabel.Text = "Spawning entities...";
+						if (_flavorLabel != null) _flavorLabel.Text = "Generating Terrain Physics...";
 						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 
-						wm.SyncLiveMobs(entitiesArray);
+						// GLB/Brewall geometry takes 2 physics frames to register collision shapes.
+						// Without this, TeleportPlayer raycasts miss and Mobs fall through the floor!
+						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
 
 						_loadingBar.Value = 90;
-						if (_flavorLabel != null) _flavorLabel.Text = "Placing Character...";
-						// GLB/Brewall geometry. Without this, TeleportPlayer's raycast misses
-						// real terrain and lands the player on the PhysicalFloor safety net
-						// at Y=-5, putting them under the visible map.
-						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
-						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+						if (_flavorLabel != null) _flavorLabel.Text = "Spawning entities...";
+						
+						wm.SyncLiveMobs(entitiesArray);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
 						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);

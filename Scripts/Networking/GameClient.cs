@@ -38,10 +38,11 @@ public partial class GameClient : Node
 
     public static GameClient Instance { get; private set; }
     
-    public string LastStatusPayload { get; private set; }
-    public string LastSpellbookPayload { get; private set; }
-    public string LastSpellbookFullPayload { get; private set; }
-    public string LastInventoryPayload { get; private set; }
+    public string LastStatusPayload { get; private set; } = "";
+    public string LastInventoryPayload { get; private set; } = "";
+    public string LastSpellbookPayload { get; private set; } = "";
+    public string LastSpellbookFullPayload { get; private set; } = "";
+    public string LastZoneStatePayload { get; private set; } = "";
     public string LastBuffsPayload { get; private set; }
 
     private WebSocketPeer _socket = new WebSocketPeer();
@@ -152,6 +153,7 @@ public partial class GameClient : Node
                     EmitSignal(SignalName.SpellbookFullReceived, message);
                     break;
                 case "ZONE_STATE":
+                    LastZoneStatePayload = message;
                     EmitSignal(SignalName.ZoneStateReceived, message);
                     break;
                 case "MOB_MOVE":

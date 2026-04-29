@@ -7,20 +7,30 @@ public partial class VisionManager : Node
 
 	public override void _Ready()
 	{
-		_environment = GetParent().GetNodeOrNull<WorldEnvironment>("WorldEnvironment");
+		EnsureInitialized();
+	}
+
+	private void EnsureInitialized()
+	{
+		if (_environment == null && GetParent() != null)
+			_environment = GetParent().GetNodeOrNull<WorldEnvironment>("WorldEnvironment");
 		
-		// Ensure we have a CanvasModulate for screen tinting
-		_canvasModulate = GetParent().GetNodeOrNull<CanvasModulate>("VisionTint");
-		if (_canvasModulate == null)
+		if (_canvasModulate == null && GetParent() != null)
 		{
-			_canvasModulate = new CanvasModulate();
-			_canvasModulate.Name = "VisionTint";
-			GetParent().AddChild(_canvasModulate);
+			// Ensure we have a CanvasModulate for screen tinting
+			_canvasModulate = GetParent().GetNodeOrNull<CanvasModulate>("VisionTint");
+			if (_canvasModulate == null)
+			{
+				_canvasModulate = new CanvasModulate();
+				_canvasModulate.Name = "VisionTint";
+				GetParent().AddChild(_canvasModulate);
+			}
 		}
 	}
 
 	public void SetVisionStyle(string styleName)
 	{
+		EnsureInitialized();
 		if (_canvasModulate == null) return;
 
 		// Default no tint

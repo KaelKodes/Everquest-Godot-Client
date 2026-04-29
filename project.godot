@@ -77,10 +77,20 @@ target_prev_friendly={
 ]
 }
 
+ui_focus_next={
+"deadzone": 0.5,
+"events": []
+}
+ui_focus_prev={
+"deadzone": 0.5,
+"events": []
+}
+
 [physics]
 
 3d/physics_engine="Jolt Physics"
 
 [rendering]
 
+rendering_device/d3d12/max_resource_descriptors=524288
 rendering_device/driver.windows="d3d12"

@@ -669,6 +669,9 @@ public partial class EntityCapsule : CharacterBody3D
 
     private Node3D _characterModel;
 
+    public float EyeHeight { get; private set; } = 5.8f;
+    public float OverheadHeight { get; private set; } = 7.0f;
+
     public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "")
     {
         // Setup nodes if Setup is called before _Ready
@@ -678,6 +681,10 @@ public partial class EntityCapsule : CharacterBody3D
         EntityType = type;
         Gender = gender;
         _nameLabel.Text = name;
+        
+        float raceScale = GetRaceScale(race);
+        EyeHeight = 5.8f * raceScale;
+        OverheadHeight = 7.0f * raceScale;
 
         // Apply classic EQ color coding
         Color nameColor = new Color(1.0f, 1.0f, 1.0f); // Default white
@@ -793,7 +800,6 @@ public partial class EntityCapsule : CharacterBody3D
                         float yRot = (race == 128 || race == 130) ? 270f : 90f;
                         _characterModel.RotationDegrees = new Vector3(0, yRot, 0);
                         // Apply race-specific scale (human = 1.0 baseline)
-                        float raceScale = GetRaceScale(race);
 
                         // Auto-detect oversized EQSage face-variant models
                         // EQSage exports use EQ's raw coordinate system (~50-100 units tall)
@@ -1340,6 +1346,19 @@ public partial class EntityCapsule : CharacterBody3D
     {
         if (_nameLabel != null)
             _nameLabel.Visible = visible;
+    }
+
+    /// <summary>Toggle visibility for first-person camera mode.</summary>
+    public void SetFirstPersonMode(bool isFirstPerson)
+    {
+        if (_characterModel != null)
+            _characterModel.Visible = !isFirstPerson;
+        
+        if (_mesh != null)
+            _mesh.Visible = !isFirstPerson && _characterModel == null;
+            
+        if (_facingArrow != null)
+            _facingArrow.Visible = !isFirstPerson && _characterModel == null;
     }
 
     // ═══════ Character Material Fix ═══════════════════════════════════

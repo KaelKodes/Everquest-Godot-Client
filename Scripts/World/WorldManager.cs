@@ -795,7 +795,7 @@ public partial class WorldManager : Node3D
         if (@event is InputEventMouseButton mouseBtn)
         {
             if (mouseBtn.ButtonIndex == MouseButton.WheelUp)
-                _cameraDistance = Mathf.Max(3f, _cameraDistance - 1f);
+                _cameraDistance = Mathf.Max(0f, _cameraDistance - 1f);
             else if (mouseBtn.ButtonIndex == MouseButton.WheelDown)
                 _cameraDistance = Mathf.Min(25f, _cameraDistance + 1f);
         }
@@ -890,7 +890,10 @@ public partial class WorldManager : Node3D
     {
         if (_playerCapsule == null || _cameraArm == null || _camera == null) return;
 
-        _cameraArm.GlobalPosition = _playerCapsule.GlobalPosition + new Vector3(0, 1.5f, 0);
+        bool isFirstPerson = _cameraDistance < 0.5f;
+        float heightOffset = isFirstPerson ? _playerCapsule.EyeHeight : _playerCapsule.OverheadHeight;
+
+        _cameraArm.GlobalPosition = _playerCapsule.GlobalPosition + new Vector3(0, heightOffset, 0);
         _cameraArm.Rotation = new Vector3(
             Mathf.DegToRad(_cameraPitch),
             Mathf.DegToRad(_cameraYaw),
@@ -898,6 +901,8 @@ public partial class WorldManager : Node3D
         );
         _cameraArm.SpringLength = _cameraDistance;
         _camera.Position = Vector3.Zero;
+
+        _playerCapsule.SetFirstPersonMode(isFirstPerson);
     }
 
     // --- Entity Management ---
@@ -1104,7 +1109,7 @@ public partial class WorldManager : Node3D
 
             if (!existingIds.Contains(id))
             {
-                // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
+                GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
                 SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
             }
@@ -1507,6 +1512,22 @@ public partial class WorldManager : Node3D
                 GD.Print($"[WORLD] Loading zone from asset cache: {cachedGlb}");
                 if (LoadZoneGlbFromDisk(zoneId, cachedGlb))
                 {
+                    // Clean up fallback VisualFloor since we have real geometry
+                    var vf = _boundariesContainer?.GetNodeOrNull<Node3D>("VisualFloor");
+                    if (vf != null)
+                    {
+                        _boundariesContainer.RemoveChild(vf);
+                        vf.QueueFree();
+                    }
+
+                    // Forcefully clean up the legacy CSG Floor just in case RebuildZoneBoundaries missed it
+                    var rootFloor = GetNodeOrNull<Node3D>("Floor");
+                    if (rootFloor != null)
+                    {
+                        RemoveChild(rootFloor);
+                        rootFloor.QueueFree();
+                    }
+
                     // Place zone objects (trees, buildings, torches, etc.)
                     PlaceZoneObjects(zoneId, cache.GetZonePath(zoneId));
                     // Play zone music
@@ -2145,6 +2166,8 @@ public partial class WorldManager : Node3D
                 ec.SetInfravision(isInfra);
             }
         }
+        
+        ApplyTimeOfDayVisuals();
     }
 
     public void SetPlayerCasting(bool casting)

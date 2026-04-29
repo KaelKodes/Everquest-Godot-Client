@@ -411,45 +411,56 @@ public partial class MainUI
 	/// Update the inventory window's built-in stats panel with current character data.
 	/// Called from OnCharacterStatusReceived.
 	/// </summary>
+	// Character stats cache to handle partial STATUS updates
+	private int _statStr = 0;
+	private int _statSta = 0;
+	private int _statAgi = 0;
+	private int _statDex = 0;
+	private int _statWis = 0;
+	private int _statInt = 0;
+	private int _statCha = 0;
+	private int _ac = 0;
+	private float _xpPct = 0f;
+	private string _cls = "";
+
 	private void UpdateInventoryStats(JsonElement source)
 	{
 		if (_invStatsText == null) return;
 		
-		string charName = source.TryGetProperty("name", out var n) ? n.GetString() : "Unknown";
-		int lvl = source.TryGetProperty("level", out var l) ? l.GetInt32() : 1;
-		_charLevel = lvl;
-		string cls = source.TryGetProperty("class", out var c) ? c.GetString() : "";
-		int curHp = source.TryGetProperty("hp", out var h) ? h.GetInt32() : 0;
-		int maxHp = source.TryGetProperty("maxHp", out var mh) ? mh.GetInt32() : 0;
-		int curMana = source.TryGetProperty("mana", out var mn) ? mn.GetInt32() : 0;
-		int maxMana = source.TryGetProperty("maxMana", out var mm) ? mm.GetInt32() : 0;
-		int ac = source.TryGetProperty("ac", out var a) ? a.GetInt32() : 0;
+		if (source.TryGetProperty("name", out var n)) _charName = n.GetString();
+		if (source.TryGetProperty("level", out var l)) _charLevel = l.GetInt32();
+		if (source.TryGetProperty("class", out var c)) _cls = c.GetString();
+		if (source.TryGetProperty("hp", out var h)) _currentHp = h.GetInt32();
+		if (source.TryGetProperty("maxHp", out var mh)) _maxHp = mh.GetInt32();
+		if (source.TryGetProperty("mana", out var mn)) _currentMana = mn.GetInt32();
+		if (source.TryGetProperty("maxMana", out var mm)) _maxMana = mm.GetInt32();
+		if (source.TryGetProperty("ac", out var a)) _ac = a.GetInt32();
 		
-		int str = source.TryGetProperty("str", out var s1) ? s1.GetInt32() : 0;
-		int sta = source.TryGetProperty("sta", out var s2) ? s2.GetInt32() : 0;
-		int agi = source.TryGetProperty("agi", out var s3) ? s3.GetInt32() : 0;
-		int dex = source.TryGetProperty("dex", out var s4) ? s4.GetInt32() : 0;
-		int wis = source.TryGetProperty("wis", out var s5) ? s5.GetInt32() : 0;
-		int intel = source.TryGetProperty("intel", out var s6) ? s6.GetInt32() : 0;
-		int cha = source.TryGetProperty("cha", out var s7) ? s7.GetInt32() : 0;
+		if (source.TryGetProperty("str", out var s1)) _statStr = s1.GetInt32();
+		if (source.TryGetProperty("sta", out var s2)) _statSta = s2.GetInt32();
+		if (source.TryGetProperty("agi", out var s3)) _statAgi = s3.GetInt32();
+		if (source.TryGetProperty("dex", out var s4)) _statDex = s4.GetInt32();
+		if (source.TryGetProperty("wis", out var s5)) _statWis = s5.GetInt32();
+		if (source.TryGetProperty("intel", out var s6)) _statInt = s6.GetInt32();
+		if (source.TryGetProperty("cha", out var s7)) _statCha = s7.GetInt32();
 		
-		float xpPct = source.TryGetProperty("xpPercent", out var xp) ? (float)xp.GetDouble() : 0;
+		if (source.TryGetProperty("xpPercent", out var xp)) _xpPct = (float)xp.GetDouble();
 
 		_invStatsText.Clear();
 		_invStatsText.Text = "";
-		_invStatsText.AppendText($"[color=#d4a840]{charName}[/color]\n");
-		_invStatsText.AppendText($"{lvl}  {cls}\n\n");
-		_invStatsText.AppendText($"[color=#cc4444]HP[/color]  {curHp}/{maxHp}\n");
-		_invStatsText.AppendText($"[color=#4488cc]MP[/color]  {curMana}/{maxMana}\n");
-		_invStatsText.AppendText($"AC  {ac}\n\n");
-		_invStatsText.AppendText($"[color=#88cc88]STR[/color] {str}\n");
-		_invStatsText.AppendText($"[color=#88cc88]STA[/color] {sta}\n");
-		_invStatsText.AppendText($"[color=#88cc88]AGI[/color] {agi}\n");
-		_invStatsText.AppendText($"[color=#88cc88]DEX[/color] {dex}\n");
-		_invStatsText.AppendText($"[color=#88cc88]WIS[/color] {wis}\n");
-		_invStatsText.AppendText($"[color=#88cc88]INT[/color] {intel}\n");
-		_invStatsText.AppendText($"[color=#88cc88]CHA[/color] {cha}\n\n");
-		_invStatsText.AppendText($"NEXT LVL {xpPct:F1}%\n");
+		_invStatsText.AppendText($"[color=#d4a840]{_charName}[/color]\n");
+		_invStatsText.AppendText($"{_charLevel}  {_cls}\n\n");
+		_invStatsText.AppendText($"[color=#cc4444]HP[/color]  {_currentHp}/{_maxHp}\n");
+		_invStatsText.AppendText($"[color=#4488cc]MP[/color]  {_currentMana}/{_maxMana}\n");
+		_invStatsText.AppendText($"AC  {_ac}\n\n");
+		_invStatsText.AppendText($"[color=#88cc88]STR[/color] {_statStr}\n");
+		_invStatsText.AppendText($"[color=#88cc88]STA[/color] {_statSta}\n");
+		_invStatsText.AppendText($"[color=#88cc88]AGI[/color] {_statAgi}\n");
+		_invStatsText.AppendText($"[color=#88cc88]DEX[/color] {_statDex}\n");
+		_invStatsText.AppendText($"[color=#88cc88]WIS[/color] {_statWis}\n");
+		_invStatsText.AppendText($"[color=#88cc88]INT[/color] {_statInt}\n");
+		_invStatsText.AppendText($"[color=#88cc88]CHA[/color] {_statCha}\n\n");
+		_invStatsText.AppendText($"NEXT LVL {_xpPct:F1}%\n");
 		_invStatsText.AppendText($"WEIGHT   0\n\n");
 		int pp = _copper / 1000;
 		int gp = (_copper % 1000) / 100;

@@ -15,6 +15,7 @@ public partial class GameClient : Node
     [Signal] public delegate void BuffsUpdatedEventHandler(Variant data);
     [Signal] public delegate void InventoryUpdatedEventHandler(Variant data);
     [Signal] public delegate void ZoneStateReceivedEventHandler(Variant data);
+    [Signal] public delegate void MobMoveReceivedEventHandler(Variant data);
     [Signal] public delegate void EnvironmentUpdatedEventHandler(Variant data);
     [Signal] public delegate void EntitySneakReceivedEventHandler(Variant data);
     [Signal] public delegate void EntityHideReceivedEventHandler(Variant data);
@@ -152,6 +153,9 @@ public partial class GameClient : Node
                     break;
                 case "ZONE_STATE":
                     EmitSignal(SignalName.ZoneStateReceived, message);
+                    break;
+                case "MOB_MOVE":
+                    EmitSignal(SignalName.MobMoveReceived, message);
                     break;
                 case "ENVIRONMENT_UPDATE":
                     EmitSignal(SignalName.EnvironmentUpdated, message);

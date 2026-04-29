@@ -118,7 +118,7 @@ public partial class ZoneObjectPlacer : RefCounted
     /// <summary>
     /// Load an object's GLB scene, caching for reuse.
     /// </summary>
-    private PackedScene GetObjectScene(string modelName, string objectsDir)
+    public PackedScene GetObjectScene(string modelName, string objectsDir)
     {
         if (_objectSceneCache.TryGetValue(modelName, out var cached))
             return cached;

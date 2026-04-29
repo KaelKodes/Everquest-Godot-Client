@@ -11,6 +11,8 @@ public partial class WorldManager : Node3D
     private EntityCapsule _playerCapsule;
     private EntityCapsule _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
+    private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
+    private Node3D _doorsContainer;
     private string _currentVisionStyle = "normal";
 
     private int _spawnCounter = 0;
@@ -107,6 +109,10 @@ public partial class WorldManager : Node3D
     public override void _Ready()
     {
         _spawnsContainer = GetNode<Node3D>("Spawns");
+        
+        _doorsContainer = new Node3D { Name = "Doors" };
+        AddChild(_doorsContainer);
+
         var oldArm = GetNode<Node3D>("CameraArm");
         _camera = oldArm.GetNode<Camera3D>("Camera3D");
         oldArm.RemoveChild(_camera);
@@ -457,7 +463,6 @@ public partial class WorldManager : Node3D
         float speed = baseSpeed;
         if (_flyMode) speed *= 5f; // Admin fly mode gets 5x speed
         float gravity = 50f;
-        float jumpVelocity = 15f;
         Vector3 velocity = _playerCapsule.Velocity;
         bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
         
@@ -467,15 +472,10 @@ public partial class WorldManager : Node3D
             velocity.Y -= gravity * (float)delta;
         }
 
-        // Handle Jump
-        if (Input.IsActionJustPressed("ui_accept") && _playerCapsule.IsOnFloor() && !_flyMode)
-        {
-            velocity.Y = jumpVelocity;
-            PlayFootstep("jmp");
-        }
+        bool isTyping = MainUI.Instance != null && MainUI.Instance.IsChatFocused;
         
         // Manual movement cancels autorun
-        if (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back")) {
+        if (!isTyping && (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back"))) {
             _isAutoRunning = false;
         }
 
@@ -486,10 +486,13 @@ public partial class WorldManager : Node3D
             {
                 // Right-Click Held: Strafe behavior
                 Vector3 inputDir = Vector3.Zero;
-                if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
-                if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
-                if (Input.IsActionPressed("move_left"))    inputDir.X -= 1;
-                if (Input.IsActionPressed("move_right"))   inputDir.X += 1;
+                if (!isTyping)
+                {
+                    if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
+                    if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
+                    if (Input.IsActionPressed("move_left"))    inputDir.X -= 1;
+                    if (Input.IsActionPressed("move_right"))   inputDir.X += 1;
+                }
 
                 if (inputDir != Vector3.Zero)
                 {
@@ -510,16 +513,22 @@ public partial class WorldManager : Node3D
             {
                 // Normal Drive Mode: A/D to turn, W/S to move
                 float turnAmount = 0f;
-                if (Input.IsActionPressed("move_left")) turnAmount += 1;
-                if (Input.IsActionPressed("move_right")) turnAmount -= 1;
+                if (!isTyping)
+                {
+                    if (Input.IsActionPressed("move_left")) turnAmount += 1;
+                    if (Input.IsActionPressed("move_right")) turnAmount -= 1;
+                }
 
                 float turnSpeed = 3f;
                 _playerCapsule.RotateY(turnAmount * turnSpeed * (float)delta);
 
                 float forwardInput = 0;
                 if (_isAutoRunning) forwardInput += 1;
-                if (Input.IsActionPressed("move_forward")) forwardInput += 1;
-                if (Input.IsActionPressed("move_back"))    forwardInput -= 1;
+                if (!isTyping)
+                {
+                    if (Input.IsActionPressed("move_forward")) forwardInput += 1;
+                    if (Input.IsActionPressed("move_back"))    forwardInput -= 1;
+                }
 
                 if (forwardInput != 0)
                 {
@@ -542,10 +551,13 @@ public partial class WorldManager : Node3D
             // --- Free Look Mode ---
             Vector3 inputDir = Vector3.Zero;
             if (_isAutoRunning) inputDir.Z -= 1;
-            if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
-            if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
-            if (Input.IsActionPressed("move_left"))    inputDir.X -= 1;
-            if (Input.IsActionPressed("move_right"))   inputDir.X += 1;
+            if (!isTyping)
+            {
+                if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
+                if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
+                if (Input.IsActionPressed("move_left"))    inputDir.X -= 1;
+                if (Input.IsActionPressed("move_right"))   inputDir.X += 1;
+            }
 
             if (inputDir != Vector3.Zero)
             {
@@ -570,8 +582,11 @@ public partial class WorldManager : Node3D
         {
             // Fly mode: Space = up, C = down, no gravity
             velocity.Y = 0;
-            if (Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = speed;
-            if (Input.IsPhysicalKeyPressed(Key.C)) velocity.Y = -speed;
+            if (!isTyping)
+            {
+                if (Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = speed;
+                if (Input.IsPhysicalKeyPressed(Key.C)) velocity.Y = -speed;
+            }
         }
         else if (!_playerCapsule.IsOnFloor())
         {
@@ -580,8 +595,9 @@ public partial class WorldManager : Node3D
         else
         {
             velocity.Y = 0;
-            if (Input.IsPhysicalKeyPressed(Key.Space)) {
+            if (!isTyping && Input.IsPhysicalKeyPressed(Key.Space)) {
                 velocity.Y = 18.0f; // Jump force
+                PlayFootstep("jmp");
                 // Jumping cancels crouch/sneak/hide
                 if (_isCrouching)
                 {
@@ -677,6 +693,12 @@ public partial class WorldManager : Node3D
 
     public override void _Input(InputEvent @event)
     {
+        if (@event is InputEventMouseButton mouseBtnEvent && mouseBtnEvent.Pressed)
+        {
+            // Clicking anywhere in the 3D world releases chat focus
+            MainUI.Instance?.ReleaseChatFocus();
+        }
+
         if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo)
         {
             // Toggle Crouch / Sneak
@@ -867,6 +889,12 @@ public partial class WorldManager : Node3D
             if (child != _playerCapsule && GodotObject.IsInstanceValid(child))
                 child.QueueFree();
         }
+        foreach (var child in _doorsContainer.GetChildren())
+        {
+            if (GodotObject.IsInstanceValid(child))
+                child.QueueFree();
+        }
+        _spawnedDoors.Clear();
         _activeEntities.Clear();
         _currentTarget = null; // Clear target on world change
         if (_playerCapsule != null)
@@ -876,6 +904,99 @@ public partial class WorldManager : Node3D
         _spawnCounter = 0;
         _enemyTargetIndex = -1;
         _friendlyTargetIndex = -1;
+    }
+
+    public void ProcessMobMove(System.Text.Json.JsonElement ent)
+    {
+        try
+        {
+            string id = ent.GetProperty("id").GetString();
+            float rawX = ent.TryGetProperty("x", out var xProp) ? (float)xProp.GetDouble() : 0f;
+            float rawY = ent.TryGetProperty("y", out var yProp) ? (float)yProp.GetDouble() : 0f;
+            float rawZ = ent.TryGetProperty("z", out var zProp) ? (float)zProp.GetDouble() : 0f;
+            float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
+
+            float x = -rawX;
+            float z = -rawY;
+            float y = rawZ;
+            float godotYaw = (rawHeading / 512f) * 360f;
+
+            if (_activeEntities.TryGetValue(id, out Node3D entNode) && entNode is EntityCapsule ec)
+            {
+                if (ec.ChaseTarget == null)
+                {
+                    ec.TargetYaw = godotYaw;
+                    ec.TargetPosition = new Vector3(x, y, z);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[WORLD] ProcessMobMove parsing error: {ex.Message}");
+        }
+    }
+
+    public void ProcessDoors(System.Text.Json.JsonElement doorsArray)
+    {
+        int totalDoors = doorsArray.GetArrayLength();
+        GD.Print($"[WORLD] Processing {totalDoors} doors...");
+        
+        if (_objectPlacer == null) 
+        {
+            GD.PrintErr("[WORLD] _objectPlacer is null! Cannot process doors.");
+            return;
+        }
+        string objectsDir = $"{EQAssetCache.Instance.CacheRoot}/zones/{_currentZoneId.ToLower()}/Objects";
+
+        foreach (var element in doorsArray.EnumerateArray())
+        {
+            string doorId = element.GetProperty("id").GetInt32().ToString();
+            
+            if (_spawnedDoors.ContainsKey(doorId)) continue; // Already spawned
+            
+            int opentype = element.TryGetProperty("opentype", out var otp) ? otp.GetInt32() : 0;
+            if (opentype >= 54) continue; // Opentypes 54+ are typically invisible teleporter triggers
+            
+            string modelName = element.GetProperty("name").GetString();
+            float rawX = element.TryGetProperty("pos_x", out var xp) ? xp.GetSingle() : 0f;
+            float rawY = element.TryGetProperty("pos_y", out var yp) ? yp.GetSingle() : 0f;
+            float rawZ = element.TryGetProperty("pos_z", out var zp) ? zp.GetSingle() : 0f;
+            float heading = element.TryGetProperty("heading", out var hp) ? hp.GetSingle() : 0f;
+            
+            // Get the PackedScene from ZoneObjectPlacer
+            var scene = _objectPlacer.GetObjectScene(modelName, objectsDir);
+            if (scene == null) 
+            {
+                GD.PrintErr($"[WORLD] Failed to load door scene: {modelName}");
+                continue;
+            }
+
+            var doorNode = scene.Instantiate<Node3D>();
+            doorNode.Name = $"Door_{doorId}_{modelName}";
+
+            // Map raw EQ DB coords to Godot (same mapping as entities/NPCs)
+            // EQ: +X=West, +Y=North, Z=height → Godot: -X=West, -Z=North, Y=height
+            float gx = -rawX;
+            float gy = rawZ;   // EQ Z (height) → Godot Y
+            float gz = -rawY;
+            doorNode.Position = new Vector3(gx, gy, gz);
+            
+            // Apply heading (EQ uses 0-512, Godot uses degrees. Map similar to NPCs/entities)
+            // We use positive godotYaw (matching working NPCs) and subtract 90 to shut the doors.
+            float godotYaw = (heading / 512f) * 360f;
+            doorNode.RotationDegrees = new Vector3(0, godotYaw - 90f, 0);
+
+            // Apply size (EQ uses 100 = 100%)
+            float size = element.TryGetProperty("size", out var sp) ? sp.GetSingle() : 100f;
+            float scaleMult = size / 100f;
+            doorNode.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
+            
+            // Fix materials: strip metallic/reflective look from wood/stone doors
+            FixZoneMaterials(doorNode);
+            
+            _doorsContainer.AddChild(doorNode);
+            _spawnedDoors[doorId] = doorNode;
+        }
     }
 
     public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f)
@@ -953,6 +1074,19 @@ public partial class WorldManager : Node3D
                 // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
                 SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
+            }
+            else
+            {
+                // Update existing entity
+                if (_activeEntities.TryGetValue(id, out Node3D entNode) && entNode is EntityCapsule ec)
+                {
+                    // Only snap rotation if they aren't actively running/chasing
+                    if (ec.ChaseTarget == null)
+                    {
+                        ec.TargetYaw = godotYaw;
+                        ec.TargetPosition = new Vector3(x, y, z);
+                    }
+                }
             }
             
             UpdateEntitySneak(id, sneaking);
@@ -1841,23 +1975,24 @@ public partial class WorldManager : Node3D
         _playerEquipVisuals = equipVisualsJson;
     }
 
-    public void SpawnPlayer(float rawX, float rawY)
+    public void SpawnPlayer(float rawX, float rawY, float rawZ = 0f)
     {
         if (_playerCapsule != null) return;
 
         // Map EQ Coords (+X=West, +Y=North) to Godot Coords (-X=West, -Z=North)
         float x = -rawX;
         float z = -rawY;
+        float y = rawZ;
 
         GD.Print($"[WORLD] Spawning Player at {x}, {z} (race={_playerRace} gender={_playerGender} face={_playerFace})");
 
-        // Raycast downward from high above to find terrain surface
-        float spawnHeight = 2.0f; // Fallback
+        // Raycast downward locally to find terrain surface
+        float spawnHeight = y + 2.0f; // Fallback
         var spaceState = GetWorld3D()?.DirectSpaceState;
         if (spaceState != null)
         {
-            var rayFrom = new Vector3(x, 500f, z);
-            var rayTo = new Vector3(x, -500f, z);
+            var rayFrom = new Vector3(x, y + 50.0f, z);
+            var rayTo = new Vector3(x, y - 500.0f, z);
             var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
             query.CollideWithBodies = true;
             query.CollideWithAreas = false;
@@ -1865,8 +2000,7 @@ public partial class WorldManager : Node3D
             if (result.Count > 0)
             {
                 Vector3 hitPos = (Vector3)result["position"];
-                spawnHeight = hitPos.Y + 10.0f; // Spawn well above terrain, gravity handles landing
-                // GD.Print($"[WORLD] Raycast terrain hit at Y={hitPos.Y:F1}, spawning at Y={spawnHeight:F1}");
+                spawnHeight = hitPos.Y + 2.0f; // Spawn slightly above local terrain
             }
             else
             {
@@ -1899,20 +2033,20 @@ public partial class WorldManager : Node3D
 
         if (_playerCapsule == null)
         {
-            SpawnPlayer(rawX, rawY);
+            SpawnPlayer(rawX, rawY, rawZ);
         }
 
         // Start with the target height from zone_points, with a small bump
-        float spawnHeight = (y != 0f) ? y + 2.0f : 3.0f;
+        float spawnHeight = y + 2.0f;
 
-        // Raycast downward from well above the target position to find the actual terrain surface.
+        // Raycast downward locally to find the actual terrain surface.
         // This is critical for GLB-loaded zones where the mesh height may differ from DB target_z.
+        // Casting locally avoids snapping to roofs or wrong floors in dungeons.
         var spaceState = GetWorld3D()?.DirectSpaceState;
         if (spaceState != null)
         {
-            float rayStartY = spawnHeight + 500f; // Cast from high above
-            var rayFrom = new Vector3(x, rayStartY, z);
-            var rayTo = new Vector3(x, spawnHeight - 500f, z); // Cast far below too
+            var rayFrom = new Vector3(x, y + 50.0f, z);
+            var rayTo = new Vector3(x, y - 500.0f, z);
             var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
             query.CollideWithBodies = true;
             query.CollideWithAreas = false;
@@ -1923,15 +2057,49 @@ public partial class WorldManager : Node3D
             }
 
             var result = spaceState.IntersectRay(query);
+            bool hitRealGeometry = false;
+
             if (result.Count > 0)
             {
-                Vector3 hitPos = (Vector3)result["position"];
-                spawnHeight = hitPos.Y + 10.0f; // Spawn well above terrain, gravity handles landing
-                // GD.Print($"[WORLD] Raycast terrain hit at Y={hitPos.Y:F1}, spawning at Y={spawnHeight:F1}");
+                var collider = result["collider"].As<Node>();
+                if (collider != null && collider.Name != "PhysicalFloor")
+                {
+                    Vector3 hitPos = (Vector3)result["position"];
+                    spawnHeight = hitPos.Y + 2.0f; // Spawn slightly above local terrain
+                    hitRealGeometry = true;
+                }
             }
-            else
+
+            // If we missed real geometry (or hit the safety net because target_z was completely wrong), 
+            // do a massive fallback cast from the sky. This fixes outdoor zones where the DB target_z 
+            // is hundreds of units lower than the actual terrain.
+            if (!hitRealGeometry)
             {
-                GD.Print($"[WORLD] No terrain hit at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
+                GD.Print($"[WORLD] Local cast missed geometry at ({x:F1}, {z:F1}). DB target_z was {y:F1}. Trying sky-cast...");
+                var skyQuery = PhysicsRayQueryParameters3D.Create(new Vector3(x, 2000.0f, z), new Vector3(x, -2000.0f, z));
+                skyQuery.CollideWithBodies = true;
+                skyQuery.CollideWithAreas = false;
+                if (_playerCapsule != null) skyQuery.Exclude = new Godot.Collections.Array<Rid> { _playerCapsule.GetRid() };
+                
+                var skyResult = spaceState.IntersectRay(skyQuery);
+                if (skyResult.Count > 0)
+                {
+                    var collider = skyResult["collider"].As<Node>();
+                    if (collider != null && collider.Name != "PhysicalFloor")
+                    {
+                        Vector3 hitPos = (Vector3)skyResult["position"];
+                        spawnHeight = hitPos.Y + 2.0f;
+                        GD.Print($"[WORLD] Sky-cast hit terrain at height {hitPos.Y:F1}");
+                    }
+                    else
+                    {
+                        GD.Print($"[WORLD] Sky-cast also hit PhysicalFloor or missed. Using raw height {spawnHeight:F1}");
+                    }
+                }
+                else
+                {
+                    GD.Print($"[WORLD] No terrain hit anywhere at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
+                }
             }
         }
 
@@ -2070,7 +2238,7 @@ public partial class WorldManager : Node3D
         // State change — reset timer
         if (newState != _lastFootstepState)
         {
-            GD.Print($"[Footstep] State changed from '{_lastFootstepState}' to '{newState}' (speed={horizSpeed:F2}, onFloor={onFloor})");
+            // Debug logging removed — footstep system is stable
             _lastFootstepState = newState;
             _footstepTimer = 0; // Play immediately on transition
 

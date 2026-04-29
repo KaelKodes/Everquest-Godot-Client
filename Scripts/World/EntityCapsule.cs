@@ -136,6 +136,8 @@ public partial class EntityCapsule : CharacterBody3D
 
     // Chase AI
     public Node3D ChaseTarget { get; set; }
+    public float? TargetYaw { get; set; }
+    public Vector3? TargetPosition { get; set; }
     public float ChaseSpeed { get; set; } = 5f;
     public float ChaseStopDistance { get; set; } = 3f; // stop just inside melee range
     public bool IsAggro => ChaseTarget != null;
@@ -318,6 +320,19 @@ public partial class EntityCapsule : CharacterBody3D
     public void PlayEmote(string emote)
     {
         if (_isDead) return;
+
+        // If we are currently rotating to face a target, queue the emote to play when finished
+        if (ChaseTarget == null && TargetYaw.HasValue)
+        {
+            float currentRad = Mathf.DegToRad(RotationDegrees.Y);
+            float targetRad = Mathf.DegToRad(TargetYaw.Value);
+            if (Mathf.Abs(Mathf.AngleDifference(currentRad, targetRad)) > 0.05f)
+            {
+                _queuedEmote = emote;
+                return;
+            }
+        }
+
         _emoteTimer = 2.5; // let emote play for 2.5 seconds
         string animCode = emote.ToLower() switch
         {
@@ -486,9 +501,75 @@ public partial class EntityCapsule : CharacterBody3D
         // No chase target — just stand in place with gravity
         if (ChaseTarget == null)
         {
-            velocity.X = 0;
-            velocity.Z = 0;
-            PlayAnimation("p01"); // idle
+            if (TargetYaw.HasValue)
+            {
+                float currentYaw = RotationDegrees.Y;
+                float targetYaw = TargetYaw.Value;
+                // Use LerpAngle equivalent for degrees (Godot Mathf.LerpAngle uses radians, so we convert)
+                float currentRad = Mathf.DegToRad(currentYaw);
+                float targetRad = Mathf.DegToRad(targetYaw);
+                
+                if (Mathf.Abs(Mathf.AngleDifference(currentRad, targetRad)) < 0.05f)
+                {
+                    // Reached target
+                    RotationDegrees = new Vector3(0, targetYaw, 0);
+                    TargetYaw = null;
+                    if (_queuedEmote != null)
+                    {
+                        string toPlay = _queuedEmote;
+                        _queuedEmote = null;
+                        PlayEmote(toPlay);
+                    }
+                }
+                else
+                {
+                    float newRad = Mathf.LerpAngle(currentRad, targetRad, 5f * (float)delta);
+                    RotationDegrees = new Vector3(0, Mathf.RadToDeg(newRad), 0);
+                }
+            }
+
+            if (TargetPosition.HasValue)
+            {
+                Vector3 currentPos = GlobalPosition;
+                Vector3 targetPos = TargetPosition.Value;
+                
+                Vector2 current2D = new Vector2(currentPos.X, currentPos.Z);
+                Vector2 target2D = new Vector2(targetPos.X, targetPos.Z);
+                float targetDist = current2D.DistanceTo(target2D);
+
+                if (targetDist > 0.1f)
+                {
+                    Vector2 dir = (target2D - current2D).Normalized();
+                    float moveSpeed = 6.0f; // Walk speed
+                    velocity.X = dir.X * moveSpeed;
+                    velocity.Z = dir.Y * moveSpeed;
+
+                    if (_emoteTimer <= 0)
+                    {
+                        PlayAnimation("l01"); // walk
+                    }
+                }
+                else
+                {
+                    velocity.X = 0;
+                    velocity.Z = 0;
+                    TargetPosition = null;
+                    if (_emoteTimer <= 0)
+                    {
+                        PlayAnimation("p01"); // idle
+                    }
+                }
+            }
+            else
+            {
+                velocity.X = 0;
+                velocity.Z = 0;
+                if (_emoteTimer <= 0)
+                {
+                    PlayAnimation("p01"); // idle
+                }
+            }
+
             Velocity = velocity;
             MoveAndSlide();
             return;

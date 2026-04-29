@@ -235,9 +235,10 @@ public partial class MainUI
 
 	private void OnChatSubmitted(string text)
 	{
-		if (string.IsNullOrWhiteSpace(text)) return;
 		_chatInput.Text = "";
-		_chatInput.ReleaseFocus();
+		CallDeferred(MethodName.ReleaseChatFocus);
+		
+		if (string.IsNullOrWhiteSpace(text)) return;
 
 		string trimmed = text.Trim();
 

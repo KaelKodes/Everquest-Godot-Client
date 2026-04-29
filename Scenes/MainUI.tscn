@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://b6gnwgkrkgk35" path="res://Scripts/UI/MainUI.cs" id="1_x0y0p"]
 [ext_resource type="PackedScene" path="res://Scenes/World3D.tscn" id="3_world"]
+[ext_resource type="Script" path="res://Scripts/UI/DraggablePanel.cs" id="4_drag"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_hover"]
 bg_color = Color(0.25, 0.25, 0.28, 0.9)
@@ -373,11 +374,14 @@ bbcode_enabled = true
 text = "[center]Location Unknown[/center]"
 scroll_active = false
 
-[node name="ChatWindow" type="Window" parent="." unique_id=1731372643]
-oversampling_override = 1.0
-position = Vector2i(285, 801)
-size = Vector2i(650, 250)
-visible = false
+[node name="ChatWindow" type="PanelContainer" parent="." unique_id=1731372643]
+layout_mode = 0
+offset_left = 285.0
+offset_top = 801.0
+offset_right = 935.0
+offset_bottom = 1051.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_dark")
+script = ExtResource("4_drag")
 metadata/_edit_lock_ = true
 
 [node name="VBox" type="VBoxContainer" parent="ChatWindow" unique_id=496397698]

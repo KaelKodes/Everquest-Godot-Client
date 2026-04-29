@@ -108,8 +108,22 @@ public partial class MainUI : Control
 
 	// Chat input
 	private LineEdit _chatInput;
+	private PanelContainer _chatWindow;
 	private string _lastWhisperSender = "";
 	private bool _chatInputFocused = false;
+	public bool IsChatFocused => _chatInputFocused;
+	
+	public void ReleaseChatFocus()
+	{
+		if (_chatInput != null)
+		{
+			_chatInput.ReleaseFocus();
+		}
+		FocusMode = FocusModeEnum.All;
+		GrabFocus();
+	}
+	
+	public static MainUI Instance { get; private set; }
 	private bool _autoFight = false;
 	private bool _isSitting = false;
 	private bool _isSelfTargeted = false;
@@ -214,6 +228,7 @@ public partial class MainUI : Control
 
 	public override void _Ready()
 	{
+		Instance = this;
 		// Use the global networking singleton
 		_client = GameClient.Instance;
 		_client.CharacterStatusReceived += OnCharacterStatusReceived;
@@ -223,6 +238,7 @@ public partial class MainUI : Control
 		_client.BuffsUpdated += OnBuffsUpdated;
 		_client.InventoryUpdated += OnInventoryUpdated;
 		_client.ZoneStateReceived += OnZoneStateReceived;
+		_client.MobMoveReceived += OnMobMoveReceived;
 		_client.EnvironmentUpdated += OnEnvironmentUpdated;
 		_client.EntitySneakReceived += OnEntitySneakReceived;
 		_client.EntityHideReceived += OnEntityHideReceived;
@@ -239,6 +255,8 @@ public partial class MainUI : Control
 		_client.MessageReceived += OnGenericMessage;
 
 		// Wire up chat input
+		_chatWindow = GetNode<PanelContainer>("ChatWindow");
+		
 		_chatInput = GetNode<LineEdit>("%ChatInput");
 		if (_chatInput != null)
 		{
@@ -452,8 +470,9 @@ public partial class MainUI : Control
 		if (wm != null)
 		{
 			wm.SyncProgress += (cur, tot) => {
-				_loadingBar.MaxValue = tot;
-				_loadingBar.Value = cur;
+				// Progress is now managed manually in the loading pipeline
+				// _loadingBar.MaxValue = tot;
+				// _loadingBar.Value = cur;
 			};
 		}
 		
@@ -945,7 +964,7 @@ public partial class MainUI : Control
 					else if (string.IsNullOrEmpty(_chatInput.Text))
 					{
 						// Empty enter = unfocus
-						_chatInput.ReleaseFocus();
+						CallDeferred(MethodName.ReleaseChatFocus);
 						GetViewport().SetInputAsHandled();
 						return;
 					}
@@ -956,7 +975,7 @@ public partial class MainUI : Control
 			// Escape key: unfocus chat
 			if (k.Keycode == Key.Escape && _chatInputFocused)
 			{
-				_chatInput.ReleaseFocus();
+				ReleaseChatFocus();
 				GetViewport().SetInputAsHandled();
 				return;
 			}
@@ -1029,6 +1048,7 @@ public partial class MainUI : Control
 			_client.BuffsUpdated -= OnBuffsUpdated;
 			_client.InventoryUpdated -= OnInventoryUpdated;
 			_client.ZoneStateReceived -= OnZoneStateReceived;
+			_client.MobMoveReceived -= OnMobMoveReceived;
 			_client.EnvironmentUpdated -= OnEnvironmentUpdated;
 			_client.EntitySneakReceived -= OnEntitySneakReceived;
 			_client.EntityHideReceived -= OnEntityHideReceived;
@@ -1275,6 +1295,11 @@ public partial class MainUI : Control
 						var entity = wm.GetEntityByName(charName);
 						if (entity != null)
 						{
+							if (root.TryGetProperty("heading", out var hp) && hp.TryGetDouble(out double val))
+							{
+								float godotYaw = ((float)val / 512f) * 360f;
+								entity.TargetYaw = godotYaw;
+							}
 							entity.PlayEmote(emote);
 						}
 						// Fallback to player if it was a player emote
@@ -1504,17 +1529,19 @@ public partial class MainUI : Control
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null)
 				{
-					if (_isInitialLoadPending && _flavorLabel != null) 
-						_flavorLabel.Text = "Building Zone Geometry...";
-
-					// Load terrain FIRST so entities have ground to stand on
 					if (_isInitialLoadPending)
 					{
+						_loadingBar.MaxValue = 100;
+						_loadingBar.Value = 10;
+						if (_flavorLabel != null) _flavorLabel.Text = "Checking zone assets...";
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
+
 						// On-demand EQ asset extraction if configured
 						if (EQAssetConfig.Instance.IsConfigured && !EQAssetCache.Instance.HasZone(_currentZoneId))
 						{
-							_flavorLabel.Text = "Extracting Zone Assets...";
-							await ToSignal(GetTree().CreateTimer(0.1f), SceneTreeTimer.SignalName.Timeout);
+							_loadingBar.Value = 20;
+							if (_flavorLabel != null) _flavorLabel.Text = "Extracting Zone Assets...";
+							await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 							
 							var extractor = LanternExtractorRunner.Instance;
 							if (extractor.IsAvailable)
@@ -1527,36 +1554,49 @@ public partial class MainUI : Control
 							}
 						}
 
-						_flavorLabel.Text = "Building Zone Geometry...";
-						await ToSignal(GetTree().CreateTimer(0.1f), SceneTreeTimer.SignalName.Timeout);
+						_loadingBar.Value = 40;
+						if (_flavorLabel != null) _flavorLabel.Text = "Building Zone Geometry...";
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
+						
 						wm.LoadZoneMap(_currentZoneId);
 						wm.PlayZoneMusic(_currentZoneId);
 						
-						_flavorLabel.Text = "Populating World Spawns...";
-						await ToSignal(GetTree().CreateTimer(0.3f), SceneTreeTimer.SignalName.Timeout);
-					}
-
-					// Now spawn/sync entities ON TOP of the loaded terrain
-					wm.SyncLiveMobs(entitiesArray);
-					
-					if (_isInitialLoadPending)
-					{
-						_flavorLabel.Text = "Teaching snakes to kick...";
-						await ToSignal(GetTree().CreateTimer(0.3f), SceneTreeTimer.SignalName.Timeout);
+						_loadingBar.Value = 70;
+						if (_flavorLabel != null) _flavorLabel.Text = "Loading doors...";
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 						
-						_flavorLabel.Text = "Finalizing world data...";
-						await ToSignal(GetTree().CreateTimer(0.3f), SceneTreeTimer.SignalName.Timeout);
+						if (dict.TryGetProperty("doors", out var doorsArray))
+						{
+							wm.ProcessDoors(doorsArray);
+						}
 
-						_flavorLabel.Text = "Placing Character...";
-						await ToSignal(GetTree().CreateTimer(0.2f), SceneTreeTimer.SignalName.Timeout);
+						_loadingBar.Value = 80;
+						if (_flavorLabel != null) _flavorLabel.Text = "Spawning entities...";
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
+
+						wm.SyncLiveMobs(entitiesArray);
+
+						_loadingBar.Value = 90;
+						if (_flavorLabel != null) _flavorLabel.Text = "Placing Character...";
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
 						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);
+						
+						_loadingBar.Value = 100;
+						if (_flavorLabel != null) _flavorLabel.Text = $"Welcome to {_currentZoneId}!";
+						await ToSignal(GetTree().CreateTimer(0.2f), SceneTreeTimer.SignalName.Timeout);
+
 						_isInitialLoadPending = false;
 						if (_loadingLayer != null) 
 						{
 							_loadingLayer.Hide();
 						}
+					}
+					else
+					{
+						// Periodic sync (not initial load)
+						wm.SyncLiveMobs(entitiesArray);
 					}
 					
 						if (dict.TryGetProperty("vision", out var visionDict))
@@ -1591,6 +1631,24 @@ public partial class MainUI : Control
 		catch (Exception ex)
 		{
 			GD.PrintErr($"[UI] OnZoneStateReceived error: {ex.Message}");
+		}
+	}
+
+	private void OnMobMoveReceived(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			var dict = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null)
+			{
+				wm.ProcessMobMove(dict);
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[UI] OnMobMoveReceived error: {ex.Message}");
 		}
 	}
 

@@ -1556,6 +1556,9 @@ public partial class MainUI : Control
 
 						_loadingBar.Value = 40;
 						if (_flavorLabel != null) _flavorLabel.Text = "Building Zone Geometry...";
+						// Freeze the player immediately so gravity can't pull them
+						// through the map while zone geometry loads
+						wm.FreezeForZoneLoad();
 						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 						
 						wm.LoadZoneMap(_currentZoneId);
@@ -1578,7 +1581,11 @@ public partial class MainUI : Control
 
 						_loadingBar.Value = 90;
 						if (_flavorLabel != null) _flavorLabel.Text = "Placing Character...";
-						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
+						// GLB/Brewall geometry. Without this, TeleportPlayer's raycast misses
+						// real terrain and lands the player on the PhysicalFloor safety net
+						// at Y=-5, putting them under the visible map.
+						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
 						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);

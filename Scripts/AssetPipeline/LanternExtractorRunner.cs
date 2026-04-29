@@ -21,6 +21,17 @@ public partial class LanternExtractorRunner : RefCounted
     
     private readonly System.Threading.SemaphoreSlim _extractLock = new System.Threading.SemaphoreSlim(1, 1);
 
+    private static readonly System.Collections.Generic.Dictionary<string, string> _zoneAliases = new()
+    {
+        { "steamfontmts", "steamfont" },
+        { "qeynos2", "qeynos" },
+        { "highpasskeep", "highkeep" },
+        { "kithforest", "kithicor" },
+        { "neriakd", "neriakc" },
+        { "oldhighpass", "highpass" },
+        { "befallenb", "befallen" }
+    };
+
     public LanternExtractorRunner()
     {
         // Locate LanternExtractor — shipped alongside the game
@@ -84,24 +95,25 @@ public partial class LanternExtractorRunner : RefCounted
         }
 
         string zone = zoneId.ToLower();
+        string extractTarget = _zoneAliases.TryGetValue(zone, out string alias) ? alias : zone;
 
         // Write settings.txt to configure LanternExtractor
         WriteSettings(config.EQPath);
 
-        GD.Print($"[Lantern] Extracting zone: {zone}...");
+        GD.Print($"[Lantern] Extracting zone: {extractTarget} (mapped from {zone})...");
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        bool success = await RunExtractor(zone);
+        bool success = await RunExtractor(extractTarget);
         sw.Stop();
 
         if (!success)
         {
-            GD.PrintErr($"[Lantern] Extraction failed for zone: {zone}");
+            GD.PrintErr($"[Lantern] Extraction failed for zone: {extractTarget}");
             return false;
         }
 
         // Copy extracted files from Lantern's Exports dir to the session cache
-        string exportDir = Path.Combine(_lanternDir, "Exports", zone);
+        string exportDir = Path.Combine(_lanternDir, "Exports", extractTarget);
         string cacheDir = cache.GetZonePath(zone);
 
         if (!Directory.Exists(exportDir))
@@ -111,6 +123,19 @@ public partial class LanternExtractorRunner : RefCounted
         }
 
         CopyDirectory(exportDir, cacheDir);
+
+        // If an alias was used, rename the core files to match the expected zoneId
+        if (zone != extractTarget)
+        {
+            string zoneDir = Path.Combine(cacheDir, "Zone");
+            if (Directory.Exists(zoneDir))
+            {
+                string oldGlb = Path.Combine(zoneDir, $"{extractTarget}.glb");
+                string newGlb = Path.Combine(zoneDir, $"{zone}.glb");
+                if (File.Exists(oldGlb)) File.Move(oldGlb, newGlb);
+            }
+        }
+
         cache.MarkZoneExtracted(zone);
 
         GD.Print($"[Lantern] Zone '{zone}' extracted in {sw.Elapsed.TotalSeconds:F1}s");

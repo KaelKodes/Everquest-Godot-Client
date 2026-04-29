@@ -49,6 +49,8 @@ public partial class WorldManager : Node3D
     private bool _isCrouching = false;
     private bool _playerInCombat = false;
     private double _zoneImmunityTimer = 0.0; // Seconds of immunity after teleport
+    private float _teleportFreezeTimer = 0f;
+    private bool _teleportSettling = false; // Freeze player physics until terrain collision is confirmed
     private Node3D _zoneGeometryContainer;
     private Node3D _zoneObjectsContainer; // Placed zone objects (trees, buildings, etc.)
     private ZoneObjectPlacer _objectPlacer;
@@ -454,6 +456,24 @@ public partial class WorldManager : Node3D
         // Tick down zone immunity timer
         if (_zoneImmunityTimer > 0)
             _zoneImmunityTimer -= delta;
+
+        // While teleport is settling, freeze the player at their placed height.
+        // This prevents gravity from pulling them through the map before
+        // zone geometry collision shapes are registered in the physics engine.
+        if (_teleportSettling && _playerCapsule != null)
+        {
+            _teleportFreezeTimer -= (float)delta;
+            if (_teleportFreezeTimer <= 0)
+            {
+                _teleportSettling = false;
+                GD.Print("[WORLD] Teleport settle complete — releasing player.");
+            }
+            else
+            {
+                _playerCapsule.Velocity = Vector3.Zero;
+                return; // Skip all movement/gravity until terrain is confirmed
+            }
+        }
 
         // --- WASD Movement & Turning ---
         float baseSpeed = 8f;
@@ -882,6 +902,19 @@ public partial class WorldManager : Node3D
 
     // --- Entity Management ---
 
+    /// <summary>
+    /// Immediately freeze the player's physics so gravity can't pull them
+    /// through the map while zone geometry loads. Released by TeleportPlayer's
+    /// deferred re-snap after terrain collision is confirmed.
+    /// </summary>
+    public void FreezeForZoneLoad()
+    {
+        _teleportSettling = true;
+        if (_playerCapsule != null)
+            _playerCapsule.Velocity = Vector3.Zero;
+        GD.Print("[WORLD] Player frozen for zone load.");
+    }
+
     public void ClearWorld()
     {
         foreach (var child in _spawnsContainer.GetChildren())
@@ -1259,33 +1292,33 @@ public partial class WorldManager : Node3D
             floorMeshInstance.Mesh = boxMesh;
             floorMeshInstance.Position = new Vector3(offsetX, -0.5f, offsetZ); 
             _boundariesContainer.AddChild(floorMeshInstance);
-        }
-        
-        // Build instant mathematical Physics floor padded generously below walls
-        var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
-        var floorCol = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(mapWidth + 100f, 10f, mapLength + 100f) } };
-        staticFloor.AddChild(floorCol);
-        staticFloor.Position = new Vector3(offsetX, -5f, offsetZ); 
-        _boundariesContainer.AddChild(staticFloor);
+            
+            // Build instant mathematical Physics floor padded generously below walls
+            var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
+            var floorCol = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(mapWidth + 100f, 10f, mapLength + 100f) } };
+            staticFloor.AddChild(floorCol);
+            staticFloor.Position = new Vector3(offsetX, -5f, offsetZ); 
+            _boundariesContainer.AddChild(staticFloor);
 
-        // Define the 4 cardinal edges relative to the centerOffset
-        var edges = new[] {
-            new { name = "North",     pos = new Vector3(offsetX, 0, offsetZ - halfLength - wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "South",     pos = new Vector3(offsetX, 0, offsetZ + halfLength + wallThick/2),  size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "East",      pos = new Vector3(offsetX + halfWidth + wallThick/2, 0, offsetZ),  size = new Vector3(wallThick, wallHeight, mapLength) },
-            new { name = "West",      pos = new Vector3(offsetX - halfWidth - wallThick/2, 0, offsetZ), size = new Vector3(wallThick, wallHeight, mapLength) }
-        };
+            // Define the 4 cardinal edges relative to the centerOffset
+            var edges = new[] {
+                new { name = "North",     pos = new Vector3(offsetX, 0, offsetZ - halfLength - wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
+                new { name = "South",     pos = new Vector3(offsetX, 0, offsetZ + halfLength + wallThick/2),  size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
+                new { name = "East",      pos = new Vector3(offsetX + halfWidth + wallThick/2, 0, offsetZ),  size = new Vector3(wallThick, wallHeight, mapLength) },
+                new { name = "West",      pos = new Vector3(offsetX - halfWidth - wallThick/2, 0, offsetZ), size = new Vector3(wallThick, wallHeight, mapLength) }
+            };
 
-        // Create solid invisible walls
-        foreach (var edge in edges)
-        {
-            var staticBody = new StaticBody3D { Name = $"Wall_{edge.name}" };
-            var col = new CollisionShape3D();
-            var box = new BoxShape3D { Size = edge.size };
-            col.Shape = box;
-            staticBody.AddChild(col);
-            staticBody.Position = edge.pos + new Vector3(0, wallHeight/2f, 0); // rest on floor
-            _boundariesContainer.AddChild(staticBody);
+            // Create solid invisible walls
+            foreach (var edge in edges)
+            {
+                var staticBody = new StaticBody3D { Name = $"Wall_{edge.name}" };
+                var col = new CollisionShape3D();
+                var box = new BoxShape3D { Size = edge.size };
+                col.Shape = box;
+                staticBody.AddChild(col);
+                staticBody.Position = edge.pos + new Vector3(0, wallHeight/2f, 0); // rest on floor
+                _boundariesContainer.AddChild(staticBody);
+            }
         }
 
         // Add Topographical Zone triggers
@@ -1979,38 +2012,16 @@ public partial class WorldManager : Node3D
     {
         if (_playerCapsule != null) return;
 
-        // Map EQ Coords (+X=West, +Y=North) to Godot Coords (-X=West, -Z=North)
+        // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
         float x = -rawX;
         float z = -rawY;
-        float y = rawZ;
+        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
 
-        GD.Print($"[WORLD] Spawning Player at {x}, {z} (race={_playerRace} gender={_playerGender} face={_playerFace})");
-
-        // Raycast downward locally to find terrain surface
-        float spawnHeight = y + 2.0f; // Fallback
-        var spaceState = GetWorld3D()?.DirectSpaceState;
-        if (spaceState != null)
-        {
-            var rayFrom = new Vector3(x, y + 50.0f, z);
-            var rayTo = new Vector3(x, y - 500.0f, z);
-            var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
-            query.CollideWithBodies = true;
-            query.CollideWithAreas = false;
-            var result = spaceState.IntersectRay(query);
-            if (result.Count > 0)
-            {
-                Vector3 hitPos = (Vector3)result["position"];
-                spawnHeight = hitPos.Y + 2.0f; // Spawn slightly above local terrain
-            }
-            else
-            {
-                GD.Print($"[WORLD] No terrain hit at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
-            }
-        }
+        GD.Print($"[WORLD] Spawning Player at Godot({x:F1}, {y:F1}, {z:F1}) (race={_playerRace} gender={_playerGender} face={_playerFace})");
 
         _playerCapsule = new EntityCapsule();
         _playerCapsule.Name = "Player";
-        _playerCapsule.Position = new Vector3(x, spawnHeight, z);
+        _playerCapsule.Position = new Vector3(x, y, z);
         _spawnsContainer.AddChild(_playerCapsule);
         _playerCapsule.Setup("You", "player", "", _playerRace, _playerGender, _playerFace, _playerEquipVisuals);
         _playerCapsule.IsPlayerControlled = true;
@@ -2026,90 +2037,33 @@ public partial class WorldManager : Node3D
 
     public void TeleportPlayer(float rawX, float rawY, float rawZ = 0f)
     {
-        // Map EQ Coords to Godot Coords
+        // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
         float x = -rawX;
         float z = -rawY;
-        float y = rawZ; // EQ Z (height) → Godot Y
+        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
+
+        GD.Print($"[WORLD] TeleportPlayer: EQ({rawX}, {rawY}, {rawZ}) → Godot({x:F1}, {y:F1}, {z:F1})");
 
         if (_playerCapsule == null)
         {
             SpawnPlayer(rawX, rawY, rawZ);
         }
 
-        // Start with the target height from zone_points, with a small bump
-        float spawnHeight = y + 2.0f;
-
-        // Raycast downward locally to find the actual terrain surface.
-        // This is critical for GLB-loaded zones where the mesh height may differ from DB target_z.
-        // Casting locally avoids snapping to roofs or wrong floors in dungeons.
-        var spaceState = GetWorld3D()?.DirectSpaceState;
-        if (spaceState != null)
-        {
-            var rayFrom = new Vector3(x, y + 50.0f, z);
-            var rayTo = new Vector3(x, y - 500.0f, z);
-            var query = PhysicsRayQueryParameters3D.Create(rayFrom, rayTo);
-            query.CollideWithBodies = true;
-            query.CollideWithAreas = false;
-            // Exclude the player capsule from the raycast
-            if (_playerCapsule != null)
-            {
-                query.Exclude = new Godot.Collections.Array<Rid> { _playerCapsule.GetRid() };
-            }
-
-            var result = spaceState.IntersectRay(query);
-            bool hitRealGeometry = false;
-
-            if (result.Count > 0)
-            {
-                var collider = result["collider"].As<Node>();
-                if (collider != null && collider.Name != "PhysicalFloor")
-                {
-                    Vector3 hitPos = (Vector3)result["position"];
-                    spawnHeight = hitPos.Y + 2.0f; // Spawn slightly above local terrain
-                    hitRealGeometry = true;
-                }
-            }
-
-            // If we missed real geometry (or hit the safety net because target_z was completely wrong), 
-            // do a massive fallback cast from the sky. This fixes outdoor zones where the DB target_z 
-            // is hundreds of units lower than the actual terrain.
-            if (!hitRealGeometry)
-            {
-                GD.Print($"[WORLD] Local cast missed geometry at ({x:F1}, {z:F1}). DB target_z was {y:F1}. Trying sky-cast...");
-                var skyQuery = PhysicsRayQueryParameters3D.Create(new Vector3(x, 2000.0f, z), new Vector3(x, -2000.0f, z));
-                skyQuery.CollideWithBodies = true;
-                skyQuery.CollideWithAreas = false;
-                if (_playerCapsule != null) skyQuery.Exclude = new Godot.Collections.Array<Rid> { _playerCapsule.GetRid() };
-                
-                var skyResult = spaceState.IntersectRay(skyQuery);
-                if (skyResult.Count > 0)
-                {
-                    var collider = skyResult["collider"].As<Node>();
-                    if (collider != null && collider.Name != "PhysicalFloor")
-                    {
-                        Vector3 hitPos = (Vector3)skyResult["position"];
-                        spawnHeight = hitPos.Y + 2.0f;
-                        GD.Print($"[WORLD] Sky-cast hit terrain at height {hitPos.Y:F1}");
-                    }
-                    else
-                    {
-                        GD.Print($"[WORLD] Sky-cast also hit PhysicalFloor or missed. Using raw height {spawnHeight:F1}");
-                    }
-                }
-                else
-                {
-                    GD.Print($"[WORLD] No terrain hit anywhere at ({x:F1}, {z:F1}), using raw height {spawnHeight:F1}");
-                }
-            }
-        }
-
-        _playerCapsule.GlobalPosition = new Vector3(x, spawnHeight, z);
+        _playerCapsule.GlobalPosition = new Vector3(x, y, z);
         _playerCapsule.Velocity = Vector3.Zero;
-        _lastSentPos = new Vector3(x, spawnHeight, z);
-        EmitSignal(SignalName.PlayerMoved, x, z); // Force sync
+        _lastSentPos = new Vector3(x, y, z);
+        EmitSignal(SignalName.PlayerMoved, x, z);
 
         // Grant zone immunity so we don't instantly trigger a nearby zoneline
-        _zoneImmunityTimer = 5.0; // Seconds of immunity after zone-in (prevents re-trigger)
+        _zoneImmunityTimer = 5.0;
+
+        // Keep player physics frozen to prevent gravity-induced clipping through 
+        // geometry that may still be registering in the physics engine.
+        _teleportSettling = true;
+        _teleportFreezeTimer = 1.0f; // Freeze for 1 real second
+
+        // Force camera to immediately snap to new position before loading screen hides
+        UpdateCamera();
     }
 
     public void SetCombatTarget(string targetId)

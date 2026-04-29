@@ -87,11 +87,13 @@ public partial class ZoneObjectPlacer : RefCounted
                 Vector3 worldPos = EQToGodot(posX, posY, posZ);
                 instance.Position = worldPos;
                 
-                // Reverting rotation to raw values
+                // Positional axes were mapped as (-Z, Y, -X), which is a coordinate reflection.
+                // Because space is reflected, we must invert all Euler angles (-rotX, -rotY, -rotZ).
+                // The -90 Yaw offset aligns the objects to the physical base swap of the X and Z axes.
                 instance.Rotation = new Vector3(
-                    Mathf.DegToRad(rotX), 
-                    Mathf.DegToRad(rotY), 
-                    Mathf.DegToRad(rotZ)
+                    Mathf.DegToRad(-rotX), 
+                    Mathf.DegToRad(-rotY - 90f), 
+                    Mathf.DegToRad(-rotZ)
                 );
                 instance.Scale = new Vector3(scaleX, scaleY, scaleZ);
 

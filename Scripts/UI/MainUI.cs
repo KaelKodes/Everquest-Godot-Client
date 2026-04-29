@@ -792,6 +792,8 @@ public partial class MainUI : Control
 				if (btn != null)
 				{
 					btn.GuiInput += (ev) => OnActionGridSlotInput(ev, btnIdx, btn);
+					btn.ClipText = true;
+					btn.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 				}
 			}
 

@@ -34,8 +34,8 @@ public partial class EntityCapsule : CharacterBody3D
         if (GetNodeOrNull<CollisionShape3D>("Collision") == null) {
             var col = new CollisionShape3D {
                 Name = "Collision",
-                Shape = new CapsuleShape3D { Radius = 0.5f, Height = 2.0f },
-                Position = new Vector3(0, -2.1f, 0)
+                Shape = new CapsuleShape3D { Radius = 1.0f, Height = 6.2f },
+                Position = new Vector3(0, 3.1f, 0) // Centered at 3.1 so bottom is at 0
             };
             AddChild(col);
         }
@@ -46,8 +46,8 @@ public partial class EntityCapsule : CharacterBody3D
             clickArea.InputRayPickable = true;
             var clickCol = new CollisionShape3D {
                 Name = "ClickShape",
-                Shape = new CapsuleShape3D { Radius = 1.0f, Height = 3.0f },
-                Position = new Vector3(0, 1.2f, 0)
+                Shape = new CapsuleShape3D { Radius = 1.5f, Height = 6.2f },
+                Position = new Vector3(0, 3.1f, 0) // Centered at 3.1 so bottom is at 0
             };
             clickArea.AddChild(clickCol);
             clickArea.InputEvent += OnInputEvent;
@@ -61,7 +61,7 @@ public partial class EntityCapsule : CharacterBody3D
                 Text = "Entity",
                 FontSize = 24,
                 OutlineSize = 6,
-                Position = new Vector3(0, 3.6f, 0)
+                Position = new Vector3(0, 6.8f, 0)
             };
             AddChild(_nameLabel);
         }
@@ -69,7 +69,7 @@ public partial class EntityCapsule : CharacterBody3D
         if (_mesh == null) {
             _mesh = new MeshInstance3D {
                 Name = "Mesh",
-                Position = new Vector3(0, 1.0f, 0)
+                Position = new Vector3(0, 3.1f, 0)
             };
             var capsule = new CapsuleMesh();
             
@@ -667,7 +667,7 @@ public partial class EntityCapsule : CharacterBody3D
                 var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
                 if (clickShape != null)
                 {
-                    clickShape.Position = new Vector3(0, -0.5f, 0);
+                    clickShape.Position = new Vector3(0, 0.9f, 0);
                     clickShape.Shape = new SphereShape3D { Radius = 1.5f };
                 }
             }
@@ -711,14 +711,13 @@ public partial class EntityCapsule : CharacterBody3D
                         bool isFaceVariant = modelPath.Contains("_face");
                         float yRot = (race == 128 || race == 130) ? 270f : 90f;
                         _characterModel.RotationDegrees = new Vector3(0, yRot, 0);
-                        _characterModel.Position = new Vector3(0, 0, 0);
                         // Apply race-specific scale (human = 1.0 baseline)
                         float raceScale = GetRaceScale(race);
 
                         // Auto-detect oversized EQSage face-variant models
                         // EQSage exports use EQ's raw coordinate system (~50-100 units tall)
                         // while LanternExtractor models are ~3-5 units tall.
-                        // Measure the model AABB and normalize to ~3.0 units height.
+                        // Measure the model AABB and normalize to ~6.2 units height.
                         float modelCorrection = 1.0f;
                         if (isFaceVariant)
                         {
@@ -726,21 +725,24 @@ public partial class EntityCapsule : CharacterBody3D
                             float modelHeight = aabb.Size.Y;
                             if (modelHeight > 10f)
                             {
-                                // Normalize to ~3.0 Godot units tall (standard humanoid height)
-                                modelCorrection = 3.0f / modelHeight;
+                                // Normalize to ~6.2 Godot units tall (standard EQ humanoid height)
+                                modelCorrection = 6.2f / modelHeight;
                                 GD.Print($"[MODEL] EQSage face-variant detected: {modelPath} height={modelHeight:F1}, correcting scale to {modelCorrection:F3}");
                             }
                         }
 
-                        float finalScale = raceScale * modelCorrection;
-                        _characterModel.Scale = new Vector3(finalScale, finalScale, finalScale);
+                        float finalScaleY = raceScale * modelCorrection;
+                        _characterModel.Scale = new Vector3(finalScaleY, finalScaleY, finalScaleY);
+                        // Shift model up so its waist origin rests precisely with feet at 0
+                        _characterModel.Position = new Vector3(0, 3.1f * finalScaleY, 0);
+
                         // Scale physics collision capsule to match model proportions
                         var col = GetNodeOrNull<CollisionShape3D>("Collision");
                         if (col != null) {
-                            col.Position = new Vector3(0, -2.1f * raceScale, 0);
+                            col.Position = new Vector3(0, 3.1f * raceScale, 0);
                             col.Shape = new CapsuleShape3D {
-                                Radius = 0.5f * raceScale,
-                                Height = 2.0f * raceScale
+                                Radius = 1.0f * raceScale,
+                                Height = 6.2f * raceScale
                             };
                         }
                         // Scale click targeting area to match model
@@ -748,10 +750,10 @@ public partial class EntityCapsule : CharacterBody3D
                         if (clickArea != null) {
                             var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
                             if (clickShape != null) {
-                                clickShape.Position = new Vector3(0, 1.2f * raceScale, 0);
+                                clickShape.Position = new Vector3(0, 3.1f * raceScale, 0);
                                 clickShape.Shape = new CapsuleShape3D {
-                                    Radius = 1.0f * raceScale,
-                                    Height = 3.0f * raceScale
+                                    Radius = 1.5f * raceScale,
+                                    Height = 6.2f * raceScale
                                 };
                             }
                         }
@@ -763,7 +765,7 @@ public partial class EntityCapsule : CharacterBody3D
 
                         // Reposition name label above the model head based on race scale
                         if (_nameLabel != null)
-                            _nameLabel.Position = new Vector3(0, 3.8f * raceScale, 0);
+                            _nameLabel.Position = new Vector3(0, 6.8f * raceScale, 0);
 
                         // Fix materials: EQ textures are painted sprites, not metallic.
                         // Remove specular/metallic to prevent shiny sun/moon reflections.

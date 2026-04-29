@@ -160,6 +160,9 @@ public partial class MainUI
 			"fishing" => "Fish",
 			"singing" => "Sing",
 			"swimming" => "Swim",
+			"weak normal vision" => "Normivision",
+			"speak normal vision" => "Normivision",
+			"eak normal vision" => "Normivision", // Typo catch
 			_ => TitleCase(DropIng(name))
 		};
 	}

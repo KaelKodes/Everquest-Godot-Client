@@ -854,7 +854,8 @@ public partial class WorldManager : Node3D
             Mathf.DegToRad(_cameraYaw),
             0
         );
-        _camera.Position = new Vector3(0, 0, _cameraDistance);
+        _cameraArm.SpringLength = _cameraDistance;
+        _camera.Position = Vector3.Zero;
     }
 
     // --- Entity Management ---
@@ -877,7 +878,7 @@ public partial class WorldManager : Node3D
         _friendlyTargetIndex = -1;
     }
 
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "")
+    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f)
     {
         if (_activeEntities.ContainsKey(id)) return;
 
@@ -886,6 +887,7 @@ public partial class WorldManager : Node3D
         instance.Name = id;
 
         _spawnsContainer.AddChild(instance);
+        instance.RotationDegrees = new Vector3(0, headingYaw, 0);
         _activeEntities[id] = instance;
 
         try {
@@ -936,6 +938,13 @@ public partial class WorldManager : Node3D
             bool sneaking = ent.TryGetProperty("sneaking", out var sProp) && sProp.GetBoolean();
             bool hidden = ent.TryGetProperty("hidden", out var hidProp) && hidProp.GetBoolean();
             string equipVis = ent.TryGetProperty("equipVisuals", out var evProp) ? evProp.ToString() : "";
+            float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
+
+            // EQEmu headings are 0-512 where 0=North, 128=West, 256=South, 384=East
+            // Live entities are perfectly mapped to Godot's space (-X=West, -Z=North), 
+            // which exactly matches Godot's Yaw behavior (0=-Z, 90=-X).
+            // No reflection or offsets are needed!
+            float godotYaw = (rawHeading / 512f) * 360f;
 
             incomingIds.Add(id);
 
@@ -943,7 +952,7 @@ public partial class WorldManager : Node3D
             {
                 // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis);
+                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
             }
             
             UpdateEntitySneak(id, sneaking);

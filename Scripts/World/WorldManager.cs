@@ -9,7 +9,7 @@ public partial class WorldManager : Node3D
     private SpringArm3D _cameraArm;
     private Camera3D _camera;
     private EntityCapsule _playerCapsule;
-    private EntityCapsule _currentTarget;
+    private ITargetable _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
     private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
     private Node3D _doorsContainer;
@@ -69,7 +69,7 @@ public partial class WorldManager : Node3D
     private string _lastFootstepState = "idle"; // idle, walk, run, swim
 
     // Expose the current target ID for the attack system
-    public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget) ? _currentTarget.Name : null;
+    public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget as Node) ? ((Node)_currentTarget).Name : null;
 
     // Range constants (in world units)
     public const float MELEE_RANGE = 4f;
@@ -79,7 +79,7 @@ public partial class WorldManager : Node3D
     /// <summary>Returns distance from player to current target, or -1 if no target.</summary>
     public float GetDistanceToTarget()
     {
-        if (_playerCapsule == null || !GodotObject.IsInstanceValid(_currentTarget)) return -1f;
+        if (_playerCapsule == null || !GodotObject.IsInstanceValid(_currentTarget as Node)) return -1f;
         return _playerCapsule.GlobalPosition.DistanceTo(_currentTarget.GlobalPosition);
     }
 
@@ -128,6 +128,8 @@ public partial class WorldManager : Node3D
         AddChild(_cameraArm);
         _cameraArm.AddChild(_camera);
         _camera.Position = Vector3.Zero; // SpringArm3D handles the offset
+        _camera.Far = 50000f; // Ensure celestial bodies and far terrain are visible
+        _camera.Near = 0.5f; // Improve depth precision for the larger far plane
         
         oldArm.QueueFree();
 
@@ -153,13 +155,14 @@ public partial class WorldManager : Node3D
         _moonSprite = new Sprite3D { Name = "MoonSprite" };
         _moonSprite.Texture = GD.Load<Texture2D>("res://Assets/Textures/drinal_full_moon.jpg");
         _moonSprite.Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
-        _moonSprite.PixelSize = 1.0f; // Large scale for the sky
-        _moonSprite.Position = new Vector3(0, 0, -800f); // Far away
+        _moonSprite.PixelSize = 5.0f; // Large scale for the sky at distance
+        _moonSprite.Position = new Vector3(0, 0, -15000f); // Positioned far in the world space
         _moon.AddChild(_moonSprite);
 
         // Load Moon Phase Shader
         _moonMaterial = new ShaderMaterial();
         _moonMaterial.Shader = GD.Load<Shader>("res://Assets/Shaders/MoonPhase.gdshader");
+        _moonMaterial.SetShaderParameter("moon_texture", _moonSprite.Texture);
         _moonSprite.MaterialOverride = _moonMaterial;
 
         // Initialize Audio Subsystems
@@ -401,7 +404,8 @@ public partial class WorldManager : Node3D
 
     public override void _Process(double delta)
     {
-        // Keep the celestial bodies infinitely far away by centering them on the camera
+        // Celestial bodies should be anchored to the camera to prevent parallax and clipping,
+        // but their rotation makes them orbit the world.
         if (_moon != null && _camera != null)
         {
             _moon.GlobalPosition = _camera.GlobalPosition;
@@ -717,6 +721,46 @@ public partial class WorldManager : Node3D
         {
             // Clicking anywhere in the 3D world releases chat focus
             MainUI.Instance?.ReleaseChatFocus();
+
+            // Manual raycast to bypass Godot's flaky viewport picking signals
+            if (_camera != null)
+            {
+                var spaceState = GetWorld3D().DirectSpaceState;
+                var mousePos = mouseBtnEvent.Position;
+                var rayOrigin = _camera.ProjectRayOrigin(mousePos);
+                var rayEnd = rayOrigin + _camera.ProjectRayNormal(mousePos) * 2000f;
+
+                var query = PhysicsRayQueryParameters3D.Create(rayOrigin, rayEnd);
+                query.CollideWithAreas = true;
+                query.CollideWithBodies = true;
+
+                var result = spaceState.IntersectRay(query);
+                if (result.Count > 0)
+                {
+                    var collider = result["collider"].As<Node>();
+                    
+                    // Walk up the tree to find an interactable entity
+                    var current = collider;
+                    while (current != null && current != this)
+                    {
+                        if (current is DoorEntity door)
+                        {
+                            door.OnInputEvent(_camera, mouseBtnEvent, Vector3.Zero, Vector3.Zero, 0);
+                            break; // Stop propagating once handled
+                        }
+                        else if (current is EntityCapsule capsule && current != _playerCapsule)
+                        {
+                            // Trigger target for entity
+                            if (mouseBtnEvent.ButtonIndex == MouseButton.Left)
+                            {
+                                SetTarget(capsule);
+                            }
+                            break;
+                        }
+                        current = current.GetParent();
+                    }
+                }
+            }
         }
 
         if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo)
@@ -860,15 +904,15 @@ public partial class WorldManager : Node3D
         SetTarget(candidates[idx]);
     }
 
-    public void SetTarget(EntityCapsule target)
+    public void SetTarget(ITargetable target)
     {
         // Deselect old
-        if (_currentTarget != null)
+        if (_currentTarget != null && GodotObject.IsInstanceValid(_currentTarget as Node))
             _currentTarget.SetTargeted(false);
 
         _currentTarget = target;
 
-        if (_currentTarget != null)
+        if (_currentTarget != null && GodotObject.IsInstanceValid(_currentTarget as Node))
         {
             _currentTarget.SetTargeted(true);
             EmitSignal(SignalName.TargetChanged, target.EntityName, target.EntityType);
@@ -992,14 +1036,20 @@ public partial class WorldManager : Node3D
             
             if (_spawnedDoors.ContainsKey(doorId)) continue; // Already spawned
             
-            int opentype = element.TryGetProperty("opentype", out var otp) ? otp.GetInt32() : 0;
-            if (opentype >= 54) continue; // Opentypes 54+ are typically invisible teleporter triggers
-            
             string modelName = element.GetProperty("name").GetString();
+            int opentype = element.TryGetProperty("opentype", out var otp) ? otp.GetInt32() : 0;
+            
+            // Skip invisible teleporter triggers (usually opentype >= 54 with names like POKTELE)
+            if (opentype >= 54 && (string.IsNullOrEmpty(modelName) || modelName.StartsWith("POKTELE") || modelName.StartsWith("TELE"))) continue;
+            
+            int localDoorId = element.TryGetProperty("doorid", out var ldid) ? ldid.GetInt32() : 0;
+            int triggerDoor = element.TryGetProperty("triggerdoor", out var td) ? td.GetInt32() : 0;
+            
             float rawX = element.TryGetProperty("pos_x", out var xp) ? xp.GetSingle() : 0f;
             float rawY = element.TryGetProperty("pos_y", out var yp) ? yp.GetSingle() : 0f;
             float rawZ = element.TryGetProperty("pos_z", out var zp) ? zp.GetSingle() : 0f;
             float heading = element.TryGetProperty("heading", out var hp) ? hp.GetSingle() : 0f;
+            int doorParam = element.TryGetProperty("door_param", out var dpp) ? dpp.GetInt32() : 0;
             
             // Get the PackedScene from ZoneObjectPlacer
             var scene = _objectPlacer.GetObjectScene(modelName, objectsDir);
@@ -1009,31 +1059,114 @@ public partial class WorldManager : Node3D
                 continue;
             }
 
-            var doorNode = scene.Instantiate<Node3D>();
-            doorNode.Name = $"Door_{doorId}_{modelName}";
+            var doorMeshNode = scene.Instantiate<Node3D>();
+            
+            // Create our interactive DoorEntity wrapper
+            var doorEntity = new DoorEntity();
+            doorEntity.Name = $"Door_{doorId}_{modelName}";
+            
+            _doorsContainer.AddChild(doorEntity);
 
             // Map raw EQ DB coords to Godot (same mapping as entities/NPCs)
-            // EQ: +X=West, +Y=North, Z=height → Godot: -X=West, -Z=North, Y=height
             float gx = -rawX;
             float gy = rawZ;   // EQ Z (height) → Godot Y
             float gz = -rawY;
-            doorNode.Position = new Vector3(gx, gy, gz);
+            doorEntity.Position = new Vector3(gx, gy, gz);
             
-            // Apply heading (EQ uses 0-512, Godot uses degrees. Map similar to NPCs/entities)
-            // We use positive godotYaw (matching working NPCs) and subtract 90 to shut the doors.
             float godotYaw = (heading / 512f) * 360f;
-            doorNode.RotationDegrees = new Vector3(0, godotYaw - 90f, 0);
+            doorEntity.RotationDegrees = new Vector3(0, godotYaw - 90f, 0);
 
-            // Apply size (EQ uses 100 = 100%)
             float size = element.TryGetProperty("size", out var sp) ? sp.GetSingle() : 100f;
             float scaleMult = size / 100f;
-            doorNode.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
+            doorEntity.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
+
+            // Is this an elevator? If so, we need an AnimatableBody3D wrapper inside to carry players
+            bool isElevator = modelName.ToUpper().Contains("LEVATOR");
+            AnimatableBody3D platformBody = null;
             
-            // Fix materials: strip metallic/reflective look from wood/stone doors
-            FixZoneMaterials(doorNode);
+            if (isElevator)
+            {
+                platformBody = new AnimatableBody3D { Name = "PlatformBody", SyncToPhysics = false };
+                doorEntity.AddChild(platformBody);
+                platformBody.AddChild(doorMeshNode);
+            }
+            else
+            {
+                doorEntity.AddChild(doorMeshNode);
+            }
+
+            // Generate collision for the door meshes
+            int meshCount = 0;
+            int collisionCount = 0;
+            if (isElevator)
+            {
+                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, platformBody);
+            }
+            else
+            {
+                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, null);
+            }
             
-            _doorsContainer.AddChild(doorNode);
-            _spawnedDoors[doorId] = doorNode;
+            // Calculate AABB for the target ring sizing
+            Aabb doorAabb = CalculateWorldAabb(doorEntity);
+            bool invertState = element.TryGetProperty("invert_state", out var inv) && inv.GetInt32() == 1;
+            doorEntity.Setup(modelName, doorId, localDoorId, triggerDoor, doorAabb, doorParam, invertState, platformBody);
+            
+            // Lifts shouldn't be targetable themselves
+            if (isElevator)
+            {
+                doorEntity.IsTargetable = false;
+                SetPickableRecursive(doorMeshNode, false);
+            }
+
+            // Connect input events from generated collision shapes to the DoorEntity
+            ConnectDoorInputsRecursive(platformBody != null ? platformBody : doorMeshNode, doorEntity);
+            
+            FixZoneMaterials(doorEntity);
+            
+            _spawnedDoors[doorId] = doorEntity;
+        }
+    }
+
+    public void ToggleDoor(string doorId, bool isOpen)
+    {
+        if (_spawnedDoors.TryGetValue(doorId, out Node3D doorNode) && doorNode is DoorEntity doorEntity)
+        {
+            doorEntity.SetOpenState(isOpen);
+        }
+        else
+        {
+            GD.PrintErr($"[WORLD] Received state change for unknown door: {doorId}");
+        }
+    }
+
+
+    private void ConnectDoorInputsRecursive(Node node, DoorEntity doorEntity)
+    {
+        if (node is CollisionObject3D collisionObject)
+        {
+            // Connect to Godot's input_event signal (works for both StaticBody3D and AnimatableBody3D)
+            collisionObject.InputEvent += (Node camera, InputEvent @event, Vector3 position, Vector3 normal, long shapeIdx) => 
+            {
+                doorEntity.OnInputEvent(camera, @event, position, normal, shapeIdx);
+            };
+        }
+        foreach (Node child in node.GetChildren())
+        {
+            ConnectDoorInputsRecursive(child, doorEntity);
+        }
+    }
+
+    private void SetPickableRecursive(Node node, bool pickable)
+    {
+        if (node is CollisionObject3D collisionObject)
+        {
+            collisionObject.InputRayPickable = pickable;
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            SetPickableRecursive(child, pickable);
         }
     }
 
@@ -1220,7 +1353,7 @@ public partial class WorldManager : Node3D
     {
         if (_activeEntities.TryGetValue(id, out Node3D entity))
         {
-            if (entity == _currentTarget)
+            if (GodotObject.IsInstanceValid(_currentTarget as Node) && entity == (_currentTarget as Node))
                 _currentTarget = null;
 
             if (GodotObject.IsInstanceValid(entity))
@@ -1650,18 +1783,48 @@ public partial class WorldManager : Node3D
     /// Recursively walks the scene tree and creates trimesh (ConcavePolygon) collision
     /// for every MeshInstance3D found. This gives pixel-perfect collision matching the zone geometry.
     /// </summary>
-    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount)
+    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
             meshCount++;
             meshInst.CreateTrimeshCollision();
             collisionCount++;
+
+            var staticBody = meshInst.GetChild<StaticBody3D>(meshInst.GetChildCount() - 1);
+            if (staticBody != null)
+            {
+                if (targetBody != null)
+                {
+                    // Move collision shapes directly to the target AnimatableBody3D
+                    // BUT we MUST preserve their local transform relative to the targetBody!
+                    // Since the meshInst might be buried deep inside the GLTF scene, 
+                    // we calculate the relative transform from staticBody to targetBody.
+                    Transform3D relativeTransform = targetBody.GlobalTransform.AffineInverse() * staticBody.GlobalTransform;
+                    
+                    foreach (Node child in staticBody.GetChildren())
+                    {
+                        if (child is CollisionShape3D colShape)
+                        {
+                            staticBody.RemoveChild(colShape);
+                            targetBody.AddChild(colShape);
+                            colShape.Transform = relativeTransform * colShape.Transform;
+                        }
+                    }
+                    
+                    meshInst.RemoveChild(staticBody);
+                    staticBody.CallDeferred("queue_free");
+                }
+                else
+                {
+                    staticBody.InputRayPickable = false;
+                }
+            }
         }
 
         foreach (var child in node.GetChildren())
         {
-            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount);
+            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody);
         }
     }
 
@@ -2106,10 +2269,10 @@ public partial class WorldManager : Node3D
         {
             activeEc = tgt as EntityCapsule;
         }
-        else if (_currentTarget != null)
+        else if (_currentTarget != null && _currentTarget is EntityCapsule)
         {
             // Fallback: Use what the user clicked locally, since that's what triggered combat
-            activeEc = _currentTarget;
+            activeEc = _currentTarget as EntityCapsule;
         }
         else
         {

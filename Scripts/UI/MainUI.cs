@@ -253,6 +253,7 @@ public partial class MainUI : Control
 		_client.BankOpened += OnBankOpened;
 		_client.ChatReceived += OnChatReceived;
 		_client.CampComplete += OnCampComplete;
+		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.MessageReceived += OnGenericMessage;
 
 		// Wire up chat input
@@ -1522,6 +1523,28 @@ public partial class MainUI : Control
 	}
 
 	// â”€â”€â”€ 3D World Integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	private void OnDoorStateChanged(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			using var doc = JsonDocument.Parse(data.AsString());
+			var root = doc.RootElement;
+			int doorId = root.GetProperty("doorId").GetInt32();
+			bool isOpen = root.GetProperty("isOpen").GetBoolean();
+			
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null)
+			{
+				wm.ToggleDoor(doorId.ToString(), isOpen);
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[UI] Error parsing DOOR_STATE_CHANGE: {ex.Message}");
+		}
+	}
+
 	private async void OnZoneStateReceived(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;

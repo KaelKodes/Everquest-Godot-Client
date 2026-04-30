@@ -156,6 +156,9 @@ public partial class ZoneObjectPlacer : RefCounted
                 return null;
             }
 
+            // Generate collision so that objects (e.g. ramps) are solid
+            GenerateCollisionRecursive(scene);
+
             // Pack it so we can instantiate multiple copies efficiently
             var packed = new PackedScene();
             packed.Pack(scene);
@@ -414,5 +417,38 @@ public partial class ZoneObjectPlacer : RefCounted
         parent.AddChild(container);
         GD.Print($"[ObjectPlacer] Placed {placed} static lights in '{zoneId}'");
         return container;
+    }
+
+    private void GenerateCollisionRecursive(Node node)
+    {
+        if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
+        {
+            // Only create if we haven't already (GLTF imports usually don't have collision yet, but some might)
+            bool hasCollision = false;
+            foreach (Node child in meshInst.GetChildren())
+            {
+                if (child is StaticBody3D body)
+                {
+                    hasCollision = true;
+                    body.InputRayPickable = false;
+                }
+            }
+            if (!hasCollision)
+            {
+                meshInst.CreateTrimeshCollision();
+                // Ensure it doesn't block mouse picking for interactables
+                foreach (Node child in meshInst.GetChildren())
+                {
+                    if (child is StaticBody3D body)
+                    {
+                        body.InputRayPickable = false;
+                    }
+                }
+            }
+        }
+        foreach (Node child in node.GetChildren())
+        {
+            GenerateCollisionRecursive(child);
+        }
     }
 }

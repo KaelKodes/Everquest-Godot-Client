@@ -35,6 +35,7 @@ public partial class GameClient : Node
     [Signal] public delegate void CharacterDeletedEventHandler(Variant data);
     [Signal] public delegate void ChatReceivedEventHandler(Variant data);
     [Signal] public delegate void CampCompleteEventHandler();
+    [Signal] public delegate void DoorStateChangedEventHandler(Variant data);
 
     public static GameClient Instance { get; private set; }
     
@@ -208,6 +209,9 @@ public partial class GameClient : Node
                     break;
                 case "CAMP_COMPLETE":
                     EmitSignal(SignalName.CampComplete);
+                    break;
+                case "DOOR_STATE_CHANGE":
+                    EmitSignal(SignalName.DoorStateChanged, message);
                     break;
                 case "TELEPORT":
                 {

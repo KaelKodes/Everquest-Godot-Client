@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_mix, depth_draw_opaque, cull_disabled;
+render_mode unshaded, blend_mix, cull_disabled;
 
 uniform sampler2D moon_texture : source_color, filter_linear_mipmap;
 uniform float phase : hint_range(0.0, 1.0) = 0.5;

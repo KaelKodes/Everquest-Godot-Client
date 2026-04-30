@@ -3,7 +3,7 @@ using System;
 using System.Linq;
 using System.Text.Json;
 
-public partial class EntityCapsule : CharacterBody3D
+public partial class EntityCapsule : CharacterBody3D, ITargetable
 {
     private Label3D _nameLabel;
     private MeshInstance3D _mesh;
@@ -39,6 +39,11 @@ public partial class EntityCapsule : CharacterBody3D
             };
             AddChild(col);
         }
+
+        // Configure CharacterBody3D for stairs and curbs
+        FloorSnapLength = 0.5f; // Helps stick to stairs going down
+        FloorMaxAngle = Mathf.DegToRad(60f); // Allow climbing steeper inclines/curbs
+        FloorBlockOnWall = false; // Don't get stuck on small vertical lips
 
         // Separate Area3D for mouse click targeting — covers the visible model
         if (GetNodeOrNull<Area3D>("ClickArea") == null) {
@@ -476,6 +481,51 @@ public partial class EntityCapsule : CharacterBody3D
             }
         }
 
+        // Dynamically track Skeleton bone heights to adjust NameLabel and ClickArea
+        // This solves issues where flying mobs (like bats) have rest-poses on the ground
+        // but their active animations lift them 15+ units into the sky.
+        if (_characterModel != null && _nameLabel != null)
+        {
+            var skeleton = FindSkeleton(_characterModel);
+            if (skeleton != null && skeleton.GetBoneCount() > 0)
+            {
+                float maxY = -1000f;
+                float minY = 1000f;
+                for (int i = 0; i < skeleton.GetBoneCount(); i++)
+                {
+                    var pose = skeleton.GetBoneGlobalPose(i);
+                    if (pose.Origin.Y > maxY) maxY = pose.Origin.Y;
+                    if (pose.Origin.Y < minY) minY = pose.Origin.Y;
+                }
+
+                // Add margin for actual mesh volume around the bone
+                maxY += 1.0f;
+                minY -= 1.0f;
+
+                float finalScale = _characterModel.Scale.Y;
+                float baseHeight = _characterModel.Position.Y;
+
+                float visualTopY = baseHeight + (maxY * finalScale);
+                float visualCenterY = baseHeight + (((maxY + minY) / 2f) * finalScale);
+
+                // Smoothly track the visual top
+                float currentLabelY = _nameLabel.Position.Y;
+                float targetLabelY = Mathf.Max(6.8f, visualTopY + 0.6f);
+                _nameLabel.Position = new Vector3(0, Mathf.Lerp(currentLabelY, targetLabelY, 5f * (float)delta), 0);
+
+                // Smoothly track the visual center for the click capsule
+                var clickArea = GetNodeOrNull<Area3D>("ClickArea");
+                if (clickArea != null) {
+                    var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
+                    if (clickShape != null) {
+                        float currentClickY = clickShape.Position.Y;
+                        float targetClickY = Mathf.Max(3.1f, visualCenterY);
+                        clickShape.Position = new Vector3(0, Mathf.Lerp(currentClickY, targetClickY, 5f * (float)delta), 0);
+                    }
+                }
+            }
+        }
+
         // Player movement is handled by WorldManager
         if (IsPlayerControlled) return;
 
@@ -682,7 +732,14 @@ public partial class EntityCapsule : CharacterBody3D
         Gender = gender;
         _nameLabel.Text = name;
         
-        float raceScale = GetRaceScale(race);
+        // Playable races: 1-12, 128 (Iksar), 130 (Vah Shir), 330 (Froglok)
+        bool isPlayable = (race >= 1 && race <= 12) || race == 128 || race == 130 || race == 330;
+        
+        float baseMultiplier = 1.5f;
+        if (isPlayable) baseMultiplier = 1.65f;
+        if (race == 34) baseMultiplier = 1.0f; // Bats are naturally large in Lantern exports
+        
+        float raceScale = GetRaceScale(race) * baseMultiplier;
         EyeHeight = 5.8f * raceScale;
         OverheadHeight = 7.0f * raceScale;
 
@@ -799,31 +856,33 @@ public partial class EntityCapsule : CharacterBody3D
                         bool isFaceVariant = modelPath.Contains("_face");
                         float yRot = (race == 128 || race == 130) ? 270f : 90f;
                         _characterModel.RotationDegrees = new Vector3(0, yRot, 0);
-                        // Apply race-specific scale (human = 1.0 baseline)
 
-                        // Auto-detect oversized EQSage face-variant models
-                        // EQSage exports use EQ's raw coordinate system (~50-100 units tall)
-                        // while LanternExtractor models are ~3-5 units tall.
-                        // Measure the model AABB and normalize to ~6.2 units height.
                         float modelCorrection = 1.0f;
                         if (isFaceVariant)
                         {
-                            var aabb = GetCombinedAABB(_characterModel);
-                            float modelHeight = aabb.Size.Y;
+                            var rawAabb = GetCombinedAABB(_characterModel);
+                            float modelHeight = rawAabb.Size.Y;
                             if (modelHeight > 10f)
                             {
-                                // Normalize to ~6.2 Godot units tall (standard EQ humanoid height)
                                 modelCorrection = 6.2f / modelHeight;
-                                GD.Print($"[MODEL] EQSage face-variant detected: {modelPath} height={modelHeight:F1}, correcting scale to {modelCorrection:F3}");
                             }
                         }
 
                         float finalScaleY = raceScale * modelCorrection;
                         _characterModel.Scale = new Vector3(finalScaleY, finalScaleY, finalScaleY);
-                        // Shift model up so its waist origin rests precisely with feet at 0
+                        
+                        // Shift model up so its native origin is lifted by 3.1 Godot units (standard EQ humanoid waist)
                         _characterModel.Position = new Vector3(0, 3.1f * finalScaleY, 0);
 
-                        // Scale physics collision capsule to match model proportions
+                        // Now that the model is positioned and scaled, measure its FINAL visual bounds
+                        // so we can properly place the NameLabel and ClickArea (especially for flying bats)
+                        var visualAabb = GetCombinedAABB(_characterModel);
+                        // Convert visualAabb from local _characterModel space to EntityCapsule space
+                        float visualCenterY = _characterModel.Position.Y + (visualAabb.Position.Y + visualAabb.Size.Y / 2f) * finalScaleY;
+                        float visualTopY = _characterModel.Position.Y + (visualAabb.Position.Y + visualAabb.Size.Y) * finalScaleY;
+                        float visualHeight = visualAabb.Size.Y * finalScaleY;
+
+                        // Scale physics collision capsule to match race scale (always anchored to ground for gravity)
                         var col = GetNodeOrNull<CollisionShape3D>("Collision");
                         if (col != null) {
                             col.Position = new Vector3(0, 3.1f * raceScale, 0);
@@ -832,15 +891,17 @@ public partial class EntityCapsule : CharacterBody3D
                                 Height = 6.2f * raceScale
                             };
                         }
-                        // Scale click targeting area to match model
+                        
+                        // Position click targeting area at the VISUAL center of the model
                         var clickArea = GetNodeOrNull<Area3D>("ClickArea");
                         if (clickArea != null) {
                             var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
                             if (clickShape != null) {
-                                clickShape.Position = new Vector3(0, 3.1f * raceScale, 0);
+                                float clickHeight = Mathf.Max(6.2f * raceScale, visualHeight);
+                                clickShape.Position = new Vector3(0, visualCenterY, 0);
                                 clickShape.Shape = new CapsuleShape3D {
                                     Radius = 1.5f * raceScale,
-                                    Height = 6.2f * raceScale
+                                    Height = clickHeight
                                 };
                             }
                         }
@@ -850,9 +911,9 @@ public partial class EntityCapsule : CharacterBody3D
                         if (_facingArrow != null) _facingArrow.Visible = false;
                         modelLoaded = true;
 
-                        // Reposition name label above the model head based on race scale
+                        // Reposition name label above the VISUAL top of the model
                         if (_nameLabel != null)
-                            _nameLabel.Position = new Vector3(0, 6.8f * raceScale, 0);
+                            _nameLabel.Position = new Vector3(0, visualTopY + 0.6f, 0);
 
                         // Fix materials: EQ textures are painted sprites, not metallic.
                         // Remove specular/metallic to prevent shiny sun/moon reflections.

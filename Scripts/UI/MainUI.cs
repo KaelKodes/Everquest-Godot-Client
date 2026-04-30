@@ -79,8 +79,15 @@ public partial class MainUI : Control
 	private PackedScene _inventoryItemScene = GD.Load<PackedScene>("res://Scenes/UI/InventoryItem.tscn");
 	private PackedScene _inventoryWindowScene = GD.Load<PackedScene>("res://Scenes/UI/InventoryWindow.tscn");
 	private PackedScene _merchantWindowScene = GD.Load<PackedScene>("res://Scenes/UI/MerchantWindow.tscn");
+	private PackedScene _giveNPCWindowScene = GD.Load<PackedScene>("res://Scenes/UI/GiveNPCWindow.tscn");
 
 	private Control _merchantWindow;
+	private Control _giveNPCWindow;
+	private Label _giveNPCTitle;
+	private Button[] _giveNPCSlots = new Button[4];
+	private Button _giveNPCOk;
+	private Button _giveNPCCancel;
+	private string _giveNPCId;
 	private VBoxContainer _merchantItemList;
 	private Label _merchantTitle;
 	private string _activeMerchantId = null; // Track open merchant for sell transactions
@@ -298,6 +305,25 @@ public partial class MainUI : Control
 		_merchantWindow.Hide();
 		_merchantItemList = _merchantWindow.GetNode<VBoxContainer>("VBox/Scroll/ItemList");
 		_merchantTitle = _merchantWindow.GetNode<Label>("VBox/Title");
+
+		// Give NPC Window
+		_giveNPCWindow = _giveNPCWindowScene.Instantiate<Control>();
+		AddChild(_giveNPCWindow);
+		_giveNPCWindow.Hide();
+		_giveNPCTitle = _giveNPCWindow.GetNode<Label>("VBox/Title");
+		_giveNPCSlots[0] = _giveNPCWindow.GetNode<Button>("VBox/Slot1");
+		_giveNPCSlots[1] = _giveNPCWindow.GetNode<Button>("VBox/Slot2");
+		_giveNPCSlots[2] = _giveNPCWindow.GetNode<Button>("VBox/Slot3");
+		_giveNPCSlots[3] = _giveNPCWindow.GetNode<Button>("VBox/Slot4");
+		_giveNPCOk = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnOK");
+		_giveNPCCancel = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnCancel");
+
+		_giveNPCOk.Pressed += OnGiveNPCOk;
+		_giveNPCCancel.Pressed += OnGiveNPCCancel;
+		for (int i = 0; i < 4; i++) {
+			int slotIndex = i;
+			_giveNPCSlots[i].Pressed += () => OnGiveNPCSlotClicked(slotIndex);
+		}
 		_merchantWindow.GetNode<Button>("VBox/CloseBtn").Pressed += () => {
 			_merchantWindow.Hide();
 			_activeMerchantId = null;

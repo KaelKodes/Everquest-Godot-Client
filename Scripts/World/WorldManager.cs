@@ -272,16 +272,16 @@ public partial class WorldManager : Node3D
         float progress = _currentWorldHour / 24f;
         
         // Pitch mapping: 
-        // 0 (Midnight): Sun is straight down (-90 degrees)
+        // 0 (Midnight): Sun is straight UP from under ground (90 degrees)
         // 6 (Dawn): Sun is at horizon (0 degrees)
-        // 12 (Noon): Sun is straight up (90 degrees)
-        // 18 (Dusk): Sun is at horizon (0 or 180 degrees)
+        // 12 (Noon): Sun is straight DOWN from sky (-90 degrees)
+        // 18 (Dusk): Sun is at horizon (-180 degrees)
         
-        float sunPitchDegrees = (progress * 360f) - 90f; 
+        float sunPitchDegrees = 90f - (progress * 360f); 
         _sun.RotationDegrees = new Vector3(sunPitchDegrees, -45f, 0f);
         
         // Moon is opposite of sun
-        float moonPitchDegrees = sunPitchDegrees + 180f;
+        float moonPitchDegrees = sunPitchDegrees - 180f;
         _moon.RotationDegrees = new Vector3(moonPitchDegrees, -45f, 0f);
 
         // Update Moon Phase Shader
@@ -353,8 +353,19 @@ public partial class WorldManager : Node3D
             
             if (skyMat != null)
             {
-                skyMat.SkyTopColor = nightTopColor.Lerp(dayTopColor, sunIntensity);
-                skyMat.SkyHorizonColor = nightHorizonColor.Lerp(dayHorizonColor, sunIntensity);
+                Color currentTop = nightTopColor.Lerp(dayTopColor, sunIntensity);
+                Color currentHorizon = nightHorizonColor.Lerp(dayHorizonColor, sunIntensity);
+                skyMat.SkyTopColor = currentTop;
+                skyMat.SkyHorizonColor = currentHorizon;
+                
+                if (_environment != null && _environment.Environment != null)
+                {
+                    _environment.Environment.FogEnabled = true;
+                    _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
+                    _environment.Environment.FogDensity = 0.001f; // Classic depth haze, heavily reduced for daytime visibility
+                    _environment.Environment.FogLightColor = currentHorizon;
+                    _environment.Environment.FogSunScatter = 0.1f;
+                }
             }
         }
         else
@@ -398,6 +409,15 @@ public partial class WorldManager : Node3D
             {
                 skyMat.SkyTopColor = nightTopColor;
                 skyMat.SkyHorizonColor = nightHorizonColor;
+                
+                if (_environment != null && _environment.Environment != null)
+                {
+                    _environment.Environment.FogEnabled = true;
+                    _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
+                    _environment.Environment.FogDensity = 0.003f; // Slightly thicker at night
+                    _environment.Environment.FogLightColor = nightHorizonColor;
+                    _environment.Environment.FogSunScatter = 0.0f;
+                }
             }
         }
     }
@@ -754,6 +774,14 @@ public partial class WorldManager : Node3D
                             if (mouseBtnEvent.ButtonIndex == MouseButton.Left)
                             {
                                 SetTarget(capsule);
+
+                                // Check if holding an item to initiate trade
+                                var heldItem = MainUI.Instance?.GetHeldItem();
+                                if (heldItem.HasValue)
+                                {
+                                    string npcId = capsule.Name.ToString().Replace("mob_", "");
+                                    MainUI.Instance?.OpenGiveNPCWindow(npcId, capsule.EntityName);
+                                }
                             }
                             break;
                         }

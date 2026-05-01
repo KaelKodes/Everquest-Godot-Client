@@ -53,6 +53,7 @@ public partial class Hotbar : Control
 	// ── Signals ─────────────────────────────────────────────────────
 
 	[Signal] public delegate void HotbuttonActivatedEventHandler(int barIndex, int page, int slot);
+	[Signal] public delegate void HotbuttonInspectRequestedEventHandler(int barIndex, int page, int slot);
 	[Signal] public delegate void NewHotbarRequestedEventHandler();
 	[Signal] public delegate void HotbarClosedEventHandler(int barIndex);
 	[Signal] public delegate void SaveSetRequestedEventHandler(int barIndex);
@@ -89,6 +90,10 @@ public partial class Hotbar : Control
 	private const int SLOT_SIZE = 40;
 	private const int SLOT_GAP = 2;
 	private const int NAV_HEIGHT = 22;
+
+	// Right click inspect
+	private double _rightClickTimer = -1;
+	private int _rightClickSlot = -1;
 
 	public override void _Ready()
 	{
@@ -515,31 +520,44 @@ public partial class Hotbar : Control
 	{
 		if (ev is InputEventMouseButton mb)
 		{
-			// Right-click to clear a slot
-			if (mb.ButtonIndex == MouseButton.Right && mb.Pressed)
+			// Right-click logic
+			if (mb.ButtonIndex == MouseButton.Right)
 			{
-				var data = SlotData[CurrentPage, slotIndex];
-				if (data.Type != HotbuttonType.Empty)
+				if (mb.Pressed)
 				{
-					// Create mini context menu for the slot
-					var slotMenu = new PopupMenu();
-					slotMenu.AddItem("Clear Slot", 0);
-					slotMenu.AddItem("Use", 1);
-					slotMenu.IdPressed += (id) => {
-						if (id == 0)
+					_rightClickTimer = 0;
+					_rightClickSlot = slotIndex;
+				}
+				else
+				{
+					if (_rightClickTimer >= 0 && _rightClickTimer < 1.0)
+					{
+						var data = SlotData[CurrentPage, slotIndex];
+						if (data.Type != HotbuttonType.Empty)
 						{
-							SlotData[CurrentPage, slotIndex] = new HotbuttonData();
-							RefreshSlots();
+							// Create mini context menu for the slot
+							var slotMenu = new PopupMenu();
+							slotMenu.AddItem("Clear Slot", 0);
+							slotMenu.AddItem("Use", 1);
+							slotMenu.IdPressed += (id) => {
+								if (id == 0)
+								{
+									SlotData[CurrentPage, slotIndex] = new HotbuttonData();
+									RefreshSlots();
+								}
+								else if (id == 1)
+								{
+									OnSlotPressed(slotIndex);
+								}
+								slotMenu.QueueFree();
+							};
+							AddChild(slotMenu);
+							slotMenu.Position = (Vector2I)GetGlobalMousePosition();
+							slotMenu.Popup();
 						}
-						else if (id == 1)
-						{
-							OnSlotPressed(slotIndex);
-						}
-						slotMenu.QueueFree();
-					};
-					AddChild(slotMenu);
-					slotMenu.Position = (Vector2I)GetGlobalMousePosition();
-					slotMenu.Popup();
+					}
+					_rightClickTimer = -1;
+					_rightClickSlot = -1;
 				}
 			}
 		}
@@ -605,6 +623,17 @@ public partial class Hotbar : Control
 
 	public override void _Process(double delta)
 	{
+		if (_rightClickTimer >= 0)
+		{
+			_rightClickTimer += delta;
+			if (_rightClickTimer >= 1.0 && _rightClickSlot >= 0)
+			{
+				EmitSignal(SignalName.HotbuttonInspectRequested, BarIndex, CurrentPage, _rightClickSlot);
+				_rightClickTimer = -1;
+				_rightClickSlot = -1;
+			}
+		}
+
 		if (FadeWhenInactive)
 		{
 			float targetAlpha = _mouseInside ? BarAlpha : BarAlpha * 0.3f;

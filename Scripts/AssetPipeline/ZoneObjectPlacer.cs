@@ -15,6 +15,7 @@ public partial class ZoneObjectPlacer : RefCounted
     
     // Graphics Settings
     public bool ShadowsEnabled { get; set; } = true;
+    public MaterialAnimator Animator { get; set; }
 
     public static Vector3 EQToGodot(float x, float y, float z)
     {
@@ -158,6 +159,46 @@ public partial class ZoneObjectPlacer : RefCounted
 
             // Generate collision so that objects (e.g. ramps) are solid
             GenerateCollisionRecursive(scene);
+
+            // Setup animated materials if the animator is available
+            if (Animator != null)
+            {
+                string matListFile = Path.Combine(objectsDir, "MaterialLists", $"{modelName}.txt");
+                GD.Print($"[Anim Debug] Object: {modelName}. Checking for mat list: {matListFile}");
+                if (File.Exists(matListFile))
+                {
+                    var animData = ParseMaterialList(matListFile);
+                    GD.Print($"[Anim Debug] Object: {modelName}. Found mat list. Parsed {animData.Count} animated materials.");
+                    if (animData.Count > 0)
+                    {
+                        string texturesDir = Path.Combine(objectsDir, "Textures");
+                        RegisterAnimationsRecursive(scene, animData, texturesDir);
+                    }
+                }
+                else
+                {
+                    // Fallback to case-insensitive match for the txt file just in case!
+                    matListFile = FindFileCaseInsensitive(Path.Combine(objectsDir, "MaterialLists"), $"{modelName}.txt");
+                    if (matListFile != null)
+                    {
+                        var animData = ParseMaterialList(matListFile);
+                        GD.Print($"[Anim Debug] Object: {modelName}. Found mat list via fallback. Parsed {animData.Count} animated materials.");
+                        if (animData.Count > 0)
+                        {
+                            string texturesDir = Path.Combine(objectsDir, "Textures");
+                            RegisterAnimationsRecursive(scene, animData, texturesDir);
+                        }
+                    }
+                    else
+                    {
+                        GD.Print($"[Anim Debug] Object: {modelName}. No mat list found.");
+                    }
+                }
+            }
+            else
+            {
+                GD.Print($"[Anim Debug] Animator is null for {modelName}!");
+            }
 
             // Pack it so we can instantiate multiple copies efficiently
             var packed = new PackedScene();
@@ -313,9 +354,11 @@ public partial class ZoneObjectPlacer : RefCounted
                     {
                         if (meshInst.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D mat)
                         {
-                            var newMat = (StandardMaterial3D)mat.Duplicate();
-                            newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                            meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                            // Do NOT duplicate the material! Doing so orphans the mesh from the
+                            // shared material instance that is registered in the MaterialAnimator.
+                            // Modifying the shared material directly is perfectly fine here since
+                            // all instances of this light source should be double-sided anyway.
+                            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                         }
                     }
                 }
@@ -450,5 +493,82 @@ public partial class ZoneObjectPlacer : RefCounted
         {
             GenerateCollisionRecursive(child);
         }
+    }
+    private Dictionary<string, (string[] frames, float delay)> ParseMaterialList(string file)
+    {
+        var data = new Dictionary<string, (string[] frames, float delay)>();
+        foreach (var line in File.ReadAllLines(file))
+        {
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+            var parts = line.Split(',');
+            // Format: Index, MaterialName:Frames..., DelayMs
+            // Example: 1,tau_fire1:fire1:fire2:fire3:fire4,200
+            if (parts.Length >= 3)
+            {
+                float delay = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                if (delay > 0)
+                {
+                    string[] mats = parts[1].Split(':');
+                    string matName = mats[0]; // Lantern uses the first as the material name
+                    
+                    // The textures are the remaining elements
+                    if (mats.Length > 1)
+                    {
+                        string[] frames = new string[mats.Length - 1];
+                        Array.Copy(mats, 1, frames, 0, mats.Length - 1);
+                        data[matName] = (frames, delay);
+                    }
+                }
+            }
+        }
+        return data;
+    }
+
+    private void RegisterAnimationsRecursive(Node node, Dictionary<string, (string[] frames, float delay)> animData, string texturesDir)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            GD.Print($"[Anim Debug] Inspecting MeshInstance3D: {meshInst.Name}");
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetSurfaceOverrideMaterial(i);
+                GD.Print($"[Anim Debug] Override Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
+                if (mat is StandardMaterial3D stdMat)
+                {
+                    if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
+                        Animator.RegisterMaterial(stdMat, anim.frames, anim.delay, texturesDir);
+                }
+            }
+            if (meshInst.Mesh != null)
+            {
+                GD.Print($"[Anim Debug] Mesh has {meshInst.Mesh.GetSurfaceCount()} surfaces.");
+                for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
+                {
+                    var mat = meshInst.Mesh.SurfaceGetMaterial(i);
+                    GD.Print($"[Anim Debug] Surface Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
+                    if (mat is StandardMaterial3D stdMat)
+                    {
+                        if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
+                        {
+                            Animator.RegisterMaterial(stdMat, anim.frames, anim.delay, texturesDir);
+                        }
+                        else if (stdMat.ResourceName != null && animData.Count > 0)
+                        {
+                            foreach (var kvp in animData)
+                            {
+                                if (kvp.Key.Equals(stdMat.ResourceName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    GD.Print($"[Anim Debug] Case mismatch fixed! {stdMat.ResourceName} matched {kvp.Key}");
+                                    Animator.RegisterMaterial(stdMat, kvp.Value.frames, kvp.Value.delay, texturesDir);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        foreach (Node child in node.GetChildren())
+            RegisterAnimationsRecursive(child, animData, texturesDir);
     }
 }

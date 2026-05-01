@@ -39,8 +39,10 @@ public partial class MainUI
 			_giveNPCItemData[index] = null;
 			UpdateGiveNPCSlot(index);
 			
-			_cursorLabel.Text = _heldItem.Value.TryGetProperty("itemName", out var n) ? n.GetString() : "Item";
-			_cursorLabel.Visible = true;
+			int pIconId = _heldItem.Value.TryGetProperty("icon", out var pProp) ? pProp.GetInt32() : 0;
+			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+			_cursorIcon.Texture = (pIconId > 0 && iconMgr != null) ? iconMgr.GetItemIcon(pIconId) : null;
+			_cursorIcon.Visible = true;
 		}
 		else if (_heldItem.HasValue)
 		{

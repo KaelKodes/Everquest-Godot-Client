@@ -386,7 +386,8 @@ public partial class MainUI
 	private void OnCampComplete()
 	{
 		if (!IsInstanceValid(this)) return;
-		// Save hotbar state before leaving
+		// Save UI and hotbar state before leaving
+		SaveFullLayout();
 		_hotbarManager?.OnPlayerLogout();
 		GD.Print("[UI] Camp complete — returning to character select.");
 		GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
@@ -548,7 +549,8 @@ public partial class MainUI
 				{
 					if (i >= 10) break; // Hardcap at 10 buttons
 					
-					string mId = extMob.GetProperty("id").GetString();
+					var idProp = extMob.GetProperty("id");
+					string mId = idProp.ValueKind == JsonValueKind.Number ? idProp.GetInt32().ToString() : idProp.GetString();
 					string mName = extMob.GetProperty("name").GetString();
 					double mHp = extMob.GetProperty("hp").GetDouble();
 					double mMax = extMob.GetProperty("maxHp").GetDouble();

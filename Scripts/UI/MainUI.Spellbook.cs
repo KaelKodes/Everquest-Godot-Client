@@ -162,7 +162,8 @@ public partial class MainUI
 			ManaCost = sp.ManaCost,
 			CastTime = sp.CastTime,
 			CooldownRemaining = 0,
-			Description = sp.Description
+			Description = sp.Description,
+			MemIcon = sp.MemIcon
 		};
 
 		var slotBtn = _spellSlotButtons[slotIndex];
@@ -174,11 +175,21 @@ public partial class MainUI
 		_spellSlotLabels[slotIndex].Text = sp.Name;
 		_spellSlotLabels[slotIndex].AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
 
-		var atlas = new AtlasTexture();
-		atlas.Atlas = _spellGemTexture;
-		atlas.Region = GetSpellIconRect(sp.Name);
-		slotBtn.Icon = atlas;
-		slotBtn.ExpandIcon = false;
+		var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+		if (iconMgr != null) {
+			GD.Print($"[SPELLBOOK DEBUG] Rendering {sp.Name} with memIcon: {sp.MemIcon}");
+			var icon = iconMgr.GetSpellGem(sp.MemIcon);
+			if (icon != null) {
+				slotBtn.Icon = icon;
+				slotBtn.ExpandIcon = true;
+			} else {
+				var atlas = new AtlasTexture();
+				atlas.Atlas = _spellGemTexture;
+				atlas.Region = GetSpellIconRect(sp.Name);
+				slotBtn.Icon = atlas;
+				slotBtn.ExpandIcon = false;
+			}
+		}
 		slotBtn.IconAlignment = HorizontalAlignment.Right;
 
 		Log("SYSTEM", $"[color=cyan]Memorizing {sp.Name} in gem {slotIndex + 1}...[/color]");
@@ -243,6 +254,9 @@ public partial class MainUI
 				string effect = spell.TryGetProperty("effect", out var eProp) ? eProp.GetString() : "unknown";
 				int level = spell.TryGetProperty("level", out var lvProp) ? lvProp.GetInt32() : 1;
 				string description = spell.TryGetProperty("description", out var descProp) ? descProp.GetString() : "";
+				int memIcon = spell.TryGetProperty("memIcon", out var memProp) ? memProp.GetInt32() : 0;
+				int iconId = spell.TryGetProperty("icon", out var iconProp) ? iconProp.GetInt32() : 0;
+				GD.Print($"[DEBUG] Parsed Spell {name}: memIcon={memIcon}, icon={iconId}");
 
 				// Add to known spells list (for right-click memorize picker)
 				_knownSpells.Add(new KnownSpell {
@@ -253,7 +267,9 @@ public partial class MainUI
 					CastTime = castTime,
 					Effect = effect,
 					Level = level,
-					Description = description
+					Description = description,
+					MemIcon = memIcon,
+					Icon = iconId
 				});
 
 				if (slot < 0 || slot >= 8) continue;
@@ -265,7 +281,9 @@ public partial class MainUI
 					ManaCost = manaCost,
 					CastTime = castTime,
 					CooldownRemaining = 0,
-					Description = description
+					Description = description,
+					MemIcon = memIcon,
+					Icon = iconId
 				};
 
 				var slotBtn = _spellSlotButtons[slot];
@@ -277,11 +295,21 @@ public partial class MainUI
 				_spellSlotLabels[slot].Text = name;
 				_spellSlotLabels[slot].AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
 				
-				var atlas = new AtlasTexture();
-				atlas.Atlas = _spellGemTexture;
-				atlas.Region = GetSpellIconRect(name);
-				slotBtn.Icon = atlas;
-				slotBtn.ExpandIcon = false;
+				var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+				if (iconMgr != null) {
+					GD.Print($"[SPELLBAR DEBUG] Rendering {name} with memIcon: {memIcon}");
+					var icon = iconMgr.GetSpellGem(memIcon);
+					if (icon != null) {
+						slotBtn.Icon = icon;
+						slotBtn.ExpandIcon = true;
+					} else {
+						var atlas = new AtlasTexture();
+						atlas.Atlas = _spellGemTexture;
+						atlas.Region = GetSpellIconRect(name);
+						slotBtn.Icon = atlas;
+						slotBtn.ExpandIcon = false;
+					}
+				}
 				slotBtn.IconAlignment = HorizontalAlignment.Right;
 			}
 

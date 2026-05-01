@@ -31,20 +31,27 @@ public partial class MainUI : Control
 	
 	// Hotbar System
 	private HotbarManager _hotbarManager;
+	public HotbarManager HotbarManager => _hotbarManager;
 	
 	// Inventory & Equipment Window
 	private Control _inventoryWindow;
-	private Button[] _invSlots = new Button[10]; // 10 general inventory slots
+	private Button[] _invSlots = new Button[8]; // 8 general inventory slots
 	private GridContainer _slotsGrid;        // container for inventory slot buttons
-	private VBoxContainer _equipGrid;        // equipment slot container
+	private Control _equipGrid;              // equipment slot container
 	private RichTextLabel _invStatsText;     // stats panel in inventory
+	private RichTextLabel _detailedStatsText;// detailed stats panel (left)
+	private RichTextLabel _detailedStatsRight;// detailed stats panel (right)
+	private Label[] _currencyLabels = new Label[4]; // pp, gp, sp, cp
+	private Control _skillsWindow;
+	private VBoxContainer _skillsListContainer;
 	private readonly Dictionary<string, Button> _equipSlots = new();
 
 	// Item Interaction System
 	private JsonElement? _heldItem = null;
 	private int _heldFromSlotId = -1;
-	private Label _cursorLabel;
-	private Panel _itemDetailPopup;
+	private TextureRect _cursorIcon;
+	private ItemDetailsWindow _itemDetailPopup;
+	private SpellDetailsWindow _spellDetailPopup;
 	private Button _autoEquipBtn;
 	private double _rightClickTimer = -1;
 	private Button _rightClickTarget = null;
@@ -80,6 +87,7 @@ public partial class MainUI : Control
 	private PackedScene _inventoryWindowScene = GD.Load<PackedScene>("res://Scenes/UI/InventoryWindow.tscn");
 	private PackedScene _merchantWindowScene = GD.Load<PackedScene>("res://Scenes/UI/MerchantWindow.tscn");
 	private PackedScene _giveNPCWindowScene = GD.Load<PackedScene>("res://Scenes/UI/GiveNPCWindow.tscn");
+	private PackedScene _skillsWindowScene = GD.Load<PackedScene>("res://Scenes/UI/SkillsWindow.tscn");
 
 	private Control _merchantWindow;
 	private Control _giveNPCWindow;
@@ -168,6 +176,8 @@ public partial class MainUI : Control
 		public float CastTime;
 		public float CooldownRemaining;
 		public string Description;
+		public int MemIcon;
+		public int Icon;
 	}
 	private MemorizedSpell[] _spells = new MemorizedSpell[8];
 	private double _currentMana = 0;
@@ -175,7 +185,51 @@ public partial class MainUI : Control
 	private double _currentHp = 0;
 	private double _maxHp = 0;
 	private string _charName;
+	public int GetPlayerLevel() => _charLevel;
 	private int _charLevel = 1;
+	private int _raceId = 1;
+
+	public int GetPlayerClassMask()
+	{
+		string c = _cls.ToLower();
+		if (c == "warrior") return 1;
+		if (c == "cleric") return 2;
+		if (c == "paladin") return 4;
+		if (c == "ranger") return 8;
+		if (c == "shadow knight" || c == "shadow_knight") return 16;
+		if (c == "druid") return 32;
+		if (c == "monk") return 64;
+		if (c == "bard") return 128;
+		if (c == "rogue") return 256;
+		if (c == "shaman") return 512;
+		if (c == "necromancer") return 1024;
+		if (c == "wizard") return 2048;
+		if (c == "magician") return 4096;
+		if (c == "enchanter") return 8192;
+		if (c == "beastlord") return 16384;
+		if (c == "berserker") return 32768;
+		return 1;
+	}
+
+	public int GetPlayerRaceMask()
+	{
+		if (_raceId == 1) return 1;
+		if (_raceId == 2) return 2;
+		if (_raceId == 3) return 4;
+		if (_raceId == 4) return 8;
+		if (_raceId == 5) return 16;
+		if (_raceId == 6) return 32;
+		if (_raceId == 7) return 64;
+		if (_raceId == 8) return 128;
+		if (_raceId == 9) return 256;
+		if (_raceId == 10) return 512;
+		if (_raceId == 11) return 1024;
+		if (_raceId == 12) return 2048;
+		if (_raceId == 128) return 4096;
+		if (_raceId == 130) return 8192;
+		if (_raceId == 330) return 16384;
+		return 1;
+	}
 
 	// All known (scribed) spells — for the right-click memorize picker
 	private struct KnownSpell
@@ -188,6 +242,8 @@ public partial class MainUI : Control
 		public string Effect; // heal, dd, dot, buff, debuff, root, snare, cure, info
 		public int Level;
 		public string Description;
+		public int MemIcon;
+		public int Icon;
 	}
 	private List<KnownSpell> _knownSpells = new List<KnownSpell>();
 
@@ -204,6 +260,7 @@ public partial class MainUI : Control
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
 	private Panel _optionsPanel;
+	private CopyLayoutWindow _copyLayoutWindow;
 	private AudioPlayerWindow _audioPlayerWindow;
 
 	// Buff tracking for duration ticking
@@ -237,6 +294,8 @@ public partial class MainUI : Control
 	public override void _Ready()
 	{
 		Instance = this;
+		UILayoutManager.Initialize(GameState.CharacterName);
+		
 		// Use the global networking singleton
 		_client = GameClient.Instance;
 		_client.CharacterStatusReceived += OnCharacterStatusReceived;
@@ -253,6 +312,7 @@ public partial class MainUI : Control
 		_client.SneakResultReceived += OnSneakResultReceived;
 		_client.HideResultReceived += OnHideResultReceived;
 		_client.SneakBrokenReceived += OnSneakBrokenReceived;
+		_client.SpellDetailsReceived += OnSpellDetailsReceived;
 		_client.HideBrokenReceived += OnHideBrokenReceived;
 		_client.NpcSayReceived += OnNpcSayReceived;
 		_client.MerchantOpened += OnMerchantOpened;
@@ -275,13 +335,78 @@ public partial class MainUI : Control
 		}
 
 		// Create Windows (hidden by default)
+		var iconManager = new IconManager();
+		iconManager.Name = "IconManager";
+		AddChild(iconManager);
+
 		_inventoryWindow = _inventoryWindowScene.Instantiate<Control>();
 		AddChild(_inventoryWindow);
 		_inventoryWindow.Hide();
 		
-		_slotsGrid = _inventoryWindow.GetNode<GridContainer>("MainVBox/SlotsSection/SlotsGrid");
-		_equipGrid = _inventoryWindow.GetNode<VBoxContainer>("MainVBox/ContentHBox/EquipPanel/EquipScroll/EquipGrid");
-		_invStatsText = _inventoryWindow.GetNode<RichTextLabel>("MainVBox/ContentHBox/StatsPanel/StatsScroll/StatsText");
+		_slotsGrid = _inventoryWindow.GetNode<GridContainer>("MainVBox/TabContainer/Inventory/RightColumn/GeneralSlotsGrid");
+		_equipGrid = _inventoryWindow.GetNode<Control>("MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel/EquipGrid");
+		_invStatsText = _inventoryWindow.GetNode<RichTextLabel>("MainVBox/TabContainer/Inventory/StatsColumn/StatsScroll/StatsText");
+		// Build two-column Stats tab: replace the single DetailedStatsText with an HBox containing left + right
+		var existingStatsLabel = _inventoryWindow.GetNodeOrNull<RichTextLabel>("MainVBox/TabContainer/Stats/StatsVBox/DetailedStatsText");
+		var statsParent = existingStatsLabel?.GetParent();
+		if (existingStatsLabel != null && statsParent != null) {
+			int idx = existingStatsLabel.GetIndex();
+			statsParent.RemoveChild(existingStatsLabel);
+			existingStatsLabel.QueueFree();
+
+			var hbox = new HBoxContainer();
+			hbox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+			hbox.SizeFlagsVertical = SizeFlags.ExpandFill;
+			hbox.AddThemeConstantOverride("separation", 8);
+
+			_detailedStatsText = new RichTextLabel();
+			_detailedStatsText.BbcodeEnabled = true;
+			_detailedStatsText.FitContent = true;
+			_detailedStatsText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+			_detailedStatsText.SizeFlagsVertical = SizeFlags.ExpandFill;
+			_detailedStatsText.AddThemeFontSizeOverride("normal_font_size", 11);
+			_detailedStatsText.AddThemeFontSizeOverride("bold_font_size", 11);
+
+			_detailedStatsRight = new RichTextLabel();
+			_detailedStatsRight.BbcodeEnabled = true;
+			_detailedStatsRight.FitContent = true;
+			_detailedStatsRight.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+			_detailedStatsRight.SizeFlagsVertical = SizeFlags.ExpandFill;
+			_detailedStatsRight.AddThemeFontSizeOverride("normal_font_size", 11);
+			_detailedStatsRight.AddThemeFontSizeOverride("bold_font_size", 11);
+
+			hbox.AddChild(_detailedStatsText);
+			hbox.AddChild(_detailedStatsRight);
+			statsParent.AddChild(hbox);
+			statsParent.MoveChild(hbox, idx);
+		}
+		
+		_currencyLabels[0] = _inventoryWindow.GetNode<Label>("MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Platinum/Label");
+		_currencyLabels[1] = _inventoryWindow.GetNode<Label>("MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Gold/Label");
+		_currencyLabels[2] = _inventoryWindow.GetNode<Label>("MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Silver/Label");
+		_currencyLabels[3] = _inventoryWindow.GetNode<Label>("MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Copper/Label");
+
+		// Add coin icons from dragitem5 (iconId 144=plat, 145=gold, 146=silver, 147=copper)
+		int[] coinIconIds = { 144, 145, 146, 147 };
+		for (int i = 0; i < 4; i++) {
+			var coinRow = _currencyLabels[i]?.GetParent();
+			if (coinRow == null) continue;
+			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+			if (iconMgr == null) continue;
+			var coinTex = iconMgr.GetItemIcon(coinIconIds[i]);
+			if (coinTex == null) continue;
+			var coinIcon = new TextureRect();
+			coinIcon.Texture = coinTex;
+			coinIcon.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+			coinIcon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			coinIcon.CustomMinimumSize = new Vector2(20, 20);
+			coinRow.AddChild(coinIcon);
+			coinRow.MoveChild(coinIcon, 0); // icon before the label
+		}
+		
+		_spellDetailPopup = new SpellDetailsWindow();
+		AddChild(_spellDetailPopup);
+
 		BuildInventorySlots();
 		
 		// Close / Done buttons
@@ -290,13 +415,25 @@ public partial class MainUI : Control
 		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DestroyBtn").Pressed += () => {
 			Log("SYSTEM", "[color=yellow]Click the X on an item to destroy it.[/color]");
 		};
+		var tabContainer = _inventoryWindow.GetNode<TabContainer>("MainVBox/TabContainer");
+		var destroyBtn = _inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DestroyBtn");
+		tabContainer.TabChanged += (long tab) => {
+			destroyBtn.Visible = (tab == 0); // Only show on Inventory tab
+		};
+		
+		// Skills Window
+		_skillsWindow = _skillsWindowScene.Instantiate<Control>();
+		AddChild(_skillsWindow);
+		_skillsWindow.Hide();
+		_skillsListContainer = _skillsWindow.GetNode<VBoxContainer>("VBox/Scroll/SkillList");
+		_skillsWindow.GetNode<Button>("VBox/TitleBar/HBox/CloseBtn").Pressed += () => _skillsWindow.Hide();
+		_skillsWindow.GetNode<Button>("VBox/ButtonBar/DoneBtn").Pressed += () => _skillsWindow.Hide();
 		
 		// Build equipment paperdoll slots
 		BuildEquipmentGrid();
 		BuildAutoEquipSlot();
-		BuildSkillsTab();
 		SetupInventoryDrag();
-		BuildCursorLabel();
+		BuildCursorIcon();
 		BuildItemDetailPopup();
 
 		// Merchant Window
@@ -363,6 +500,7 @@ public partial class MainUI : Control
 		_targetListWindow = GetNodeOrNull<Window>("%TargetListWindow") ?? GetNodeOrNull<Window>("TargetListWindow");
 		if (_targetListWindow != null)
 		{
+			_targetListWindow.CloseRequested += () => _targetListWindow.Hide();
 			GD.Print("[UI] Found TargetListWindow! Binding 10 slots...");
 			for (int i = 0; i < 10; i++)
 			{
@@ -588,13 +726,16 @@ public partial class MainUI : Control
 					}
 					OnSpellSlotPressed(slotIndex);
 				}
-				else if (mb.ButtonIndex == MouseButton.Middle)
-				{
-					if (_spells[slotIndex].SpellId > 0 && _hotbarManager != null)
-						_hotbarManager.StartSpellDrag(slotIndex, _spells[slotIndex].Name);
-				}
 				else if (mb.ButtonIndex == MouseButton.Right)
 				{
+					if (mb.CtrlPressed)
+					{
+						if (_spells[slotIndex].SpellId > 0 && _hotbarManager != null)
+							_hotbarManager.StartSpellDrag(slotIndex, _spells[slotIndex].Name);
+						GetViewport().SetInputAsHandled();
+						return;
+					}
+
 					if (_spells[slotIndex].SpellId <= 0)
 						ShowSpellMemorizePicker(slotIndex, slotBtn);
 					else
@@ -666,6 +807,12 @@ public partial class MainUI : Control
 				_castBarPanel.GlobalPosition = mm.GlobalPosition - castBarDragOffset;
 				_castBarPanel.Size = new Vector2(250, 28);
 			}
+			
+			// Save on drag end
+			if (ev is InputEventMouseButton mbEnd && mbEnd.ButtonIndex == MouseButton.Left && !mbEnd.Pressed)
+			{
+				SaveWindowPositions();
+			}
 		};
 		var castPanelStyle = new StyleBoxFlat();
 		castPanelStyle.BgColor = new Color(0.1f, 0.1f, 0.15f, 0.85f);
@@ -734,24 +881,32 @@ public partial class MainUI : Control
 		var optionsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/OptionsBtn");
 		if (optionsBtn != null) optionsBtn.Pressed += () => ToggleOptionsPanel();
 
-		// Wire AUDIO button on Simple Panel to toggle Audio Player
-		var audioBtn = GetNodeOrNull<Button>("MenuWindow/VBox/AudioBtn");
-		if (audioBtn == null)
+		// Dynamically add a SKILLS button to the Simple Panel
+		var menuVBoxNode = GetNodeOrNull<VBoxContainer>("MenuWindow/VBox");
+		if (menuVBoxNode != null && abilitiesBtn != null)
 		{
-			// Dynamically add the Audio button if not in scene
-			var menuVBox = GetNodeOrNull<VBoxContainer>("MenuWindow/VBox");
-			if (menuVBox != null && optionsBtn != null)
-			{
-				audioBtn = new Button();
-				audioBtn.Text = "AUDIO";
-				audioBtn.Name = "AudioBtn";
-				// Insert right after the OPTIONS button
-				int optIdx = optionsBtn.GetIndex();
-				menuVBox.AddChild(audioBtn);
-				menuVBox.MoveChild(audioBtn, optIdx + 1);
-			}
+			var skillsBtn = new Button();
+			skillsBtn.Text = "SKILLS";
+			skillsBtn.Name = "SkillsBtn";
+			int abilitiesIdx = abilitiesBtn.GetIndex();
+			menuVBoxNode.AddChild(skillsBtn);
+			menuVBoxNode.MoveChild(skillsBtn, abilitiesIdx + 1);
+			skillsBtn.Pressed += () => _skillsWindow.Visible = !_skillsWindow.Visible;
+
+			// Dev Spells Button
+			var devSpellsBtn = new Button();
+			devSpellsBtn.Text = "DEV: SPELLS";
+			devSpellsBtn.Name = "DevSpellsBtn";
+			menuVBoxNode.AddChild(devSpellsBtn);
+			menuVBoxNode.MoveChild(devSpellsBtn, abilitiesIdx + 2);
+			devSpellsBtn.Hide(); // Hide from players, keep for devs
+
+			var spellIconDebugger = new SpellIconDebugger();
+			AddChild(spellIconDebugger);
+			spellIconDebugger.Hide();
+			
+			devSpellsBtn.Pressed += () => spellIconDebugger.Visible = !spellIconDebugger.Visible;
 		}
-		if (audioBtn != null) audioBtn.Pressed += () => ToggleAudioPlayer();
 
 		// Upgrade existing ActionBarWindow with title + 3 tabs
 		_actionBarWindow = GetNodeOrNull<Window>("ActionBarWindow");
@@ -855,10 +1010,10 @@ public partial class MainUI : Control
 		wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 		if (wm != null)
 		{
-			wm.PlayerMoved += (x, z) => {
+			wm.PlayerMoved += (x, y, z) => {
 				// Send raw payload to server natively mapping Godot Z to Server Y, negating Godot's axes back to EQ's axes
-				// Godot (-X = East, -Z = North). EQ (-X = East, +Y = North).
-				_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {-x}, \"y\": {-z}}}");
+				// Godot (-X = East, +Y = Up, -Z = North). EQ (-X = East, +Y = North, +Z = Up).
+				_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {-x}, \"y\": {-z}, \"z\": {y}}}");
 			};
 			
 			wm.SneakToggled += (isSneaking) => {
@@ -869,8 +1024,15 @@ public partial class MainUI : Control
 				_client.SendRaw($"{{\"type\": \"USE_HIDE\", \"hiding\": {isHiding.ToString().ToLower()}}}");
 			};
 			
-			wm.ZoneLineCrossed += (targetZoneId) => {
-				_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
+			wm.ZoneLineCrossed += (targetZoneId, tx, ty, tz) => {
+				if (targetZoneId == _currentZoneId) {
+					// Intra-zone teleport (like Felwithe caster portals)
+					wm.TeleportPlayer(tx, ty, tz);
+					// Inform the server of our new position immediately
+					_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {-tx}, \"y\": {tz}, \"z\": {-ty}}}");
+				} else {
+					_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
+				}
 			};
 			
 			wm.TargetChanged += (name, type) => {
@@ -903,7 +1065,7 @@ public partial class MainUI : Control
 		// Unhide windows dynamically at runtime that were hidden in the editor to prevent positioning bugs
 		foreach (Node child in GetChildren())
 		{
-			if (child is Window win && win.Name != "TargetWindow")
+			if (child is Window win && win.Name != "TargetWindow" && !(child is SpellIconDebugger))
 			{
 				win.Visible = true;
 			}
@@ -921,6 +1083,7 @@ public partial class MainUI : Control
 		_hotbarManager.EquipItemById = (itemId) => {
 			_client.SendRaw($"{{\"type\": \"AUTO_EQUIP\", \"itemId\": {itemId}}}");
 		};
+		_hotbarManager.ToggleAutoAttack = OnAutoFightPressed;
 
 		// Wire ActionPanel ability/skill activation signals
 		// ActionPanel is now a persistent node handled by ActionPanel.cs
@@ -977,6 +1140,8 @@ public partial class MainUI : Control
 			GD.Print("[UI] Caught up on cached Buffs.");
 			OnBuffsUpdated(_client.LastBuffsPayload);
 		}
+
+		CallDeferred(nameof(ReloadUILayout));
 	}
 
 	public override void _Input(InputEvent @event)
@@ -990,6 +1155,12 @@ public partial class MainUI : Control
 				{
 					if (!_chatInputFocused)
 					{
+						// Check if running forward while opening chat
+						if (Input.IsActionPressed("move_forward")) {
+							var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+							if (wm != null) wm.SetAutoRun(true);
+						}
+						
 						_chatInput.GrabFocus();
 						GetViewport().SetInputAsHandled();
 						return;
@@ -1015,7 +1186,8 @@ public partial class MainUI : Control
 
 			// Suppress all game hotkeys while chat is focused
 			if (_chatInputFocused) return;
-			if (k.Keycode == Key.H)
+			
+			if (k.Keycode == Key.H && !k.AltPressed && !k.CtrlPressed && !k.ShiftPressed)
 			{
 				// Key H is our Hail key
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
@@ -1028,7 +1200,21 @@ public partial class MainUI : Control
 					_client.SendRaw("{\"type\": \"HAIL\"}");
 				}
 			}
-			else if (k.Keycode == Key.M)
+			else if (k.Keycode == Key.C && !k.AltPressed && !k.CtrlPressed && !k.ShiftPressed)
+			{
+				// Key C is Consider
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null && wm.CurrentTargetId != null)
+				{
+					_client.SendRaw($"{{\"type\": \"CONSIDER\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
+				}
+			}
+			else if (k.Keycode == Key.X && !k.AltPressed && !k.CtrlPressed && !k.ShiftPressed)
+			{
+				// Key X toggles sit/stand
+				_client.SendRaw(_isSitting ? "{\"type\": \"STAND\"}" : "{\"type\": \"SIT\"}");
+			}
+			else if (k.Keycode == Key.M && !k.AltPressed && !k.CtrlPressed && !k.ShiftPressed)
 			{
 				// Key M toggles the Map overlay
 				if (_mudMap != null)
@@ -1037,14 +1223,53 @@ public partial class MainUI : Control
 					GD.Print($"[UI] Map toggled: {_mudMap.Visible}");
 				}
 			}
-			else if (k.Keycode == Key.I || k.Keycode == Key.B)
+			else if (k.Keycode == Key.I && !k.AltPressed && !k.CtrlPressed && !k.ShiftPressed)
 			{
-				// Key I or B toggles Inventory
+				// Key I toggles Inventory
 				if (_inventoryWindow != null)
 				{
 					_inventoryWindow.Visible = !_inventoryWindow.Visible;
 					GD.Print($"[UI] Inventory toggled: {_inventoryWindow.Visible}");
 				}
+			}
+			else if (k.Keycode == Key.B && k.ShiftPressed)
+			{
+				Log("SYSTEM", "Backpacks not implemented yet.");
+			}
+			else if (k.Keycode == Key.A && k.AltPressed)
+			{
+				ToggleActionBarWindow();
+			}
+			else if (k.Keycode == Key.T && k.AltPressed)
+			{
+				if (_targetListWindow != null)
+				{
+					_targetListWindow.Visible = !_targetListWindow.Visible;
+					GD.Print($"[UI] Target List toggled: {_targetListWindow.Visible}");
+				}
+			}
+			else if (k.Keycode == Key.M && k.AltPressed)
+			{
+				var menuWindow = GetNodeOrNull<Window>("MenuWindow");
+				if (menuWindow != null) menuWindow.Visible = !menuWindow.Visible;
+			}
+			else if (k.Keycode == Key.B && k.AltPressed)
+			{
+				if (_isSitting) ToggleSpellbook();
+				else Log("SYSTEM", "You must be sitting to open your spellbook.");
+			}
+			else if (k.Keycode == Key.C && k.AltPressed)
+			{
+				if (_chatWindow != null) _chatWindow.Visible = !_chatWindow.Visible;
+			}
+			else if (k.Keycode == Key.S && k.AltPressed)
+			{
+				if (_skillsWindow != null) _skillsWindow.Visible = !_skillsWindow.Visible;
+				else Log("SYSTEM", "Skills popup not implemented yet.");
+			}
+			else if (k.Keycode == Key.O && k.AltPressed)
+			{
+				if (_optionsPanel != null) _optionsPanel.Visible = !_optionsPanel.Visible;
 			}
 			else if (k.Keycode == Key.Escape)
 			{
@@ -1104,6 +1329,9 @@ public partial class MainUI : Control
 	{
 		if (what == NotificationWMCloseRequest)
 		{
+			// Auto-save the character's layout when closing the game
+			SaveFullLayout();
+
 			// Clear session-scoped EQ asset cache
 			EQAssetCache.Instance.ClearCache();
 			GetTree().Quit();
@@ -1201,8 +1429,8 @@ public partial class MainUI : Control
 		}
 
 		// ── Item Interaction: cursor label follows mouse ──
-		if (_cursorLabel != null && _cursorLabel.Visible) {
-			_cursorLabel.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
+		if (_cursorIcon != null && _cursorIcon.Visible) {
+			_cursorIcon.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
 		}
 
 		// ── Right-click hold timer for item detail popup ──
@@ -1216,11 +1444,29 @@ public partial class MainUI : Control
 			}
 		}
 
-		// ── Escape to cancel held item ──
-		if (Input.IsActionJustPressed("ui_cancel") && _heldItem.HasValue) {
-			CancelHeldItem();
+		// ── Escape to cancel held item or hide popups ──
+		if (Input.IsActionJustPressed("ui_cancel")) {
+			if (_heldItem.HasValue) CancelHeldItem();
+			if (_itemDetailPopup.Visible) _itemDetailPopup.Visible = false;
+			if (_spellDetailPopup.Visible) _spellDetailPopup.Visible = false;
 		}
 
+	}
+
+	private void OnSpellDetailsReceived(Variant data)
+	{
+		string json = data.AsString();
+		using var doc = JsonDocument.Parse(json);
+		var root = doc.RootElement;
+		if (root.TryGetProperty("spell", out var spellJson))
+		{
+			// Try to position near mouse, clamped to screen
+			var pos = GetGlobalMousePosition();
+			var viewportSize = GetViewportRect().Size;
+			if (pos.X + 300 > viewportSize.X) pos.X = viewportSize.X - 300;
+			if (pos.Y + 240 > viewportSize.Y) pos.Y = viewportSize.Y - 240;
+			_spellDetailPopup.ShowSpell(spellJson, pos);
+		}
 	}
 
 	// â”€â”€â”€ Spell System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1507,6 +1753,26 @@ public partial class MainUI : Control
 		};
 		vbox.AddChild(shadowCheck);
 
+		// Copy Loadout Button
+		var copyBtn = new Button();
+		copyBtn.Text = "Copy Loadout";
+		copyBtn.CustomMinimumSize = new Vector2(0, 24);
+		copyBtn.Pressed += () => {
+			if (_copyLayoutWindow == null) {
+				_copyLayoutWindow = new CopyLayoutWindow();
+				AddChild(_copyLayoutWindow);
+			}
+			_copyLayoutWindow.Visible = !_copyLayoutWindow.Visible;
+		};
+		vbox.AddChild(copyBtn);
+
+		// Audio Player Button
+		var audioBtn = new Button();
+		audioBtn.Text = "Audio Player";
+		audioBtn.CustomMinimumSize = new Vector2(0, 24);
+		audioBtn.Pressed += () => ToggleAudioPlayer();
+		vbox.AddChild(audioBtn);
+
 		// Make the panel draggable
 		bool optsDragging = false;
 		Vector2 optsDragOffset = Vector2.Zero;
@@ -1521,9 +1787,111 @@ public partial class MainUI : Control
 			{
 				_optionsPanel.GlobalPosition = mm.GlobalPosition - optsDragOffset;
 			}
+
+			// Save on drag end
+			if (ev is InputEventMouseButton mbEnd && mbEnd.ButtonIndex == MouseButton.Left && !mbEnd.Pressed)
+			{
+				SaveWindowPositions();
+			}
 		};
 
 		AddChild(_optionsPanel);
+		ApplyWindowPos(_optionsPanel, "OptionsPanel", UILayoutManager.GetSection("Windows"));
+	}
+
+	public void ReloadUILayout()
+	{
+		var windows = UILayoutManager.GetSection("Windows");
+		if (_targetWindow != null) ApplyWindowPos(_targetWindow, "TargetWindow", windows);
+		if (_targetListWindow != null) ApplyWindowPos(_targetListWindow, "TargetListWindow", windows);
+		ApplyWindowPos(_castBarPanel, "CastBar", windows);
+		if (_optionsPanel != null) ApplyWindowPos(_optionsPanel, "OptionsPanel", windows);
+		if (_actionBarWindow != null) ApplyWindowPos(_actionBarWindow, "ActionBarWindow", windows);
+		if (_inventoryWindow != null) ApplyWindowPos(_inventoryWindow, "InventoryWindow", windows);
+		if (_chatWindow != null) ApplyWindowPos(_chatWindow, "ChatWindow", windows);
+		if (_skillsWindow != null) ApplyWindowPos(_skillsWindow, "SkillsWindow", windows);
+		
+		var menuWindow = GetNodeOrNull<Window>("MenuWindow");
+		if (menuWindow != null) ApplyWindowPos(menuWindow, "MenuWindow", windows);
+		
+		var spellsWindow = GetNodeOrNull<Window>("Spellbook");
+		if (spellsWindow != null) ApplyWindowPos(spellsWindow, "Spellbook", windows);
+		
+		var spellBarWindow = GetNodeOrNull<Window>("SpellBarWindow");
+		if (spellBarWindow != null) ApplyWindowPos(spellBarWindow, "SpellBarWindow", windows);
+		
+		var partyWindow = GetNodeOrNull<Window>("PartyWindow");
+		if (partyWindow != null) ApplyWindowPos(partyWindow, "PartyWindow", windows);
+		
+		var statusWindow = GetNodeOrNull<Window>("StatusWindow");
+		if (statusWindow != null) ApplyWindowPos(statusWindow, "StatusWindow", windows);
+		
+		if (_copyLayoutWindow != null) ApplyWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
+	}
+
+	private void ApplyWindowPos(Node panel, string key, Godot.Collections.Dictionary windows)
+	{
+		if (panel == null) return;
+		if (windows.TryGetValue(key, out Variant val))
+		{
+			var d = val.AsGodotDictionary();
+			if (panel is Control c) {
+				c.GlobalPosition = new Vector2(d["x"].AsSingle(), d["y"].AsSingle());
+			} else if (panel is Window w) {
+				w.Position = new Vector2I(d["x"].AsInt32(), d["y"].AsInt32());
+			}
+		}
+	}
+
+	public void SaveWindowPositions()
+	{
+		var windows = UILayoutManager.GetSection("Windows");
+		StoreWindowPos(_targetWindow, "TargetWindow", windows);
+		StoreWindowPos(_targetListWindow, "TargetListWindow", windows);
+		StoreWindowPos(_castBarPanel, "CastBar", windows);
+		StoreWindowPos(_optionsPanel, "OptionsPanel", windows);
+		StoreWindowPos(_actionBarWindow, "ActionBarWindow", windows);
+		StoreWindowPos(_inventoryWindow, "InventoryWindow", windows);
+		StoreWindowPos(_chatWindow, "ChatWindow", windows);
+		StoreWindowPos(_skillsWindow, "SkillsWindow", windows);
+		
+		var menuWindow = GetNodeOrNull<Window>("MenuWindow");
+		if (menuWindow != null) StoreWindowPos(menuWindow, "MenuWindow", windows);
+		
+		var spellsWindow = GetNodeOrNull<Window>("Spellbook");
+		if (spellsWindow != null) StoreWindowPos(spellsWindow, "Spellbook", windows);
+		
+		var spellBarWindow = GetNodeOrNull<Window>("SpellBarWindow");
+		if (spellBarWindow != null) StoreWindowPos(spellBarWindow, "SpellBarWindow", windows);
+		
+		var partyWindow = GetNodeOrNull<Window>("PartyWindow");
+		if (partyWindow != null) StoreWindowPos(partyWindow, "PartyWindow", windows);
+		
+		var statusWindow = GetNodeOrNull<Window>("StatusWindow");
+		if (statusWindow != null) StoreWindowPos(statusWindow, "StatusWindow", windows);
+		
+		if (_copyLayoutWindow != null) StoreWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
+		
+		UILayoutManager.SetSection("Windows", windows);
+		if (!string.IsNullOrEmpty(GameState.CharacterName))
+			UILayoutManager.SaveLayout(GameState.CharacterName);
+	}
+
+	public void SaveFullLayout()
+	{
+		SaveWindowPositions();
+		if (_hotbarManager != null) _hotbarManager.SaveState();
+	}
+
+	private void StoreWindowPos(Node panel, string key, Godot.Collections.Dictionary windows)
+	{
+		if (panel == null) return;
+		
+		if (panel is Control ctrl) {
+			windows[key] = new Godot.Collections.Dictionary { ["x"] = ctrl.GlobalPosition.X, ["y"] = ctrl.GlobalPosition.Y };
+		} else if (panel is Window win) {
+			windows[key] = new Godot.Collections.Dictionary { ["x"] = win.Position.X, ["y"] = win.Position.Y };
+		}
 	}
 
 	private Rect2 GetSpellIconRect(string spellName)

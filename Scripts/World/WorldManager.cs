@@ -9,10 +9,12 @@ public partial class WorldManager : Node3D
     private SpringArm3D _cameraArm;
     private Camera3D _camera;
     private EntityCapsule _playerCapsule;
+    public Vector3 PlayerPosition => _playerCapsule?.GlobalPosition ?? Vector3.Zero;
     private ITargetable _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
     private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
     private Node3D _doorsContainer;
+    private MaterialAnimator _materialAnimator;
     private string _currentVisionStyle = "normal";
 
     private int _spawnCounter = 0;
@@ -35,14 +37,15 @@ public partial class WorldManager : Node3D
     [Signal] public delegate void TargetClearedEventHandler();
     
     // Server Syncing
-    [Signal] public delegate void PlayerMovedEventHandler(float x, float z);
-    [Signal] public delegate void ZoneLineCrossedEventHandler(string targetZoneId);
+    [Signal] public delegate void PlayerMovedEventHandler(float x, float y, float z);
+    [Signal] public delegate void ZoneLineCrossedEventHandler(string targetZoneId, float targetX, float targetY, float targetZ);
     [Signal] public delegate void SneakToggledEventHandler(bool isSneaking);
     [Signal] public delegate void HideToggledEventHandler(bool isHiding);
     [Signal] public delegate void SyncProgressEventHandler(int current, int total);
     private Vector3 _lastSentPos = Vector3.Zero;
     private Node3D _boundariesContainer;
     private bool _isAutoRunning = false;
+    public void SetAutoRun(bool val) => _isAutoRunning = val;
     private bool _isSneaking = false;
     private bool _isHiding = false;
     public bool PlayerHasStealthSkill { get; set; } = false;
@@ -639,9 +642,11 @@ public partial class WorldManager : Node3D
         else
         {
             velocity.Y = 0;
-            if (!isTyping && Input.IsPhysicalKeyPressed(Key.Space)) {
-                velocity.Y = 18.0f; // Jump force
+            if (!isTyping && Input.IsPhysicalKeyPressed(Key.Space))
+            {
+                velocity.Y = 30.0f; // Jump force
                 PlayFootstep("jmp");
+                
                 // Jumping cancels crouch/sneak/hide
                 if (_isCrouching)
                 {
@@ -678,7 +683,7 @@ public partial class WorldManager : Node3D
         if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f)
         {
             _lastSentPos = _playerCapsule.GlobalPosition;
-            EmitSignal(SignalName.PlayerMoved, _lastSentPos.X, _lastSentPos.Z);
+            EmitSignal(SignalName.PlayerMoved, _lastSentPos.X, _lastSentPos.Y, _lastSentPos.Z);
         }
 
         // --- Debug Admin Tools ---
@@ -875,62 +880,13 @@ public partial class WorldManager : Node3D
 
     // --- Targeting System ---
 
-    private void TargetSelf()
-    {
-        SetTarget(_playerCapsule);
-        GD.Print("[WORLD] Targeted self.");
-    }
 
     /// <summary>
     /// Called by MainUI when the server rejects a sneak/hide attempt or breaks stealth.
     /// Only clears the skill state flags — does NOT cancel the crouch animation.
     /// Crouching is a visual/movement state and is independent of the sneak skill.
     /// </summary>
-    public void CancelStealth(bool cancelSneak, bool cancelHide)
-    {
-        if (cancelSneak && _isSneaking)
-        {
-            _isSneaking = false;
-            // Don't touch _isCrouching — player stays crouched, just loses stealth benefit
-        }
-        if (cancelHide && _isHiding)
-        {
-            _isHiding = false;
-        }
-    }
 
-    private void CycleTarget(string category, int direction)
-    {
-        List<EntityCapsule> candidates = new List<EntityCapsule>();
-
-        foreach (var kvp in _activeEntities)
-        {
-            if (kvp.Value is EntityCapsule ec && ec != _playerCapsule)
-            {
-                if (category == "enemy" && (ec.EntityType == "enemy" || ec.EntityType == "mob" || ec.EntityType == "mining_node"))
-                    candidates.Add(ec);
-                else if (category == "friendly" && (ec.EntityType == "player" || ec.EntityType == "npc" || ec.EntityType == "pet"))
-                    candidates.Add(ec);
-            }
-        }
-
-        if (candidates.Count == 0) return;
-
-        // Sort by distance to player for consistent ordering
-        candidates.Sort((a, b) =>
-            a.GlobalPosition.DistanceTo(_playerCapsule.GlobalPosition)
-            .CompareTo(b.GlobalPosition.DistanceTo(_playerCapsule.GlobalPosition))
-        );
-
-        // Find current index
-        ref int idx = ref (category == "enemy" ? ref _enemyTargetIndex : ref _friendlyTargetIndex);
-
-        idx += direction;
-        if (idx >= candidates.Count) idx = 0;
-        if (idx < 0) idx = candidates.Count - 1;
-
-        SetTarget(candidates[idx]);
-    }
 
     public void SetTarget(ITargetable target)
     {
@@ -984,353 +940,21 @@ public partial class WorldManager : Node3D
     /// through the map while zone geometry loads. Released by TeleportPlayer's
     /// deferred re-snap after terrain collision is confirmed.
     /// </summary>
-    public void FreezeForZoneLoad()
-    {
-        _teleportSettling = true;
-        if (_playerCapsule != null)
-            _playerCapsule.Velocity = Vector3.Zero;
-        GD.Print("[WORLD] Player frozen for zone load.");
-    }
-
-    public void ClearWorld()
-    {
-        foreach (var child in _spawnsContainer.GetChildren())
-        {
-            if (child != _playerCapsule && GodotObject.IsInstanceValid(child))
-                child.QueueFree();
-        }
-        foreach (var child in _doorsContainer.GetChildren())
-        {
-            if (GodotObject.IsInstanceValid(child))
-                child.QueueFree();
-        }
-        _spawnedDoors.Clear();
-        _activeEntities.Clear();
-        _currentTarget = null; // Clear target on world change
-        if (_playerCapsule != null)
-        {
-            _activeEntities["player_self"] = _playerCapsule;
-        }
-        _spawnCounter = 0;
-        _enemyTargetIndex = -1;
-        _friendlyTargetIndex = -1;
-    }
-
-    public void ProcessMobMove(System.Text.Json.JsonElement ent)
-    {
-        try
-        {
-            string id = ent.GetProperty("id").GetString();
-            float rawX = ent.TryGetProperty("x", out var xProp) ? (float)xProp.GetDouble() : 0f;
-            float rawY = ent.TryGetProperty("y", out var yProp) ? (float)yProp.GetDouble() : 0f;
-            float rawZ = ent.TryGetProperty("z", out var zProp) ? (float)zProp.GetDouble() : 0f;
-            float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
-
-            float x = -rawX;
-            float z = -rawY;
-            float y = rawZ;
-            float godotYaw = (rawHeading / 512f) * 360f;
-
-            if (_activeEntities.TryGetValue(id, out Node3D entNode) && entNode is EntityCapsule ec)
-            {
-                if (ec.ChaseTarget == null)
-                {
-                    ec.TargetYaw = godotYaw;
-                    ec.TargetPosition = new Vector3(x, y, z);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"[WORLD] ProcessMobMove parsing error: {ex.Message}");
-        }
-    }
-
-    public void ProcessDoors(System.Text.Json.JsonElement doorsArray)
-    {
-        int totalDoors = doorsArray.GetArrayLength();
-        GD.Print($"[WORLD] Processing {totalDoors} doors...");
-        
-        if (_objectPlacer == null) 
-        {
-            GD.PrintErr("[WORLD] _objectPlacer is null! Cannot process doors.");
-            return;
-        }
-        string objectsDir = $"{EQAssetCache.Instance.CacheRoot}/zones/{_currentZoneId.ToLower()}/Objects";
-
-        foreach (var element in doorsArray.EnumerateArray())
-        {
-            string doorId = element.GetProperty("id").GetInt32().ToString();
-            
-            if (_spawnedDoors.ContainsKey(doorId)) continue; // Already spawned
-            
-            string modelName = element.GetProperty("name").GetString();
-            int opentype = element.TryGetProperty("opentype", out var otp) ? otp.GetInt32() : 0;
-            
-            // Skip invisible teleporter triggers (usually opentype >= 54 with names like POKTELE)
-            if (opentype >= 54 && (string.IsNullOrEmpty(modelName) || modelName.StartsWith("POKTELE") || modelName.StartsWith("TELE"))) continue;
-            
-            int localDoorId = element.TryGetProperty("doorid", out var ldid) ? ldid.GetInt32() : 0;
-            int triggerDoor = element.TryGetProperty("triggerdoor", out var td) ? td.GetInt32() : 0;
-            
-            float rawX = element.TryGetProperty("pos_x", out var xp) ? xp.GetSingle() : 0f;
-            float rawY = element.TryGetProperty("pos_y", out var yp) ? yp.GetSingle() : 0f;
-            float rawZ = element.TryGetProperty("pos_z", out var zp) ? zp.GetSingle() : 0f;
-            float heading = element.TryGetProperty("heading", out var hp) ? hp.GetSingle() : 0f;
-            int doorParam = element.TryGetProperty("door_param", out var dpp) ? dpp.GetInt32() : 0;
-            
-            // Get the PackedScene from ZoneObjectPlacer
-            var scene = _objectPlacer.GetObjectScene(modelName, objectsDir);
-            if (scene == null) 
-            {
-                GD.PrintErr($"[WORLD] Failed to load door scene: {modelName}");
-                continue;
-            }
-
-            var doorMeshNode = scene.Instantiate<Node3D>();
-            
-            // Create our interactive DoorEntity wrapper
-            var doorEntity = new DoorEntity();
-            doorEntity.Name = $"Door_{doorId}_{modelName}";
-            
-            _doorsContainer.AddChild(doorEntity);
-
-            // Map raw EQ DB coords to Godot (same mapping as entities/NPCs)
-            float gx = -rawX;
-            float gy = rawZ;   // EQ Z (height) → Godot Y
-            float gz = -rawY;
-            doorEntity.Position = new Vector3(gx, gy, gz);
-            
-            float godotYaw = (heading / 512f) * 360f;
-            doorEntity.RotationDegrees = new Vector3(0, godotYaw - 90f, 0);
-
-            float size = element.TryGetProperty("size", out var sp) ? sp.GetSingle() : 100f;
-            float scaleMult = size / 100f;
-            doorEntity.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
-
-            // Is this an elevator? If so, we need an AnimatableBody3D wrapper inside to carry players
-            bool isElevator = modelName.ToUpper().Contains("LEVATOR");
-            AnimatableBody3D platformBody = null;
-            
-            if (isElevator)
-            {
-                platformBody = new AnimatableBody3D { Name = "PlatformBody", SyncToPhysics = false };
-                doorEntity.AddChild(platformBody);
-                platformBody.AddChild(doorMeshNode);
-            }
-            else
-            {
-                doorEntity.AddChild(doorMeshNode);
-            }
-
-            // Generate collision for the door meshes
-            int meshCount = 0;
-            int collisionCount = 0;
-            if (isElevator)
-            {
-                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, platformBody);
-            }
-            else
-            {
-                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, null);
-            }
-            
-            // Calculate AABB for the target ring sizing
-            Aabb doorAabb = CalculateWorldAabb(doorEntity);
-            bool invertState = element.TryGetProperty("invert_state", out var inv) && inv.GetInt32() == 1;
-            doorEntity.Setup(modelName, doorId, localDoorId, triggerDoor, doorAabb, doorParam, invertState, platformBody);
-            
-            // Lifts shouldn't be targetable themselves
-            if (isElevator)
-            {
-                doorEntity.IsTargetable = false;
-                SetPickableRecursive(doorMeshNode, false);
-            }
-
-            // Connect input events from generated collision shapes to the DoorEntity
-            ConnectDoorInputsRecursive(platformBody != null ? platformBody : doorMeshNode, doorEntity);
-            
-            FixZoneMaterials(doorEntity);
-            
-            _spawnedDoors[doorId] = doorEntity;
-        }
-    }
-
-    public void ToggleDoor(string doorId, bool isOpen)
-    {
-        if (_spawnedDoors.TryGetValue(doorId, out Node3D doorNode) && doorNode is DoorEntity doorEntity)
-        {
-            doorEntity.SetOpenState(isOpen);
-        }
-        else
-        {
-            GD.PrintErr($"[WORLD] Received state change for unknown door: {doorId}");
-        }
-    }
 
 
-    private void ConnectDoorInputsRecursive(Node node, DoorEntity doorEntity)
-    {
-        if (node is CollisionObject3D collisionObject)
-        {
-            // Connect to Godot's input_event signal (works for both StaticBody3D and AnimatableBody3D)
-            collisionObject.InputEvent += (Node camera, InputEvent @event, Vector3 position, Vector3 normal, long shapeIdx) => 
-            {
-                doorEntity.OnInputEvent(camera, @event, position, normal, shapeIdx);
-            };
-        }
-        foreach (Node child in node.GetChildren())
-        {
-            ConnectDoorInputsRecursive(child, doorEntity);
-        }
-    }
 
-    private void SetPickableRecursive(Node node, bool pickable)
-    {
-        if (node is CollisionObject3D collisionObject)
-        {
-            collisionObject.InputRayPickable = pickable;
-        }
 
-        foreach (var child in node.GetChildren())
-        {
-            SetPickableRecursive(child, pickable);
-        }
-    }
 
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f)
-    {
-        if (_activeEntities.ContainsKey(id)) return;
 
-        var instance = new EntityCapsule();
-        instance.Position = pos;
-        instance.Name = id;
 
-        _spawnsContainer.AddChild(instance);
-        instance.RotationDegrees = new Vector3(0, headingYaw, 0);
-        _activeEntities[id] = instance;
 
-        try {
-            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson);
-            // Apply current vision effects
-            if (_currentVisionStyle == "infravision")
-                instance.SetInfravision(true);
-        } catch (Exception ex) {
-            GD.PrintErr($"[WORLD] Failed Setup on '{name}': {ex.Message}");
-        }
-    }
 
-    public void SyncLiveMobs(System.Text.Json.JsonElement entitiesArray)
-    {
-        int count = entitiesArray.GetArrayLength();
-        // Sync entities silently
 
-        var existingIds = new HashSet<string>();
-        foreach (var kvp in _activeEntities)
-        {
-            if (kvp.Value is EntityCapsule ec && ec != _playerCapsule)
-                existingIds.Add(kvp.Key);
-        }
 
-        var incomingIds = new HashSet<string>();
-
-        int total = entitiesArray.GetArrayLength();
-        int i = 0;
-        foreach (var ent in entitiesArray.EnumerateArray())
-        {
-            EmitSignal(SignalName.SyncProgress, ++i, total);
-            string id = ent.GetProperty("id").GetString();
-            string name = ent.TryGetProperty("name", out var nProp) ? nProp.GetString() : "Unknown";
-            string type = ent.TryGetProperty("type", out var tProp) ? tProp.GetString() : "enemy";
-            float rawX = ent.TryGetProperty("x", out var xProp) ? (float)xProp.GetDouble() : 0f;
-            float rawY = ent.TryGetProperty("y", out var yProp) ? (float)yProp.GetDouble() : 0f;
-            float rawZ = ent.TryGetProperty("z", out var zProp) ? (float)zProp.GetDouble() : 0f;
-            
-            // Map EQ Coords (+X=West, +Y=North) to Godot Coords (-X=West, -Z=North)
-            // EQ Z (height) maps to Godot Y (height)
-            float x = -rawX;
-            float z = -rawY;
-            float y = rawZ;  // EQ Z = Godot Y (height)
-            string appearance = ent.TryGetProperty("appearance", out var aProp) ? aProp.ToString() : "";
-            int race = ent.TryGetProperty("race", out var rProp) ? rProp.GetInt32() : 1;
-            int gender = ent.TryGetProperty("gender", out var gProp) ? gProp.GetInt32() : 0;
-            int face = ent.TryGetProperty("face", out var fProp) ? fProp.GetInt32() : 0;
-            bool sneaking = ent.TryGetProperty("sneaking", out var sProp) && sProp.GetBoolean();
-            bool hidden = ent.TryGetProperty("hidden", out var hidProp) && hidProp.GetBoolean();
-            string equipVis = ent.TryGetProperty("equipVisuals", out var evProp) ? evProp.ToString() : "";
-            float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
-
-            // EQEmu headings are 0-512 where 0=North, 128=West, 256=South, 384=East
-            // Live entities are perfectly mapped to Godot's space (-X=West, -Z=North), 
-            // which exactly matches Godot's Yaw behavior (0=-Z, 90=-X).
-            // No reflection or offsets are needed!
-            float godotYaw = (rawHeading / 512f) * 360f;
-
-            incomingIds.Add(id);
-
-            if (!existingIds.Contains(id))
-            {
-                GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
-                // Use the Godot-mapped coordinates (x, y, z) calculated above
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
-            }
-            else
-            {
-                // Update existing entity
-                if (_activeEntities.TryGetValue(id, out Node3D entNode) && entNode is EntityCapsule ec)
-                {
-                    // Only snap rotation if they aren't actively running/chasing
-                    if (ec.ChaseTarget == null)
-                    {
-                        ec.TargetYaw = godotYaw;
-                        ec.TargetPosition = new Vector3(x, y, z);
-                    }
-                }
-            }
-            
-            UpdateEntitySneak(id, sneaking);
-            UpdateEntityHide(id, hidden);
-        }
-
-        // Remove entities that no longer exist on the server
-        foreach (var oldId in existingIds)
-        {
-            if (!incomingIds.Contains(oldId))
-            {
-                RemoveEntity(oldId);
-            }
-        }
-    }
-
-    public void UpdateEntitySneak(string id, bool sneaking)
-    {
-        if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule ec)
-        {
-            ec.SetSneakState(sneaking, false);
-        }
-    }
-
-    public void UpdateEntityHide(string id, bool hidden)
-    {
-        if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule ec)
-        {
-            ec.SetHideState(hidden, false);
-        }
-    }
 
     /// <summary>Show or hide the player's torch/light source OmniLight3D.</summary>
-    public void SetPlayerLightSource(bool hasLight)
-    {
-        if (_playerCapsule != null)
-            _playerCapsule.SetLightSource(hasLight);
-    }
 
     /// <summary>Show or hide the player's overhead name label.</summary>
-    public void SetPlayerNameVisible(bool visible)
-    {
-        if (_playerCapsule != null)
-            _playerCapsule.SetNameVisible(visible);
-    }
 
     /// <summary>Toggle dynamic shadows for object-attached lights (torches, braziers).</summary>
     public void SetDynamicShadows(bool enabled)
@@ -1362,555 +986,33 @@ public partial class WorldManager : Node3D
     }
 
     /// <summary>Update the player's 3D equipment visuals (weapons, armor textures).</summary>
-    public void UpdatePlayerEquipVisuals(string equipVisualsJson)
-    {
-        if (_playerCapsule != null)
-            _playerCapsule.UpdateEquipVisuals(equipVisualsJson);
-    }
 
-    public void SpawnEntity(string id, string name, string type, string appearanceJson = "")
-    {
-        float radius = 8f + _spawnCounter * 4f;
-        float angle = _spawnCounter * (Mathf.Pi * 2f / 6f);
-        Vector3 pos = new Vector3(Mathf.Cos(angle) * radius, 2f, Mathf.Sin(angle) * radius);
-        _spawnCounter++;
-        SpawnEntityAt(id, name, type, pos, appearanceJson);
-    }
 
-    public void RemoveEntity(string id)
-    {
-        if (_activeEntities.TryGetValue(id, out Node3D entity))
-        {
-            if (GodotObject.IsInstanceValid(_currentTarget as Node) && entity == (_currentTarget as Node))
-                _currentTarget = null;
 
-            if (GodotObject.IsInstanceValid(entity))
-                entity.QueueFree();
-            _activeEntities.Remove(id);
-        }
-    }
 
-    public void RebuildZoneBoundaries(System.Text.Json.JsonElement mapSizeElement, System.Text.Json.JsonElement zoneLines, System.Text.Json.JsonElement centerOffsetElement)
-    {
-        // Delete the static legacy CSG Floor if it exists at the root level
-        var rootFloor = GetNodeOrNull<Node3D>("Floor");
-        if (rootFloor != null)
-        {
-            rootFloor.QueueFree();
-        }
-
-        // Clear old boundaries surgically
-        foreach (var child in _boundariesContainer.GetChildren())
-        {
-            string name = child.Name;
-            if (name == "VisualFloor" || name == "PhysicalFloor" || name == "Floor" || name.StartsWith("Wall_") || name.StartsWith("ZoneLine_"))
-            {
-                _boundariesContainer.RemoveChild(child);
-                child.QueueFree();
-            }
-        }
-
-        // Map dimensions
-        float mapWidth = 400f;
-        float mapLength = 400f;
-        if (mapSizeElement.ValueKind == System.Text.Json.JsonValueKind.Object)
-        {
-            mapWidth = mapSizeElement.TryGetProperty("width", out var wElem) ? wElem.GetSingle() : 400f;
-            mapLength = mapSizeElement.TryGetProperty("length", out var lElem) ? lElem.GetSingle() : 400f;
-        }
-        
-        // Center offset
-        float offsetX = 0f;
-        float offsetZ = 0f;
-        if (centerOffsetElement.ValueKind == System.Text.Json.JsonValueKind.Object)
-        {
-            float rawOffsetX = centerOffsetElement.TryGetProperty("x", out var cxv) ? cxv.GetSingle() : 0f;
-            float rawOffsetZ = centerOffsetElement.TryGetProperty("y", out var czv) ? czv.GetSingle() : 0f;
-            
-            // Map EQ Coords (+X=West, +Y=North) to Godot Coords (-X=West, -Z=North)
-            offsetX = -rawOffsetX;
-            offsetZ = -rawOffsetZ;
-        }
-        
-        float halfWidth = mapWidth / 2f;
-        float halfLength = mapLength / 2f;
-        float wallHeight = 50f;
-        float wallThick = 10f;
-
-        // Delete the static legacy CSG Floor if it exists so we can generate real meshes
-        var csgFloor = GetNodeOrNull<CsgBox3D>("Floor");
-        if (csgFloor != null)
-        {
-            csgFloor.QueueFree();
-        }
-        
-        // Only build the fallback visual floor if there's NO GLB zone geometry loaded
-        bool hasGlbGeometry = _zoneGeometryContainer != null && _zoneGeometryContainer.GetChildCount() > 0;
-        if (!hasGlbGeometry)
-        {
-            var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
-            var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
-            var grassMat = new StandardMaterial3D {
-                AlbedoColor = new Color(0.2f, 0.4f, 0.15f), // Grass Green
-                Roughness = 0.8f
-            };
-            boxMesh.Material = grassMat;
-            floorMeshInstance.Mesh = boxMesh;
-            floorMeshInstance.Position = new Vector3(offsetX, -0.5f, offsetZ); 
-            _boundariesContainer.AddChild(floorMeshInstance);
-            
-            // Build instant mathematical Physics floor padded generously below walls
-            var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
-            var floorCol = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(mapWidth + 100f, 10f, mapLength + 100f) } };
-            staticFloor.AddChild(floorCol);
-            staticFloor.Position = new Vector3(offsetX, -5f, offsetZ); 
-            _boundariesContainer.AddChild(staticFloor);
-
-            // Define the 4 cardinal edges relative to the centerOffset
-            var edges = new[] {
-                new { name = "North",     pos = new Vector3(offsetX, 0, offsetZ - halfLength - wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-                new { name = "South",     pos = new Vector3(offsetX, 0, offsetZ + halfLength + wallThick/2),  size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-                new { name = "East",      pos = new Vector3(offsetX + halfWidth + wallThick/2, 0, offsetZ),  size = new Vector3(wallThick, wallHeight, mapLength) },
-                new { name = "West",      pos = new Vector3(offsetX - halfWidth - wallThick/2, 0, offsetZ), size = new Vector3(wallThick, wallHeight, mapLength) }
-            };
-
-            // Create solid invisible walls
-            foreach (var edge in edges)
-            {
-                var staticBody = new StaticBody3D { Name = $"Wall_{edge.name}" };
-                var col = new CollisionShape3D();
-                var box = new BoxShape3D { Size = edge.size };
-                col.Shape = box;
-                staticBody.AddChild(col);
-                staticBody.Position = edge.pos + new Vector3(0, wallHeight/2f, 0); // rest on floor
-                _boundariesContainer.AddChild(staticBody);
-            }
-        }
-
-        // Add Topographical Zone triggers
-        if (zoneLines.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var zl in zoneLines.EnumerateArray())
-            {
-                string targetZone = zl.TryGetProperty("target", out var tz) ? tz.GetString() : "unknown";
-                
-                // PoK books are interactive objects, not walk-in spatial triggers.
-                // Creating a giant trigger box for them blocks the zone (especially Kelethin).
-                if (targetZone.ToLower() == "poknowledge") continue;
-                
-                // Check if this is a coordinate-based zone point (from DB) or edge-based (legacy)
-                bool hasCoords = zl.TryGetProperty("x", out _);
-                
-                var triggerArea = new Area3D { Name = $"ZoneLine_{targetZone}" };
-                var col = new CollisionShape3D();
-                
-                Vector3 triggerPos;
-                
-                if (hasCoords)
-                {
-                    Vector3 triggerSize;
-
-                    // Check for BSP-derived precise trigger bounds from S3D client data
-                    bool hasBspMin = zl.TryGetProperty("bspMin", out var bspMinProp);
-                    bool hasBspMax = zl.TryGetProperty("bspMax", out var bspMaxProp);
-                    bool hasBsp = hasBspMin && hasBspMax;
-
-                    if (hasBsp)
-                    {
-                        // BSP AABB: exact trigger volume from original EQ client files
-                        // EQ coords: x=east/west, y=north/south, z=height
-                        // Godot coords: X=-EQ.x, Y=EQ.z, Z=-EQ.y (negated X and Y, Z→Y)
-                        float eqMinX = bspMinProp.TryGetProperty("x", out var mnx) ? mnx.GetSingle() : 0;
-                        float eqMinY = bspMinProp.TryGetProperty("y", out var mny) ? mny.GetSingle() : 0;
-                        float eqMinZ = bspMinProp.TryGetProperty("z", out var mnz) ? mnz.GetSingle() : 0;
-                        float eqMaxX = bspMaxProp.TryGetProperty("x", out var mxx) ? mxx.GetSingle() : 0;
-                        float eqMaxY = bspMaxProp.TryGetProperty("y", out var mxy) ? mxy.GetSingle() : 0;
-                        float eqMaxZ = bspMaxProp.TryGetProperty("z", out var mxz) ? mxz.GetSingle() : 0;
-
-                        // Convert EQ AABB to Godot AABB
-                        float godotMinX = -eqMaxX;  // Godot X = -EQ.X (flip)
-                        float godotMaxX = -eqMinX;
-                        float godotMinY = eqMinZ;   // Godot Y = EQ.Z (height)
-                        float godotMaxY = eqMaxZ;
-                        float godotMinZ = -eqMaxY;  // Godot Z = -EQ.Y (flip)
-                        float godotMaxZ = -eqMinY;
-
-                        float sizeX = godotMaxX - godotMinX;
-                        float sizeY = godotMaxY - godotMinY;
-                        float sizeZ = godotMaxZ - godotMinZ;
-
-                        triggerSize = new Vector3(sizeX, sizeY, sizeZ);
-                        triggerPos = new Vector3(
-                            (godotMinX + godotMaxX) / 2f,
-                            (godotMinY + godotMaxY) / 2f,
-                            (godotMinZ + godotMaxZ) / 2f
-                        );
-
-                        GD.Print($"[WORLD] BSP ZoneLine → {targetZone}: pos=({triggerPos.X:F1},{triggerPos.Y:F1},{triggerPos.Z:F1}), size=({sizeX:F1},{sizeY:F1},{sizeZ:F1})");
-                    }
-                    else
-                    {
-                        // Fallback: use center + size from DB zone_points
-                        float zpX = zl.TryGetProperty("x", out var zpxp) ? zpxp.GetSingle() : 0;
-                        float zpY = zl.TryGetProperty("y", out var zpyp) ? zpyp.GetSingle() : 0;
-                        string orient = zl.TryGetProperty("orientation", out var op) ? op.GetString() : "ns";
-                        float trigWidth = zl.TryGetProperty("width", out var twp) ? twp.GetSingle() : 50f;
-                        float trigLength = zl.TryGetProperty("length", out var tlp) ? tlp.GetSingle() : 100f;
-                        
-                        float gx = -zpX;
-                        float gz = -zpY;
-                        
-                        if (orient == "ew")
-                            triggerSize = new Vector3(trigLength, wallHeight, trigWidth);
-                        else
-                            triggerSize = new Vector3(trigWidth, wallHeight, trigLength);
-                        
-                        triggerPos = new Vector3(gx, wallHeight / 2f, gz);
-                    }
-
-                    col.Shape = new BoxShape3D { Size = triggerSize };
-                    
-                    // Debug visualizer
-                    var debugMesh = new CsgBox3D { Size = triggerSize };
-                    var debugMat = new StandardMaterial3D {
-                        AlbedoColor = new Color(0, 0, 1, 0.3f),
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded
-                    };
-                    debugMesh.Material = debugMat;
-                    triggerArea.AddChild(debugMesh);
-                }
-                else
-                {
-                    // Legacy edge-based zone line
-                    string edge = zl.TryGetProperty("edge", out var ge) ? ge.GetString() : "north";
-                    float width = zl.TryGetProperty("width", out var ww) ? ww.GetSingle() : 200f;
-                    float rawOffset = zl.TryGetProperty("offset", out var oo) ? oo.GetSingle() : 0f;
-                    float offset = -rawOffset;
-                    float triggerDepth = 20f;
-
-                    Vector3 triggerSize;
-                    if (edge == "north") {
-                        triggerSize = new Vector3(width, wallHeight, triggerDepth);
-                        triggerPos = new Vector3(offsetX + offset, wallHeight/2f, offsetZ - halfLength + triggerDepth/2);
-                    } else if (edge == "south") {
-                        triggerSize = new Vector3(width, wallHeight, triggerDepth);
-                        triggerPos = new Vector3(offsetX + offset, wallHeight/2f, offsetZ + halfLength - triggerDepth/2);
-                    } else if (edge == "east") {
-                        triggerSize = new Vector3(triggerDepth, wallHeight, width);
-                        triggerPos = new Vector3(offsetX + halfWidth - triggerDepth/2, wallHeight/2f, offsetZ + offset);
-                    } else { // west
-                        triggerSize = new Vector3(triggerDepth, wallHeight, width);
-                        triggerPos = new Vector3(offsetX - halfWidth + triggerDepth/2, wallHeight/2f, offsetZ + offset);
-                    }
-
-                    col.Shape = new BoxShape3D { Size = triggerSize };
-
-                    // Debug visualizer
-                    var debugMesh = new CsgBox3D { Size = triggerSize };
-                    var debugMat = new StandardMaterial3D {
-                        AlbedoColor = new Color(0, 0, 1, 0.3f),
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded
-                    };
-                    debugMesh.Material = debugMat;
-                    triggerArea.AddChild(debugMesh);
-                }
-
-                triggerArea.AddChild(col);
-                triggerArea.Position = triggerPos;
-
-                // Connect signal
-                triggerArea.BodyEntered += (body) => {
-                    if (body == _playerCapsule && _zoneImmunityTimer <= 0)
-                    {
-                        GD.Print($"[WORLD] Player crossed Zone Line: {targetZone}");
-                        EmitSignal(SignalName.ZoneLineCrossed, targetZone);
-                    }
-                };
-
-                _boundariesContainer.AddChild(triggerArea);
-            }
-        }
-    }
-
-    public void LoadZoneMap(string zoneId)
-    {
-        _currentZoneId = zoneId;
-        ApplyTimeOfDayVisuals(); // Instantly apply indoor/outdoor sky logic
-
-        if (_zoneGeometryContainer == null)
-        {
-            _zoneGeometryContainer = new Node3D { Name = "ZoneGeometry" };
-            AddChild(_zoneGeometryContainer);
-        }
-        else
-        {
-            foreach (var child in _zoneGeometryContainer.GetChildren())
-            {
-                child.QueueFree();
-            }
-        }
-
-        // Clean up previous zone objects
-        if (_zoneObjectsContainer != null && GodotObject.IsInstanceValid(_zoneObjectsContainer))
-        {
-            _zoneObjectsContainer.QueueFree();
-            _zoneObjectsContainer = null;
-        }
-        _objectPlacer?.ClearCache();
-
-        var cache = EQAssetCache.Instance;
-
-        // Try extracted EQ asset cache (from player's EQ install)
-        if (cache.HasZone(zoneId))
-        {
-            string cachedGlb = cache.GetZoneGlbPath(zoneId);
-            if (cachedGlb != null)
-            {
-                GD.Print($"[WORLD] Loading zone from asset cache: {cachedGlb}");
-                if (LoadZoneGlbFromDisk(zoneId, cachedGlb))
-                {
-                    // Clean up fallback VisualFloor since we have real geometry
-                    var vf = _boundariesContainer?.GetNodeOrNull<Node3D>("VisualFloor");
-                    if (vf != null)
-                    {
-                        _boundariesContainer.RemoveChild(vf);
-                        vf.QueueFree();
-                    }
-
-                    // Forcefully clean up the legacy CSG Floor just in case RebuildZoneBoundaries missed it
-                    var rootFloor = GetNodeOrNull<Node3D>("Floor");
-                    if (rootFloor != null)
-                    {
-                        RemoveChild(rootFloor);
-                        rootFloor.QueueFree();
-                    }
-
-                    // Place zone objects (trees, buildings, torches, etc.)
-                    PlaceZoneObjects(zoneId, cache.GetZonePath(zoneId));
-                    // Play zone music
-                    PlayZoneMusic(zoneId);
-                    return;
-                }
-            }
-        }
-
-        // --- Fallback: Brewall line-based map ---
-        LoadZoneBrewall(zoneId);
-        PlayZoneMusic(zoneId);
-    }
 
     /// <summary>
     /// Loads a zone GLB from an absolute filesystem path (extracted from player's EQ install).
     /// Uses GltfDocument.AppendFromFile for direct disk loading.
     /// LanternExtractor GLBs are already in EQ coordinate space — no rotation needed.
     /// </summary>
-    private bool LoadZoneGlbFromDisk(string zoneId, string absolutePath)
-    {
-        try
-        {
-            var gltfDoc = new GltfDocument();
-            var gltfState = new GltfState();
-
-            var err = gltfDoc.AppendFromFile(absolutePath, gltfState);
-            if (err != Error.Ok)
-            {
-                GD.PrintErr($"[WORLD] GLTF parse error for cached GLB: {err}");
-                return false;
-            }
-
-            Node scene = gltfDoc.GenerateScene(gltfState);
-            if (scene == null)
-            {
-                GD.PrintErr("[WORLD] GLTF generated null scene from cache");
-                return false;
-            }
-
-            // Lantern bakes a mesh transform of scale=(-0.1,-0.1,-0.1) rot=(180,0,0)
-            // which maps local vertices (x,y,z) → (-0.1x, 0.1y, 0.1z).
-            // The bundled EQ Advanced Maps GLBs use world coords where:
-            //   world.X = -local.Z,  world.Y = local.Y,  world.Z = -local.X
-            // So the parent transform must map the mesh output to match.
-            // Parent basis: (u,v,w) → (-10w, 10v, 10u) compensates the 0.1 scale
-            // and swaps/negates X↔Z to match the bundled coordinate space.
-            var zoneRoot = new Node3D { Name = $"GLB_{zoneId}" };
-            zoneRoot.Transform = new Transform3D(
-                new Vector3(0, 0, 10),    // X basis: parent X comes from 10 * child Z
-                new Vector3(0, 10, 0),    // Y basis: parent Y comes from 10 * child Y
-                new Vector3(-10, 0, 0),   // Z basis: parent Z comes from -10 * child X
-                Vector3.Zero
-            );
-            zoneRoot.AddChild(scene);
-            _zoneGeometryContainer.AddChild(zoneRoot);
-
-            // Fix Materials: Strip Unshaded and apply proper roughness so clustered lighting works.
-            FixZoneMaterials(zoneRoot);
-
-            // Generate collision for walkable geometry
-            int meshCount = 0;
-            int collisionCount = 0;
-            GenerateCollisionRecursive(scene, ref meshCount, ref collisionCount);
-
-            // Calculate bounds for boundary walls
-            var aabb = CalculateWorldAabb(zoneRoot);
-            if (aabb.Size.Length() > 0)
-            {
-                float pad = 50f;
-                float mapWidth = aabb.Size.X + pad * 2;
-                float mapLength = aabb.Size.Z + pad * 2;
-                float centerX = aabb.Position.X + aabb.Size.X / 2f;
-                float centerZ = aabb.Position.Z + aabb.Size.Z / 2f;
-
-                GD.Print($"[WORLD] Cached GLB bounds: pos=({aabb.Position}), size=({aabb.Size})");
-                RebuildBoundaryWallsOnly(centerX, centerZ, mapWidth, mapLength, aabb.Position.Y - 10f);
-            }
-
-            GD.Print($"[WORLD] Cached GLB loaded: {meshCount} meshes, {collisionCount} collision shapes for {zoneId}");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"[WORLD] Cached GLB load exception: {ex.Message}\n{ex.StackTrace}");
-            return false;
-        }
-    }
 
     /// <summary>
     /// Place zone objects (trees, buildings, torches, etc.) from extracted data.
     /// </summary>
-    private void PlaceZoneObjects(string zoneId, string cachePath)
-    {
-        _objectPlacer ??= new ZoneObjectPlacer();
-        _objectPlacer.ShadowsEnabled = DynamicShadowsEnabled;
-
-        if (_zoneGeometryContainer == null) return;
-
-        _zoneObjectsContainer = _objectPlacer.PlaceObjects(zoneId, cachePath, _zoneGeometryContainer);
-        _objectPlacer.PlaceLights(zoneId, cachePath, _zoneGeometryContainer);
-    }
 
     /// <summary>
     /// Start playing zone-appropriate background music.
     /// </summary>
-    public void PlayZoneMusic(string zoneId)
-    {
-        if (_musicPlayer == null)
-        {
-            _musicPlayer = new ZoneMusicPlayer();
-            _musicPlayer.Name = "ZoneMusicPlayer";
-            AddChild(_musicPlayer);
-        }
-
-        _musicPlayer.PlayZoneMusic(zoneId);
-    }
 
     /// <summary>
     /// Recursively walks the scene tree and creates trimesh (ConcavePolygon) collision
     /// for every MeshInstance3D found. This gives pixel-perfect collision matching the zone geometry.
     /// </summary>
-    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null)
-    {
-        if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
-        {
-            meshCount++;
-            meshInst.CreateTrimeshCollision();
-            collisionCount++;
-
-            var staticBody = meshInst.GetChild<StaticBody3D>(meshInst.GetChildCount() - 1);
-            if (staticBody != null)
-            {
-                if (targetBody != null)
-                {
-                    // Move collision shapes directly to the target AnimatableBody3D
-                    // BUT we MUST preserve their local transform relative to the targetBody!
-                    // Since the meshInst might be buried deep inside the GLTF scene, 
-                    // we calculate the relative transform from staticBody to targetBody.
-                    Transform3D relativeTransform = targetBody.GlobalTransform.AffineInverse() * staticBody.GlobalTransform;
-                    
-                    foreach (Node child in staticBody.GetChildren())
-                    {
-                        if (child is CollisionShape3D colShape)
-                        {
-                            staticBody.RemoveChild(colShape);
-                            targetBody.AddChild(colShape);
-                            colShape.Transform = relativeTransform * colShape.Transform;
-                        }
-                    }
-                    
-                    meshInst.RemoveChild(staticBody);
-                    staticBody.CallDeferred("queue_free");
-                }
-                else
-                {
-                    staticBody.InputRayPickable = false;
-                }
-            }
-        }
-
-        foreach (var child in node.GetChildren())
-        {
-            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody);
-        }
-    }
 
     /// <summary>
     /// Recursively strips Unshaded flags and sets roughness for proper lighting.
     /// </summary>
-    private void FixZoneMaterials(Node node)
-    {
-        if (node is MeshInstance3D meshInst)
-        {
-            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
-            {
-                var mat = meshInst.GetSurfaceOverrideMaterial(i) as StandardMaterial3D;
-                if (mat != null)
-                {
-                    mat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
-                    mat.Roughness = 1.0f;
-                    mat.Metallic = 0.0f;
-                    mat.MetallicSpecular = 0.0f;
-                    mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled; 
-                    
-                    // UNIVERSAL BACKLIGHT FIX: 
-                    // This forces the polygon to receive light from BOTH SIDES.
-                    // This fixes the "half-black room" issue caused by flipped normals in the map.
-                    mat.BacklightEnabled = true;
-                    mat.Backlight = new Color(1, 1, 1);
-                }
-            }
-
-            if (meshInst.Mesh != null)
-            {
-                for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
-                {
-                    var mat = meshInst.Mesh.SurfaceGetMaterial(i) as StandardMaterial3D;
-                    if (mat != null)
-                    {
-                        var newMat = mat.Duplicate(true) as StandardMaterial3D;
-                        newMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
-                        newMat.Roughness = 1.0f;
-                        newMat.Metallic = 0.0f;
-                        newMat.MetallicSpecular = 0.0f;
-                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                        
-                        // Apply backlight to surface overrides too
-                        newMat.BacklightEnabled = true;
-                        newMat.Backlight = new Color(1, 1, 1);
-                        
-                        meshInst.SetSurfaceOverrideMaterial(i, newMat);
-                    }
-                }
-            }
-        }
-
-        foreach (var child in node.GetChildren())
-        {
-            FixZoneMaterials(child);
-        }
-    }
 
     /// <summary>
     /// Calculates the world-space AABB encompassing all MeshInstance3D nodes under a parent.
@@ -1923,288 +1025,21 @@ public partial class WorldManager : Node3D
         return combined;
     }
 
-    private void CalculateAabbRecursive(Node node, ref Aabb combined, ref bool first)
-    {
-        if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
-        {
-            var worldAabb = meshInst.GlobalTransform * meshInst.Mesh.GetAabb();
-            if (first)
-            {
-                combined = worldAabb;
-                first = false;
-            }
-            else
-            {
-                combined = combined.Merge(worldAabb);
-            }
-        }
-        foreach (var child in node.GetChildren())
-        {
-            CalculateAabbRecursive(child, ref combined, ref first);
-        }
-    }
 
     /// <summary>
     /// Creates only invisible boundary walls and a physics-only floor (no visual green floor)
     /// since the GLB zone model provides the real visual terrain.
     /// </summary>
-    private void RebuildBoundaryWallsOnly(float centerX, float centerZ, float mapWidth, float mapLength, float floorY)
-    {
-        // Remove old floor/boundary elements
-        foreach (var child in _boundariesContainer.GetChildren())
-        {
-            string name = child.Name;
-            if (name == "VisualFloor" || name == "PhysicalFloor" || name.StartsWith("Wall_"))
-            {
-                child.QueueFree();
-            }
-        }
-
-        // Physics-only floor as a safety net below the zone geometry
-        var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
-        var floorCol = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(mapWidth + 400f, 2f, mapLength + 400f) } };
-        staticFloor.AddChild(floorCol);
-        staticFloor.Position = new Vector3(centerX, floorY, centerZ);
-        _boundariesContainer.AddChild(staticFloor);
-
-        // Invisible boundary walls
-        float wallHeight = 100f;
-        float wallThick = 10f;
-        float halfW = mapWidth / 2f;
-        float halfL = mapLength / 2f;
-
-        var edges = new[] {
-            new { name = "North", pos = new Vector3(centerX, 0, centerZ - halfL - wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "South", pos = new Vector3(centerX, 0, centerZ + halfL + wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "East",  pos = new Vector3(centerX + halfW + wallThick/2, 0, centerZ), size = new Vector3(wallThick, wallHeight, mapLength) },
-            new { name = "West",  pos = new Vector3(centerX - halfW - wallThick/2, 0, centerZ), size = new Vector3(wallThick, wallHeight, mapLength) }
-        };
-
-        foreach (var edge in edges)
-        {
-            var staticBody = new StaticBody3D { Name = $"Wall_{edge.name}" };
-            var col = new CollisionShape3D { Shape = new BoxShape3D { Size = edge.size } };
-            staticBody.AddChild(col);
-            staticBody.Position = edge.pos + new Vector3(0, wallHeight / 2f, 0);
-            _boundariesContainer.AddChild(staticBody);
-        }
-    }
 
     /// <summary>
     /// Legacy Brewall line-based zone loading. Used as fallback when no GLB is available.
     /// </summary>
-    private void LoadZoneBrewall(string zoneId)
-    {
-        string path = $"res://Data/Maps/{zoneId}_map.json";
-        if (!Godot.FileAccess.FileExists(path))
-        {
-            GD.Print($"[WORLD] No map geometry found for {zoneId} at {path}");
-            return;
-        }
-
-        GD.Print($"[WORLD] Loading Brewall map geometry for {zoneId}...");
-        using var file = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
-        string json = file.GetAsText();
-
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            
-            // --- Read bounds and rebuild floor/boundaries to match map geometry ---
-            if (root.TryGetProperty("bounds", out var boundsEl))
-            {
-                float bMinX = boundsEl.GetProperty("minX").GetSingle();
-                float bMaxX = boundsEl.GetProperty("maxX").GetSingle();
-                float bMinY = boundsEl.GetProperty("minY").GetSingle();
-                float bMaxY = boundsEl.GetProperty("maxY").GetSingle();
-                
-                // Convert EQ coords to Godot: negate both axes
-                float gMinX = -bMaxX;
-                float gMaxX = -bMinX;
-                float gMinZ = -bMaxY;
-                float gMaxZ = -bMinY;
-                
-                float pad = 100f; // Extra padding around the geometry
-                float mapWidth = (gMaxX - gMinX) + pad * 2;
-                float mapLength = (gMaxZ - gMinZ) + pad * 2;
-                float centerX = (gMinX + gMaxX) / 2f;
-                float centerZ = (gMinZ + gMaxZ) / 2f;
-                
-                GD.Print($"[WORLD] Map bounds (Godot): X({gMinX} to {gMaxX}), Z({gMinZ} to {gMaxZ}), Center({centerX}, {centerZ}), Size({mapWidth}x{mapLength})");
-                
-                // Rebuild floor and boundaries to fit the map geometry
-                RebuildFloorForMap(centerX, centerZ, mapWidth, mapLength);
-            }
-
-            if (root.TryGetProperty("categorizedLines", out var catLines))
-            {
-                // Define materials for each category
-                var wallMat = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.5f, 0.5f) }; // Stone Grey
-                var pathMat = new StandardMaterial3D { AlbedoColor = new Color(0.6f, 0.5f, 0.35f) }; // Brown/Dirt
-                var waterMat = new StandardMaterial3D { 
-                    AlbedoColor = new Color(0.1f, 0.3f, 0.8f, 0.6f),
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha 
-                };
-                var dangerMat = new StandardMaterial3D { AlbedoColor = new Color(0.8f, 0.15f, 0.1f) }; // Red
-                var otherMat = new StandardMaterial3D { AlbedoColor = new Color(0.4f, 0.4f, 0.3f) }; // Muted olive
-
-                // Category → (material, wallHeight, wallThickness)
-                var categories = new (string name, StandardMaterial3D mat, float height, float thickness)[] {
-                    ("walls",  wallMat,  5f, 0.8f),
-                    ("paths",  pathMat,  0.5f, 2.0f),
-                    ("water",  waterMat, 0.3f, 3.0f),
-                    ("danger", dangerMat, 3f, 1.0f),
-                    ("other",  otherMat, 2f, 0.6f),
-                };
-
-                int totalBuilt = 0;
-                foreach (var (catName, mat, wallHeight, wallThickness) in categories)
-                {
-                    if (!catLines.TryGetProperty(catName, out var segments)) continue;
-                    
-                    int catCount = 0;
-                    foreach (var seg in segments.EnumerateArray())
-                    {
-                        var startArr = seg.GetProperty("start");
-                        var endArr = seg.GetProperty("end");
-
-                        float x1 = -startArr[0].GetSingle();
-                        float z1 = -startArr[1].GetSingle();
-                        float y1 = startArr[2].GetSingle(); // Height
-
-                        float x2 = -endArr[0].GetSingle();
-                        float z2 = -endArr[1].GetSingle();
-                        float y2 = endArr[2].GetSingle();
-
-                        Vector3 startPos = new Vector3(x1, y1, z1);
-                        Vector3 endPos = new Vector3(x2, y2, z2);
-
-                        Vector3 midPoint = (startPos + endPos) / 2f;
-                        float length = new Vector2(startPos.X, startPos.Z).DistanceTo(new Vector2(endPos.X, endPos.Z));
-                        
-                        // Skip zero-length segments in XZ plane to prevent LookAt errors
-                        if (length < 0.01f) continue;
-
-                        var staticBody = new StaticBody3D();
-                        
-                        // Only add collision for walls and danger (not paths/water/other)
-                        if (catName == "walls" || catName == "danger")
-                        {
-                            var col = new CollisionShape3D();
-                            var shape = new BoxShape3D { Size = new Vector3(wallThickness, wallHeight, length) };
-                            col.Shape = shape;
-                            staticBody.AddChild(col);
-                        }
-                        
-                        var meshInst = new MeshInstance3D();
-                        var mesh = new BoxMesh { Size = new Vector3(wallThickness, wallHeight, length), Material = mat };
-                        meshInst.Mesh = mesh;
-
-                        staticBody.AddChild(meshInst);
-
-                        // Position at midpoint; for walls raise above ground, for paths/water sit at ground level
-                        float yOffset = (catName == "walls" || catName == "danger") ? (wallHeight / 2f) : 0.1f;
-                        staticBody.Position = new Vector3(midPoint.X, midPoint.Y + yOffset, midPoint.Z);
-                        
-                        // Orient the segment along the line direction
-                        staticBody.LookAtFromPosition(staticBody.Position, new Vector3(endPos.X, staticBody.Position.Y, endPos.Z), Vector3.Up);
-
-                        _zoneGeometryContainer.AddChild(staticBody);
-                        catCount++;
-                    }
-                    if (catCount > 0)
-                        GD.Print($"[WORLD] Built {catCount} {catName} segments for {zoneId}.");
-                    totalBuilt += catCount;
-                }
-                GD.Print($"[WORLD] Total: {totalBuilt} segments built for {zoneId}.");
-            }
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"[WORLD] Error parsing map JSON: {ex.Message}");
-        }
-    }
 
     /// <summary>
     /// Rebuilds the visual and physical floor to match the map geometry bounds.
     /// Called after loading map data so the floor covers the entire zone drawing.
     /// </summary>
-    private void RebuildFloorForMap(float centerX, float centerZ, float mapWidth, float mapLength)
-    {
-        // Remove old floor/boundaries created by RebuildZoneBoundaries
-        foreach (var child in _boundariesContainer.GetChildren())
-        {
-            string name = child.Name;
-            // Only replace the floor elements, keep zone line triggers
-            if (name == "VisualFloor" || name == "PhysicalFloor" || 
-                name.StartsWith("Wall_"))
-            {
-                child.QueueFree();
-            }
-        }
-
-        // Only build the fallback visual floor if there's NO GLB zone geometry loaded
-        bool hasGlbGeometry = _zoneGeometryContainer != null && _zoneGeometryContainer.GetChildCount() > 0;
-        if (!hasGlbGeometry)
-        {
-            var floorMeshInstance = new MeshInstance3D { Name = "VisualFloor" };
-            var boxMesh = new BoxMesh { Size = new Vector3(mapWidth, 1f, mapLength) };
-            var grassMat = new StandardMaterial3D {
-                AlbedoColor = new Color(0.2f, 0.4f, 0.15f),
-                Roughness = 0.8f
-            };
-            boxMesh.Material = grassMat;
-            floorMeshInstance.Mesh = boxMesh;
-            floorMeshInstance.Position = new Vector3(centerX, -0.5f, centerZ);
-            _boundariesContainer.AddChild(floorMeshInstance);
-        }
-        
-        // Build physical floor with generous padding
-        var staticFloor = new StaticBody3D { Name = "PhysicalFloor" };
-        var floorCol = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(mapWidth + 200f, 10f, mapLength + 200f) } };
-        staticFloor.AddChild(floorCol);
-        staticFloor.Position = new Vector3(centerX, -5f, centerZ);
-        _boundariesContainer.AddChild(staticFloor);
-
-        // Invisible boundary walls
-        float wallHeight = 50f;
-        float wallThick = 10f;
-        float halfW = mapWidth / 2f;
-        float halfL = mapLength / 2f;
-
-        var edges = new[] {
-            new { name = "North", pos = new Vector3(centerX, 0, centerZ - halfL - wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "South", pos = new Vector3(centerX, 0, centerZ + halfL + wallThick/2), size = new Vector3(mapWidth + wallThick*2, wallHeight, wallThick) },
-            new { name = "East",  pos = new Vector3(centerX + halfW + wallThick/2, 0, centerZ), size = new Vector3(wallThick, wallHeight, mapLength) },
-            new { name = "West",  pos = new Vector3(centerX - halfW - wallThick/2, 0, centerZ), size = new Vector3(wallThick, wallHeight, mapLength) }
-        };
-
-        foreach (var edge in edges)
-        {
-            var staticBody = new StaticBody3D { Name = $"Wall_{edge.name}" };
-            var col = new CollisionShape3D();
-            var box = new BoxShape3D { Size = edge.size };
-            col.Shape = box;
-            staticBody.AddChild(col);
-            staticBody.Position = edge.pos + new Vector3(0, wallHeight/2f, 0);
-            _boundariesContainer.AddChild(staticBody);
-        }
-
-        GD.Print($"[WORLD] Rebuilt floor/boundaries for map geometry: center=({centerX},{centerZ}), size=({mapWidth}x{mapLength})");
-    }
     
-    public void SetLocalTargetViaId(string targetId)
-    {
-        if (string.IsNullOrEmpty(targetId)) return;
-        if (_activeEntities.TryGetValue(targetId, out Node3D tgt) || _activeEntities.TryGetValue($"mob_{targetId}", out tgt))
-        {
-            if (tgt is EntityCapsule activeEc)
-            {
-                SetTarget(activeEc);
-            }
-        }
-    }
     
     // Player appearance (set before spawning)
     private int _playerRace = 1;
@@ -2212,306 +1047,43 @@ public partial class WorldManager : Node3D
     private int _playerFace = 0;
     private string _playerEquipVisuals = "";
 
-    public void SetPlayerAppearance(int race, int gender, int face, string equipVisualsJson = "")
+
+
+
+
+
+
+
+    /// <summary>Play a named animation on the player capsule (for emotes like wave s03).</summary>
+
+    // ── Footstep Sound System ───────────────────────────────────
+
+
+    private Dictionary<string, (string[] frames, float delay)> ParseMaterialList(string file)
     {
-        _playerRace = race;
-        _playerGender = gender;
-        _playerFace = face;
-        _playerEquipVisuals = equipVisualsJson;
-    }
-
-    public void SpawnPlayer(float rawX, float rawY, float rawZ = 0f)
-    {
-        if (_playerCapsule != null) return;
-
-        // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
-        float x = -rawX;
-        float z = -rawY;
-        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
-
-        GD.Print($"[WORLD] Spawning Player at Godot({x:F1}, {y:F1}, {z:F1}) (race={_playerRace} gender={_playerGender} face={_playerFace})");
-
-        _playerCapsule = new EntityCapsule();
-        _playerCapsule.Name = "Player";
-        _playerCapsule.Position = new Vector3(x, y, z);
-        _spawnsContainer.AddChild(_playerCapsule);
-        _playerCapsule.Setup("You", "player", "", _playerRace, _playerGender, _playerFace, _playerEquipVisuals);
-        _playerCapsule.IsPlayerControlled = true;
-        _playerCapsule.SetNameVisible(false); // Hidden by default; toggled via Options panel
-        _activeEntities["player_self"] = _playerCapsule;
-
-        // Exclude the player from the SpringArm raycast so it doesn't zoom in instantly
-        if (_cameraArm != null)
+        var data = new Dictionary<string, (string[] frames, float delay)>();
+        foreach (var line in System.IO.File.ReadAllLines(file))
         {
-            _cameraArm.AddExcludedObject(_playerCapsule.GetRid());
-        }
-    }
-
-    public void TeleportPlayer(float rawX, float rawY, float rawZ = 0f)
-    {
-        // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
-        float x = -rawX;
-        float z = -rawY;
-        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
-
-        GD.Print($"[WORLD] TeleportPlayer: EQ({rawX}, {rawY}, {rawZ}) → Godot({x:F1}, {y:F1}, {z:F1})");
-
-        if (_playerCapsule == null)
-        {
-            SpawnPlayer(rawX, rawY, rawZ);
-        }
-
-        _playerCapsule.GlobalPosition = new Vector3(x, y, z);
-        _playerCapsule.Velocity = Vector3.Zero;
-        _lastSentPos = new Vector3(x, y, z);
-        EmitSignal(SignalName.PlayerMoved, x, z);
-
-        // Grant zone immunity so we don't instantly trigger a nearby zoneline
-        _zoneImmunityTimer = 5.0;
-
-        // Keep player physics frozen to prevent gravity-induced clipping through 
-        // geometry that may still be registering in the physics engine.
-        _teleportSettling = true;
-        _teleportFreezeTimer = 1.0f; // Freeze for 1 real second
-
-        // Force camera to immediately snap to new position before loading screen hides
-        UpdateCamera();
-    }
-
-    public void SetCombatTarget(string targetId)
-    {
-        // First disconnect everyone from chasing the player
-        foreach (var kvp in _activeEntities)
-        {
-            if (kvp.Value is EntityCapsule ec && ec.ChaseTarget == _playerCapsule)
-                ec.ChaseTarget = null;
-        }
-
-        _playerInCombat = !string.IsNullOrEmpty(targetId);
-        if (string.IsNullOrEmpty(targetId)) return;
-
-        EntityCapsule activeEc = null;
-
-        // For local tests where 'mob_' was stripped off by server, try both
-        if (_activeEntities.TryGetValue(targetId, out Node3D tgt) || _activeEntities.TryGetValue($"mob_{targetId}", out tgt))
-        {
-            activeEc = tgt as EntityCapsule;
-        }
-        else if (_currentTarget != null && _currentTarget is EntityCapsule)
-        {
-            // Fallback: Use what the user clicked locally, since that's what triggered combat
-            activeEc = _currentTarget as EntityCapsule;
-        }
-        else
-        {
-            // Fallback: Pick the closest local entity (simulating the server's handleStartCombat logic)
-            float closestDist = float.MaxValue;
-            foreach (var kvp in _activeEntities)
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+            var parts = line.Split(',');
+            if (parts.Length >= 3)
             {
-                if (kvp.Value is EntityCapsule candidate && candidate != _playerCapsule)
+                float delay = float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
+                if (delay > 0)
                 {
-                    float dist = candidate.GlobalPosition.DistanceTo(_playerCapsule.GlobalPosition);
-                    if (dist < closestDist)
+                    string[] mats = parts[1].Split(':');
+                    string matName = mats[0];
+                    if (mats.Length > 1)
                     {
-                        closestDist = dist;
-                        activeEc = candidate;
+                        string[] frames = new string[mats.Length - 1];
+                        Array.Copy(mats, 1, frames, 0, mats.Length - 1);
+                        data[matName] = (frames, delay);
                     }
                 }
             }
         }
-
-        if (activeEc != null)
-        {
-            activeEc.ChaseTarget = _playerCapsule;
-            if (_currentTarget != activeEc)
-            {
-                SetTarget(activeEc);
-            }
-        }
+        return data;
     }
 
-    public void SetPlayerSitting(bool sitting)
-    {
-        if (_playerCapsule == null) return;
-        if (sitting)
-            _playerCapsule.PlaySit();
-        else
-            _playerCapsule.Revive(); // resets _isSitting and returns to idle
-    }
-
-    public void SetVisionStyle(string styleName)
-    {
-        _currentVisionStyle = styleName;
-        var vm = GetNodeOrNull<VisionManager>("VisionManager");
-        if (vm != null)
-        {
-            vm.SetVisionStyle(styleName);
-        }
-
-        // Apply heat signature to all entities if in infravision
-        bool isInfra = styleName == "infravision";
-        foreach (var entity in _activeEntities.Values)
-        {
-            if (entity is EntityCapsule ec)
-            {
-                ec.SetInfravision(isInfra);
-            }
-        }
-        
-        ApplyTimeOfDayVisuals();
-    }
-
-    public void SetPlayerCasting(bool casting)
-    {
-        if (_playerCapsule == null) return;
-        if (casting)
-            _playerCapsule.PlayAnimation("t04"); // casting animation
-        else
-            _playerCapsule.PlayAnimation("p01"); // return to idle
-    }
-
-    /// <summary>Play a named animation on the player capsule (for emotes like wave s03).</summary>
-    public void PlayPlayerAnimation(string animName)
-    {
-        if (_playerCapsule == null || string.IsNullOrEmpty(animName)) return;
-        // Use PlayEmote to set the emote timer, preventing idle from overriding
-        _playerCapsule.PlayEmote(animName);
-    }
-
-    // ── Footstep Sound System ───────────────────────────────────
-
-    private void UpdateFootstepSounds(Vector3 vel, bool onFloor, bool sprinting, double delta)
-    {
-        // Determine movement state
-        float horizSpeed = new Vector2(vel.X, vel.Z).Length();
-        string newState;
-
-        if (!onFloor && vel.Y < -2f)
-            newState = "idle"; // Falling — no footsteps
-        else if (horizSpeed < 0.5f)
-            newState = "idle";
-        else if (sprinting)
-            newState = "run";
-        else
-            newState = "walk";
-
-        // Create footstep player on first use
-        if (_footstepPlayer == null && _playerCapsule != null)
-        {
-            _footstepPlayer = new AudioStreamPlayer();
-            _footstepPlayer.Name = "FootstepPlayer";
-            _playerCapsule.AddChild(_footstepPlayer);
-        }
-
-        // State change — reset timer
-        if (newState != _lastFootstepState)
-        {
-            // Debug logging removed — footstep system is stable
-            _lastFootstepState = newState;
-            _footstepTimer = 0; // Play immediately on transition
-
-            if (newState == "idle" && _footstepPlayer != null)
-            {
-                _footstepPlayer.Stop();
-            }
-        }
-
-        if (newState == "idle") return;
-
-        // Cadence: run = faster steps, walk = slower
-        _footstepCadence = newState == "run" ? 0.32 : 0.50;
-
-        _footstepTimer -= delta;
-        if (_footstepTimer <= 0)
-        {
-            _footstepTimer = _footstepCadence;
-            PlayFootstep(newState);
-        }
-    }
-
-    private void PlayFootstep(string moveType)
-    {
-        if (_playerCapsule == null) return;
-
-        // Get the player's model code for race-specific sounds
-        string modelCode = _playerCapsule.GetModelCode();
-        if (string.IsNullOrEmpty(modelCode)) modelCode = "hum";
-
-        // Map moveType to sound suffix (EQ naming: hum_run.wav, hum_wlk.wav, hum_swm.wav, hum_atk.wav)
-        string suffix = moveType switch
-        {
-            "run" => "_run.wav",
-            "walk" => "_wlk.wav",
-            "swim" => "_swm.wav",
-            "jmp" => "_atk.wav", // Jump uses the vocal attack grunt
-            _ => "_wlk.wav"
-        };
-
-        // Try race-specific first, then human fallback
-        string soundFile = $"{modelCode}{suffix}";
-        var stream = EQAssetCache.Instance.GetSound(soundFile);
-
-        if (stream == null)
-        {
-            // Fallback: try 3-letter code
-            string shortCode = modelCode.Substring(0, System.Math.Min(3, modelCode.Length));
-            soundFile = $"{shortCode}{suffix}";
-            stream = EQAssetCache.Instance.GetSound(soundFile);
-        }
-
-        if (stream == null)
-        {
-            // Final fallback: Use high-quality Dark Elf Male/Female audio as the universal humanoid default
-            string dkPrefix = _playerCapsule.Gender == 1 ? "DKF_" : "DKM_";
-            string dkSuffix = moveType switch
-            {
-                "run" => "Run.wav",
-                "walk" => "Walk.wav",
-                "swim" => "SwimFoward.wav",
-                "jmp" => "Jump.wav",
-                _ => "Walk.wav"
-            };
-            soundFile = $"{dkPrefix}{dkSuffix}";
-            stream = EQAssetCache.Instance.GetSound(soundFile);
-        }
-
-        if (stream != null)
-        {
-            // Use the global UI sound player for local player footsteps/jumps
-            // since we know its audio pipeline is 100% functional and local sounds
-            // don't need 3D spatial attenuation.
-            float sfxVol = _musicPlayer?.GetSfxVolume() ?? 0.8f;
-            bool sfxMuted = _musicPlayer?.IsSfxMuted ?? false;
-            
-            if (!sfxMuted && sfxVol > 0f)
-            {
-                float finalVol = 2f; // Base volume (+2dB)
-                
-                // Silent if successfully sneaking or hiding
-                if (_isSneaking || _isHiding)
-                {
-                    finalVol = -80f; // Godot's minimum dB (silent)
-                }
-                else if (_isCrouching)
-                {
-                    // If crouched but failed sneak check (or just crouching normally)
-                    if (PlayerHasStealthSkill)
-                        finalVol = -10f; // Even quieter if they have the skill but failed
-                    else
-                        finalVol = -4f;  // Quieter for normal crouch
-                }
-
-                if (finalVol > -80f)
-                {
-                    UISoundPlayer.Instance?.PlaySound(soundFile, finalVol);
-                }
-            }
-        }
-        else
-        {
-            GD.Print($"[Footstep] No sound found for model='{modelCode}' type='{moveType}'");
-        }
-    }
 }
-
 

@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3 uid="uid://df7h6k5v4u3"]
+[gd_scene load_steps=6 format=3 uid="uid://df7h6k5v4u3"]
 
 [sub_resource type="StyleBoxFlat" id="sb_window"]
 bg_color = Color(0.07, 0.065, 0.055, 0.97)
@@ -14,34 +14,32 @@ corner_radius_bottom_left = 3
 shadow_color = Color(0, 0, 0, 0.4)
 shadow_size = 8
 
-[sub_resource type="StyleBoxFlat" id="sb_inner"]
-bg_color = Color(0.04, 0.04, 0.04, 0.9)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.3, 0.25, 0.15, 0.7)
-corner_radius_top_left = 2
-corner_radius_top_right = 2
-corner_radius_bottom_right = 2
-corner_radius_bottom_left = 2
-
 [sub_resource type="StyleBoxFlat" id="sb_title"]
 bg_color = Color(0.12, 0.1, 0.07, 1)
 border_width_bottom = 1
 border_color = Color(0.55, 0.45, 0.2, 1)
 
+[sub_resource type="StyleBoxEmpty" id="sb_tab_panel"]
+
+[sub_resource type="StyleBoxFlat" id="sb_inner_dark"]
+bg_color = Color(0.03, 0.03, 0.03, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.25, 0.2, 0.1, 0.5)
+
 [node name="InventoryWindow" type="Panel"]
-custom_minimum_size = Vector2(520, 640)
+custom_minimum_size = Vector2(600, 520)
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -260.0
-offset_top = -320.0
-offset_right = 260.0
-offset_bottom = 320.0
+offset_left = -300.0
+offset_top = -260.0
+offset_right = 300.0
+offset_bottom = 260.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("sb_window")
@@ -66,11 +64,15 @@ theme_override_styles/panel = SubResource("sb_title")
 [node name="HBox" type="HBoxContainer" parent="MainVBox/TitleBar"]
 layout_mode = 2
 
+[node name="Control" type="Control" parent="MainVBox/TitleBar/HBox"]
+custom_minimum_size = Vector2(6, 0)
+layout_mode = 2
+
 [node name="Title" type="Label" parent="MainVBox/TitleBar/HBox"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.85, 0.75, 0.45, 1)
-theme_override_font_sizes/font_size = 15
+theme_override_font_sizes/font_size = 14
 text = "Inventory"
 horizontal_alignment = 1
 
@@ -80,79 +82,213 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "X"
 
-[node name="ContentHBox" type="HBoxContainer" parent="MainVBox"]
+[node name="TabContainer" type="TabContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3
-size_flags_stretch_ratio = 1.0
-theme_override_constants/separation = 4
+theme_override_font_sizes/font_size = 12
+theme_override_styles/panel = SubResource("sb_tab_panel")
 
-[node name="StatsPanel" type="PanelContainer" parent="MainVBox/ContentHBox"]
+[node name="Inventory" type="HBoxContainer" parent="MainVBox/TabContainer"]
 layout_mode = 2
-size_flags_horizontal = 3
-size_flags_stretch_ratio = 0.45
-theme_override_styles/panel = SubResource("sb_inner")
+theme_override_constants/separation = 8
 
-[node name="StatsScroll" type="ScrollContainer" parent="MainVBox/ContentHBox/StatsPanel"]
+[node name="StatsColumn" type="VBoxContainer" parent="MainVBox/TabContainer/Inventory"]
+custom_minimum_size = Vector2(160, 0)
 layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="Control" type="Control" parent="MainVBox/TabContainer/Inventory/StatsColumn"]
+custom_minimum_size = Vector2(0, 4)
+layout_mode = 2
+
+[node name="StatsScroll" type="ScrollContainer" parent="MainVBox/TabContainer/Inventory/StatsColumn"]
+layout_mode = 2
+size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="StatsText" type="RichTextLabel" parent="MainVBox/ContentHBox/StatsPanel/StatsScroll"]
+[node name="StatsText" type="RichTextLabel" parent="MainVBox/TabContainer/Inventory/StatsColumn/StatsScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
-theme_override_colors/default_color = Color(0.8, 0.8, 0.7, 1)
-theme_override_font_sizes/normal_font_size = 12
+theme_override_colors/default_color = Color(0.85, 0.85, 0.85, 1)
+theme_override_font_sizes/normal_font_size = 11
+text = "Character Stats"
 
-[node name="EquipPanel" type="PanelContainer" parent="MainVBox/ContentHBox"]
+[node name="PaperdollColumn" type="VBoxContainer" parent="MainVBox/TabContainer/Inventory"]
 layout_mode = 2
 size_flags_horizontal = 3
-size_flags_stretch_ratio = 0.55
-theme_override_styles/panel = SubResource("sb_inner")
+alignment = 1
 
-[node name="EquipScroll" type="ScrollContainer" parent="MainVBox/ContentHBox/EquipPanel"]
+[node name="PaperdollPanel" type="Panel" parent="MainVBox/TabContainer/Inventory/PaperdollColumn"]
+custom_minimum_size = Vector2(240, 400)
 layout_mode = 2
-horizontal_scroll_mode = 0
+size_flags_horizontal = 4
+theme_override_styles/panel = SubResource("sb_inner_dark")
 
-[node name="EquipGrid" type="VBoxContainer" parent="MainVBox/ContentHBox/EquipPanel/EquipScroll"]
+[node name="ClassIcon" type="TextureRect" parent="MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -60.0
+offset_top = -100.0
+offset_right = 60.0
+offset_bottom = 100.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="EquipGrid" type="Control" parent="MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="RightColumn" type="VBoxContainer" parent="MainVBox/TabContainer/Inventory"]
+custom_minimum_size = Vector2(160, 0)
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CurrencyPanel" type="PanelContainer" parent="MainVBox/TabContainer/Inventory/RightColumn"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("sb_inner_dark")
+
+[node name="VBox" type="VBoxContainer" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel"]
+layout_mode = 2
+theme_override_constants/separation = 1
+
+[node name="Platinum" type="HBoxContainer" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox"]
+layout_mode = 2
+
+[node name="Icon" type="TextureRect" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Platinum"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+expand_mode = 1
+
+[node name="Label" type="Label" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Platinum"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 2
+theme_override_font_sizes/font_size = 11
+text = "0"
+horizontal_alignment = 2
 
-[node name="SlotsSection" type="VBoxContainer" parent="MainVBox"]
+[node name="Gold" type="HBoxContainer" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox"]
 layout_mode = 2
-size_flags_vertical = 3
-size_flags_stretch_ratio = 0.5
-theme_override_constants/separation = 2
 
-[node name="SlotsTitle" type="Label" parent="MainVBox/SlotsSection"]
+[node name="Icon" type="TextureRect" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Gold"]
+custom_minimum_size = Vector2(16, 16)
 layout_mode = 2
-theme_override_colors/font_color = Color(0.7, 0.6, 0.35, 1)
-theme_override_font_sizes/font_size = 12
-text = "── General Slots ──"
+expand_mode = 1
+
+[node name="Label" type="Label" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Gold"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 11
+text = "0"
+horizontal_alignment = 2
+
+[node name="Silver" type="HBoxContainer" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox"]
+layout_mode = 2
+
+[node name="Icon" type="TextureRect" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Silver"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+expand_mode = 1
+
+[node name="Label" type="Label" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Silver"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 11
+text = "0"
+horizontal_alignment = 2
+
+[node name="Copper" type="HBoxContainer" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox"]
+layout_mode = 2
+
+[node name="Icon" type="TextureRect" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Copper"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+expand_mode = 1
+
+[node name="Label" type="Label" parent="MainVBox/TabContainer/Inventory/RightColumn/CurrencyPanel/VBox/Copper"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 11
+text = "0"
+horizontal_alignment = 2
+
+[node name="GeneralSlotsLabel" type="Label" parent="MainVBox/TabContainer/Inventory/RightColumn"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.55, 0.4, 1)
+theme_override_font_sizes/font_size = 11
+text = "Inventory"
 horizontal_alignment = 1
 
-[node name="SlotsGrid" type="GridContainer" parent="MainVBox/SlotsSection"]
+[node name="GeneralSlotsGrid" type="GridContainer" parent="MainVBox/TabContainer/Inventory/RightColumn"]
 layout_mode = 2
-size_flags_horizontal = 3
 size_flags_vertical = 3
 columns = 2
 theme_override_constants/h_separation = 4
 theme_override_constants/v_separation = 4
 
+[node name="Stats" type="ScrollContainer" parent="MainVBox/TabContainer"]
+visible = false
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="StatsVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Stats"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="DetailedStatsText" type="RichTextLabel" parent="MainVBox/TabContainer/Stats/StatsVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+theme_override_colors/default_color = Color(0.85, 0.85, 0.85, 1)
+theme_override_font_sizes/normal_font_size = 11
+fit_content = true
+text = "Detailed Stats"
+
+[node name="Alt.Currency" type="Control" parent="MainVBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="Label" type="Label" parent="MainVBox/TabContainer/Alt.Currency"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -60.0
+offset_top = -11.5
+offset_right = 60.0
+offset_bottom = 11.5
+grow_horizontal = 2
+grow_vertical = 2
+text = "Alternate Currency"
+
 [node name="ButtonBar" type="HBoxContainer" parent="MainVBox"]
 layout_mode = 2
-alignment = 2
-theme_override_constants/separation = 6
+alignment = 1
+theme_override_constants/separation = 12
 
 [node name="DestroyBtn" type="Button" parent="MainVBox/ButtonBar"]
-custom_minimum_size = Vector2(70, 28)
+custom_minimum_size = Vector2(80, 26)
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Destroy"
 
 [node name="DoneBtn" type="Button" parent="MainVBox/ButtonBar"]
-custom_minimum_size = Vector2(70, 28)
+custom_minimum_size = Vector2(80, 26)
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Done"

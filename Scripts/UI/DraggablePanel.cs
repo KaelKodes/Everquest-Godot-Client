@@ -20,6 +20,9 @@ public partial class DraggablePanel : PanelContainer
 				else
 				{
 					_dragging = false;
+					if (MainUI.Instance != null) {
+						MainUI.Instance.SaveWindowPositions();
+					}
 				}
 			}
 		}

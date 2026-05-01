@@ -11,6 +11,7 @@ public partial class GameClient : Node
     [Signal] public delegate void CharacterStatusReceivedEventHandler(Variant data);
     [Signal] public delegate void SpellbookUpdatedEventHandler(Variant data);
     [Signal] public delegate void SpellbookFullReceivedEventHandler(Variant data);
+    [Signal] public delegate void SpellDetailsReceivedEventHandler(Variant data);
     [Signal] public delegate void CombatLogReceivedEventHandler(Variant data);
     [Signal] public delegate void BuffsUpdatedEventHandler(Variant data);
     [Signal] public delegate void InventoryUpdatedEventHandler(Variant data);
@@ -212,6 +213,9 @@ public partial class GameClient : Node
                     break;
                 case "DOOR_STATE_CHANGE":
                     EmitSignal(SignalName.DoorStateChanged, message);
+                    break;
+                case "SPELL_DETAILS":
+                    EmitSignal(SignalName.SpellDetailsReceived, message);
                     break;
                 case "TELEPORT":
                 {

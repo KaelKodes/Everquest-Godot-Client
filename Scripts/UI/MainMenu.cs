@@ -300,20 +300,18 @@ public partial class MainMenu : Control
         _rememberCheckbox.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(_rememberCheckbox);
 
-        // Server Status Header (Replacing Address Input)
-        var serverStatusHeader = new RichTextLabel();
-        serverStatusHeader.BbcodeEnabled = true;
-        serverStatusHeader.FitContent = true;
-        serverStatusHeader.ScrollActive = false;
-        serverStatusHeader.Text = $"[center]Server: [color=#ddaa22]{_currentServerName}[/color][/center]";
-        serverStatusHeader.AddThemeFontSizeOverride("normal_font_size", 14);
-        serverStatusHeader.AddThemeColorOverride("default_color", new Color(0.7f, 0.65f, 0.5f, 1f));
-        vbox.AddChild(serverStatusHeader);
+        // Server Address Input (Dynamic Server Selection)
+        var serverLabel = new Label();
+        serverLabel.Text = "Server Address";
+        serverLabel.AddThemeFontSizeOverride("font_size", 13);
+        serverLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        vbox.AddChild(serverLabel);
 
-        // Internal address ref for networking logic
         _serverAddressInput = new LineEdit();
-        _serverAddressInput.Visible = false;
-        _serverAddressInput.Text = ServerConfigs[_currentServerName];
+        _serverAddressInput.PlaceholderText = "ws://localhost:3005";
+        _serverAddressInput.Text = "ws://localhost:3005"; // Default, but editable
+        _serverAddressInput.AddThemeFontSizeOverride("font_size", 15);
+        vbox.AddChild(_serverAddressInput);
 
         // Login button
         _loginButton = new Button();
@@ -1226,7 +1224,7 @@ public partial class MainMenu : Control
         _loginButton.Disabled = true;
         _createAccountButton.Disabled = true;
 
-        GameClient.Instance.ServerUrl = ServerConfigs[_currentServerName];
+        GameClient.Instance.ServerUrl = _serverAddressInput.Text.Trim();
 
         if (!GameClient.Instance.IsSocketConnected)
         {

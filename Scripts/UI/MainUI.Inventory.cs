@@ -25,36 +25,73 @@ public partial class MainUI
 
 			// Reset all equipment slots to empty
 			foreach (var kvp in _equipSlots) {
-				kvp.Value.Text = "---";
+				string disp = kvp.Key;
+				if (disp == "Ear2") disp = "Ear";
+				if (disp == "Wrist2") disp = "Wrist";
+				if (disp == "Ring2") disp = "Ring";
+				
+				kvp.Value.Text = disp;
+				kvp.Value.Icon = null;
 				kvp.Value.TooltipText = kvp.Key;
 			}
 
-			// Reset all 10 general inventory slots
-			for (int i = 0; i < 10; i++) {
-				_invSlots[i].Text = $"\u2500\u2500 Slot {i+1} \u2500\u2500";
-				_invSlots[i].TooltipText = "Empty";
+			// Reset all 8 general inventory slots
+			for (int i = 0; i < 8; i++) {
+				if (_invSlots[i] != null) {
+					_invSlots[i].Text = "";
+					_invSlots[i].Icon = null;
+					_invSlots[i].TooltipText = "Empty";
+				}
 			}
 
+			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
 			foreach (var item in inventory.EnumerateArray())
 			{
+				int slotId = item.GetProperty("slotId").GetInt32();
+				if (slotId == 30) {
+					_heldItem = item.Clone();
+					_heldFromSlotId = 30; // Special cursor slot
+					int cIconId = item.TryGetProperty("icon", out var cIProp) ? cIProp.GetInt32() : 0;
+					_cursorIcon.Texture = (cIconId > 0 && iconMgr != null) ? iconMgr.GetItemIcon(cIconId) : null;
+					_cursorIcon.Visible = true;
+					continue;
+				}
 				string name = item.GetProperty("itemName").GetString();
 				int equipped = item.GetProperty("equipped").GetInt32();
-				int slotId = item.GetProperty("slotId").GetInt32();
+				int iconId = item.TryGetProperty("icon", out var iProp) ? iProp.GetInt32() : 0;
 				string statText = BuildItemStatText(item);
+
+				Texture2D iconTex = null;
+				if (iconId > 0 && iconMgr != null) {
+					iconTex = iconMgr.GetItemIcon(iconId);
+				}
 
 				if (equipped == 1) {
 					string slotName = MapSlotToName(slotId);
 					if (slotName != null && _equipSlots.TryGetValue(slotName, out var slotBtn)) {
-						slotBtn.Text = name.Length > 12 ? name[..12] + ".." : name;
+						slotBtn.Text = iconTex != null ? "" : (name.Length > 8 ? name[..8] + ".." : name);
+						if (iconTex != null) {
+							slotBtn.Icon = iconTex;
+							slotBtn.ExpandIcon = true;
+							slotBtn.IconAlignment = HorizontalAlignment.Center;
+						}
 						slotBtn.TooltipText = $"{name}\n{statText}";
 						_slotItemData[slotBtn] = item.Clone();
 					}
 				} else {
 					int idx = slotId - 22;
-					if (idx < 0 || idx >= 10) continue;
+					if (idx < 0 || idx >= 8) continue;
 
 					var btn = _invSlots[idx];
-					btn.Text = name.Length > 18 ? name[..18] + ".." : name;
+					if (btn == null) continue;
+					
+					btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+					if (iconTex != null) {
+						btn.Icon = iconTex;
+						btn.ExpandIcon = true;
+						btn.IconAlignment = HorizontalAlignment.Center;
+					}
+					
 					int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
 					string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
 					btn.TooltipText = $"{name}\n{statText}{sellText}";
@@ -70,15 +107,27 @@ public partial class MainUI
 	/// </summary>
 	private void BuildInventorySlots()
 	{
-		for (int i = 0; i < 10; i++)
+		if (_slotsGrid == null) return;
+		for (int i = 0; i < 8; i++)
 		{
 			var btn = new Button();
-			btn.Text = $"\u2500\u2500 Slot {i+1} \u2500\u2500";
+			btn.Text = "";
 			btn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-			btn.CustomMinimumSize = new Vector2(0, 28);
-			btn.AddThemeFontSizeOverride("font_size", 10);
+			btn.CustomMinimumSize = new Vector2(0, 40);
+			btn.AddThemeFontSizeOverride("font_size", 9);
 			btn.ClipText = true;
 			btn.TooltipText = "Empty";
+			
+			// Gold outlined slot style
+			var style = new StyleBoxFlat();
+			style.BgColor = new Color(0.1f, 0.1f, 0.1f, 0.4f);
+			style.BorderColor = new Color(0.6f, 0.5f, 0.2f, 0.7f);
+			style.BorderWidthBottom = 1;
+			style.BorderWidthTop = 1;
+			style.BorderWidthLeft = 1;
+			style.BorderWidthRight = 1;
+			btn.AddThemeStyleboxOverride("normal", style);
+			
 			_slotsGrid.AddChild(btn);
 			_invSlots[i] = btn;
 			int slotId = 22 + i;
@@ -89,19 +138,24 @@ public partial class MainUI
 	// ─── Auto-Equip Slot ────────────────────────────────────────────
 	private void BuildAutoEquipSlot()
 	{
-		var mainVBox = _inventoryWindow.GetNode<VBoxContainer>("MainVBox");
-		var slotsSection = mainVBox.GetNode<VBoxContainer>("SlotsSection");
+		// Overlay an invisible button on the class icon area for auto-equip drop target
+		var paperdollPanel = _inventoryWindow.GetNodeOrNull<Control>("MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel");
+		if (paperdollPanel == null) return;
 
 		_autoEquipBtn = new Button();
-		_autoEquipBtn.Text = "▼ Auto-Equip ▼";
-		_autoEquipBtn.CustomMinimumSize = new Vector2(0, 30);
-		_autoEquipBtn.AddThemeFontSizeOverride("font_size", 11);
+		_autoEquipBtn.Text = "";
+		_autoEquipBtn.Flat = true;
 		_autoEquipBtn.TooltipText = "Drop a held item here to auto-equip it";
+		_autoEquipBtn.MouseFilter = Control.MouseFilterEnum.Pass;
 
-		// Insert between equip panel and slots section
-		int idx = slotsSection.GetIndex();
-		mainVBox.AddChild(_autoEquipBtn);
-		mainVBox.MoveChild(_autoEquipBtn, idx);
+		// Position over the class icon area (centered in paperdoll)
+		_autoEquipBtn.SetAnchorsPreset(Control.LayoutPreset.Center);
+		_autoEquipBtn.OffsetLeft = -60;
+		_autoEquipBtn.OffsetTop = -130;
+		_autoEquipBtn.OffsetRight = 60;
+		_autoEquipBtn.OffsetBottom = 70;
+
+		paperdollPanel.AddChild(_autoEquipBtn);
 
 		_autoEquipBtn.GuiInput += (inputEvent) => {
 			if (inputEvent is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left) {
@@ -115,57 +169,24 @@ public partial class MainUI
 	}
 
 	// ─── Cursor Label (floating item name on cursor) ────────────────
-	private void BuildCursorLabel()
+	private void BuildCursorIcon()
 	{
-		_cursorLabel = new Label();
-		_cursorLabel.Text = "";
-		_cursorLabel.Visible = false;
-		_cursorLabel.AddThemeColorOverride("font_color", new Color(1f, 0.9f, 0.5f));
-		_cursorLabel.AddThemeFontSizeOverride("font_size", 12);
-		_cursorLabel.ZIndex = 100;
-		_cursorLabel.MouseFilter = Control.MouseFilterEnum.Ignore;
-		AddChild(_cursorLabel);
+		_cursorIcon = new TextureRect();
+		_cursorIcon.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+		_cursorIcon.CustomMinimumSize = new Vector2(40, 40);
+		_cursorIcon.Size = new Vector2(40, 40);
+		_cursorIcon.Visible = false;
+		_cursorIcon.ZIndex = 100;
+		_cursorIcon.MouseFilter = Control.MouseFilterEnum.Ignore;
+		_cursorIcon.TopLevel = true;
+		AddChild(_cursorIcon);
 	}
 
 	// ─── Item Detail Popup ──────────────────────────────────────────
 	private void BuildItemDetailPopup()
 	{
-		_itemDetailPopup = new Panel();
-		_itemDetailPopup.Visible = false;
-		_itemDetailPopup.CustomMinimumSize = new Vector2(220, 200);
-		_itemDetailPopup.ZIndex = 200;
-		_itemDetailPopup.MouseFilter = Control.MouseFilterEnum.Stop;
-
-		var sb = new StyleBoxFlat();
-		sb.BgColor = new Color(0.08f, 0.07f, 0.05f, 0.95f);
-		sb.BorderWidthLeft = 2; sb.BorderWidthTop = 2; sb.BorderWidthRight = 2; sb.BorderWidthBottom = 2;
-		sb.BorderColor = new Color(0.6f, 0.5f, 0.2f, 0.9f);
-		sb.ContentMarginLeft = 8; sb.ContentMarginTop = 8; sb.ContentMarginRight = 8; sb.ContentMarginBottom = 8;
-		_itemDetailPopup.AddThemeStyleboxOverride("panel", sb);
-
-		var scrollContainer = new ScrollContainer();
-		scrollContainer.SetAnchorsPreset(LayoutPreset.FullRect);
-		scrollContainer.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-		_itemDetailPopup.AddChild(scrollContainer);
-
-		var rtl = new RichTextLabel();
-		rtl.Name = "DetailText";
-		rtl.BbcodeEnabled = true;
-		rtl.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-		rtl.SizeFlagsVertical = SizeFlags.ExpandFill;
-		rtl.FitContent = true;
-		rtl.AddThemeColorOverride("default_color", new Color(0.85f, 0.8f, 0.65f));
-		rtl.AddThemeFontSizeOverride("normal_font_size", 12);
-		scrollContainer.AddChild(rtl);
-
+		_itemDetailPopup = new ItemDetailsWindow();
 		AddChild(_itemDetailPopup);
-
-		// Close on any click
-		_itemDetailPopup.GuiInput += (inputEvent) => {
-			if (inputEvent is InputEventMouseButton mb && mb.Pressed) {
-				_itemDetailPopup.Visible = false;
-			}
-		};
 	}
 
 	// ─── Slot Input Handling (all slots use this) ───────────────────
@@ -182,6 +203,16 @@ public partial class MainUI
 				}
 			}
 			if (mb.ButtonIndex == MouseButton.Right) {
+				if (mb.Pressed && mb.CtrlPressed && _slotItemData.TryGetValue(btn, out var pickupData)) {
+					int clicky = pickupData.TryGetProperty("clicky", out var clickyProp) ? clickyProp.GetInt32() : 0;
+					if (clicky > 0) {
+						int itemId = pickupData.GetProperty("eq_item_id").GetInt32();
+						string name = pickupData.GetProperty("itemName").GetString();
+						_hotbarManager?.StartItemDrag(itemId, name);
+					}
+					GetViewport().SetInputAsHandled();
+					return;
+				}
 				if (mb.Pressed && _slotItemData.TryGetValue(btn, out var itemData)) {
 					_rightClickTimer = 0;
 					_rightClickTarget = btn;
@@ -201,8 +232,10 @@ public partial class MainUI
 	{
 		_heldItem = itemData;
 		_heldFromSlotId = slotId;
-		_cursorLabel.Text = itemData.GetProperty("itemName").GetString();
-		_cursorLabel.Visible = true;
+		int pIconId = itemData.TryGetProperty("icon", out var pProp) ? pProp.GetInt32() : 0;
+		var iconMgr2 = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+		_cursorIcon.Texture = (pIconId > 0 && iconMgr2 != null) ? iconMgr2.GetItemIcon(pIconId) : null;
+		_cursorIcon.Visible = true;
 		sourceBtn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f); // dim the source
 	}
 
@@ -221,7 +254,7 @@ public partial class MainUI
 		} else if (!targetIsEquipSlot && sourceIsEquipSlot) {
 			// Placing from equipment to inventory
 			int itemId = _heldItem.Value.GetProperty("item_id").GetInt32();
-			_client.SendRaw($"{{\"type\": \"UNEQUIP_ITEM\", \"itemId\": {itemId}}}");
+			_client.SendRaw($"{{\"type\": \"UNEQUIP_ITEM\", \"itemId\": {itemId}, \"slot\": {targetSlotId}}}");
 		} else if (!targetIsEquipSlot && !sourceIsEquipSlot) {
 			// Moving between inventory slots
 			_client.SendRaw($"{{\"type\": \"MOVE_ITEM\", \"fromSlot\": {fromSlot}, \"toSlot\": {targetSlotId}}}");
@@ -249,62 +282,12 @@ public partial class MainUI
 		}
 		_heldItem = null;
 		_heldFromSlotId = -1;
-		_cursorLabel.Visible = false;
+		_cursorIcon.Visible = false;
 	}
 
 	private void ShowItemDetail(JsonElement item, Vector2 pos)
 	{
-		var rtl = _itemDetailPopup.GetNode<RichTextLabel>("DetailText");
-		rtl.Clear();
-
-		string name = item.GetProperty("itemName").GetString();
-		rtl.AppendText($"[b][color=#ddaa22]{name}[/color][/b]\n\n");
-
-		// Slot info
-		int equipSlot = item.TryGetProperty("equipSlot", out var esProp) ? esProp.GetInt32() : 0;
-		if (equipSlot > 0) {
-			string slotDesc = GetSlotDescription(equipSlot);
-			rtl.AppendText($"[color=#aaaaaa]Slot: {slotDesc}[/color]\n");
-		}
-
-		// Stats
-		var statLines = new List<string>();
-		if (item.TryGetProperty("ac", out var ac) && ac.GetInt32() > 0) statLines.Add($"AC: {ac.GetInt32()}");
-		if (item.TryGetProperty("damage", out var dmg) && dmg.GetInt32() > 0) statLines.Add($"Dmg: {dmg.GetInt32()}");
-		if (item.TryGetProperty("delay", out var dly) && dly.GetInt32() > 0) statLines.Add($"Delay: {dly.GetInt32()}");
-		if (item.TryGetProperty("hp", out var hp) && hp.GetInt32() != 0) statLines.Add($"HP: +{hp.GetInt32()}");
-		if (item.TryGetProperty("mana", out var mana) && mana.GetInt32() != 0) statLines.Add($"Mana: +{mana.GetInt32()}");
-		if (item.TryGetProperty("str", out var str) && str.GetInt32() != 0) statLines.Add($"STR: +{str.GetInt32()}");
-		if (item.TryGetProperty("sta", out var sta) && sta.GetInt32() != 0) statLines.Add($"STA: +{sta.GetInt32()}");
-		if (item.TryGetProperty("agi", out var agi) && agi.GetInt32() != 0) statLines.Add($"AGI: +{agi.GetInt32()}");
-		if (item.TryGetProperty("dex", out var dex) && dex.GetInt32() != 0) statLines.Add($"DEX: +{dex.GetInt32()}");
-		if (item.TryGetProperty("wis", out var wis) && wis.GetInt32() != 0) statLines.Add($"WIS: +{wis.GetInt32()}");
-		if (item.TryGetProperty("int", out var intel) && intel.GetInt32() != 0) statLines.Add($"INT: +{intel.GetInt32()}");
-		if (item.TryGetProperty("cha", out var cha) && cha.GetInt32() != 0) statLines.Add($"CHA: +{cha.GetInt32()}");
-
-		if (statLines.Count > 0) {
-			rtl.AppendText("\n");
-			foreach (var line in statLines)
-				rtl.AppendText($"[color=#88cc88]{line}[/color]\n");
-		}
-
-		// Weight & Value
-		float weight = item.TryGetProperty("weight", out var wProp) ? (float)wProp.GetDouble() : 0;
-		int value = item.TryGetProperty("value", out var vProp) ? vProp.GetInt32() : 0;
-		rtl.AppendText($"\n[color=#aaaaaa]Weight: {weight:F1}[/color]\n");
-		if (value > 0) {
-			int pp = value / 1000; int gp = (value % 1000) / 100;
-			int sp = (value % 100) / 10; int cp = value % 10;
-			rtl.AppendText($"[color=#aaaaaa]Value: {pp}pp {gp}gp {sp}sp {cp}cp[/color]\n");
-		}
-
-		int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
-		if (sellVal > 0) {
-			rtl.AppendText($"[color=#ccaa44]Sell: {FormatCurrency(sellVal)}[/color]\n");
-		}
-
-		_itemDetailPopup.GlobalPosition = pos;
-		_itemDetailPopup.Visible = true;
+		_itemDetailPopup.ShowItem(item, pos);
 	}
 
 	private string GetSlotDescription(int bitmask)
@@ -337,35 +320,92 @@ public partial class MainUI
 		return parts.Count > 0 ? string.Join(" | ", parts) : "";
 	}
 
-	/// <summary>
-	/// Build the equipment paperdoll grid programmatically.
-	/// Creates labeled slot rows arranged in pairs for a compact paperdoll look.
-	/// </summary>
 	private void BuildEquipmentGrid()
 	{
-		// Define slot layout: each tuple is (leftSlot, rightSlot) for a row
-		var rows = new (string left, string right)[] {
-			("Head",      "Face"),
-			("Neck",      "Ear"),
-			("Shoulders", "Chest"),
-			("Arms",      "Back"),
-			("Wrist",     "Wrist2"),
-			("Hands",     "Ring"),
-			("Primary",   "Secondary"),
-			("Legs",      "Ring2"),
-			("Feet",      "Waist"),
-			("Range",     "Ammo"),
+		if (_equipGrid == null) return;
+		
+		// Define slot layout for paperdoll based on user template
+		// 4 columns x 8 rows. Paperdoll size is 240x400.
+		// Col X: 12, 72, 132, 192
+		// Row Y: 10, 60, 110, 160, 210, 260, 310, 360
+		var slots = new (string name, int id, Vector2 pos)[] {
+			// Column 1
+			("Ear1",      4,  new Vector2(12, 10)),
+			("Chest",     17, new Vector2(12, 60)),
+			("Arms",      7,  new Vector2(12, 110)),
+			("Waist",     20, new Vector2(12, 160)),
+			("Wrist1",    9,  new Vector2(12, 210)),
+			("Legs",      18, new Vector2(12, 260)),
+			("Primary",   13, new Vector2(12, 360)),
+			
+			// Column 2
+			("Head",      2,  new Vector2(72, 10)),
+			("Hands",     12, new Vector2(72, 260)),
+			("Ring1",     15, new Vector2(72, 310)),
+			("Secondary", 14, new Vector2(72, 360)),
+			
+			// Column 3
+			("Face",      3,  new Vector2(132, 10)),
+			("Charm",     1,  new Vector2(132, 260)),
+			("Ring2",     16, new Vector2(132, 310)),
+			("Range",     21, new Vector2(132, 360)),
+			
+			// Column 4
+			("Ear2",      11, new Vector2(192, 10)),
+			("Neck",      5,  new Vector2(192, 60)),
+			("Back",      8,  new Vector2(192, 110)),
+			("Shoulders", 6,  new Vector2(192, 160)),
+			("Wrist2",    10, new Vector2(192, 210)),
+			("Feet",      19, new Vector2(192, 260)),
+			("Ammo",      22, new Vector2(192, 360))
 		};
 
-		foreach (var (left, right) in rows)
+		foreach (var (name, id, pos) in slots)
 		{
-			var rowBox = new HBoxContainer();
-			rowBox.AddThemeConstantOverride("separation", 4);
+			var btn = new Button();
+			btn.Name = name;
+			btn.Text = "";
+			btn.CustomMinimumSize = new Vector2(36, 36);
+			btn.Position = pos;
+			btn.TooltipText = name;
+			btn.AddThemeFontSizeOverride("font_size", 8);
 			
-			AddSlotToRow(rowBox, left);
-			AddSlotToRow(rowBox, right);
+			// Shadow background placeholder
+			var style = new StyleBoxFlat();
+			style.BgColor = new Color(0.2f, 0.2f, 0.25f, 0.3f);
+			btn.AddThemeStyleboxOverride("normal", style);
 			
-			_equipGrid.AddChild(rowBox);
+			_equipGrid.AddChild(btn);
+			_equipSlots[name] = btn;
+			btn.GuiInput += (ev) => HandleSlotInput(ev, btn, id);
+		}
+
+		// Replace static ClassIcon with ClassIconAnim script component
+		var oldClassIcon = _inventoryWindow.GetNodeOrNull<TextureRect>("MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel/ClassIcon");
+		if (oldClassIcon != null) {
+			var parent = oldClassIcon.GetParent();
+			var newClassIcon = new ClassIconAnim();
+			newClassIcon.Name = "ClassIconAnim";
+			
+			// Center it in the Paperdoll panel
+			newClassIcon.SetAnchorsPreset(Control.LayoutPreset.Center);
+			newClassIcon.OffsetLeft = -60;
+			newClassIcon.OffsetTop = -130;
+			newClassIcon.OffsetRight = 60;
+			newClassIcon.OffsetBottom = 70;
+			
+			newClassIcon.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+			newClassIcon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			
+			// Note: The user can tweak HFrames/VFrames in code if it turns out to be e.g. 5 frames.
+			newClassIcon.HFrames = 4;
+			newClassIcon.VFrames = 2;
+			newClassIcon.Fps = 6.0f;
+			newClassIcon.PingPong = true;
+			newClassIcon.ActiveFrames = 7;
+			
+			parent.AddChild(newClassIcon);
+			oldClassIcon.QueueFree();
 		}
 	}
 
@@ -380,7 +420,7 @@ public partial class MainUI
 		label.AddThemeFontSizeOverride("font_size", 10);
 		label.AddThemeColorOverride("font_color", new Color(0.6f, 0.55f, 0.4f));
 
-		var btn = new Button { Text = "---" };
+		var btn = new Button { Text = slotName.Replace("2", "") };
 		btn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 		btn.CustomMinimumSize = new Vector2(0, 24);
 		btn.AddThemeFontSizeOverride("font_size", 10);
@@ -397,8 +437,8 @@ public partial class MainUI
 
 	private int NameToSlotId(string name) {
 		return name switch {
-			"Head" => 2, "Face" => 3, "Ear" => 4, "Neck" => 5,
-			"Shoulders" => 6, "Arms" => 7, "Back" => 8,
+			"Ear" => 1, "Head" => 2, "Face" => 3, "Ear2" => 4,
+			"Neck" => 5, "Shoulders" => 6, "Arms" => 7, "Back" => 8,
 			"Wrist" => 9, "Wrist2" => 10, "Range" => 11,
 			"Hands" => 12, "Primary" => 13, "Secondary" => 14,
 			"Ring" => 15, "Ring2" => 16, "Chest" => 17,
@@ -429,11 +469,17 @@ public partial class MainUI
 		
 		if (source.TryGetProperty("name", out var n)) _charName = n.GetString();
 		if (source.TryGetProperty("level", out var l)) _charLevel = l.GetInt32();
-		if (source.TryGetProperty("class", out var c)) _cls = c.GetString();
-		if (source.TryGetProperty("hp", out var h)) _currentHp = h.GetInt32();
-		if (source.TryGetProperty("maxHp", out var mh)) _maxHp = mh.GetInt32();
-		if (source.TryGetProperty("mana", out var mn)) _currentMana = mn.GetInt32();
-		if (source.TryGetProperty("maxMana", out var mm)) _maxMana = mm.GetInt32();
+		if (source.TryGetProperty("class", out var c)) {
+			string rawCls = c.GetString();
+			_cls = string.IsNullOrEmpty(rawCls) ? "" : char.ToUpper(rawCls[0]) + rawCls.Substring(1);
+		}
+		if (source.TryGetProperty("raceId", out var r) || source.TryGetProperty("race", out r)) {
+			_raceId = r.ValueKind == System.Text.Json.JsonValueKind.Number ? r.GetInt32() : 1;
+		}
+		if (source.TryGetProperty("hp", out var h)) _currentHp = h.GetDouble();
+		if (source.TryGetProperty("maxHp", out var mh)) _maxHp = mh.GetDouble();
+		if (source.TryGetProperty("mana", out var mn)) _currentMana = mn.GetDouble();
+		if (source.TryGetProperty("maxMana", out var mm)) _maxMana = mm.GetDouble();
 		if (source.TryGetProperty("ac", out var a)) _ac = a.GetInt32();
 		
 		if (source.TryGetProperty("str", out var s1)) _statStr = s1.GetInt32();
@@ -447,54 +493,208 @@ public partial class MainUI
 		if (source.TryGetProperty("xpPercent", out var xp)) _xpPct = (float)xp.GetDouble();
 
 		_invStatsText.Clear();
-		_invStatsText.Text = "";
-		_invStatsText.AppendText($"[color=#d4a840]{_charName}[/color]\n");
-		_invStatsText.AppendText($"{_charLevel}  {_cls}\n\n");
-		_invStatsText.AppendText($"[color=#cc4444]HP[/color]  {_currentHp}/{_maxHp}\n");
-		_invStatsText.AppendText($"[color=#4488cc]MP[/color]  {_currentMana}/{_maxMana}\n");
-		_invStatsText.AppendText($"AC  {_ac}\n\n");
-		_invStatsText.AppendText($"[color=#88cc88]STR[/color] {_statStr}\n");
-		_invStatsText.AppendText($"[color=#88cc88]STA[/color] {_statSta}\n");
-		_invStatsText.AppendText($"[color=#88cc88]AGI[/color] {_statAgi}\n");
-		_invStatsText.AppendText($"[color=#88cc88]DEX[/color] {_statDex}\n");
-		_invStatsText.AppendText($"[color=#88cc88]WIS[/color] {_statWis}\n");
-		_invStatsText.AppendText($"[color=#88cc88]INT[/color] {_statInt}\n");
-		_invStatsText.AppendText($"[color=#88cc88]CHA[/color] {_statCha}\n\n");
-		_invStatsText.AppendText($"NEXT LVL {_xpPct:F1}%\n");
-		_invStatsText.AppendText($"WEIGHT   0\n\n");
-		int pp = _copper / 1000;
-		int gp = (_copper % 1000) / 100;
-		int sp = (_copper % 100) / 10;
-		int cp = _copper % 10;
-		_invStatsText.AppendText($"[color=#ddaa22]PP[/color]  {pp}\n");
-		_invStatsText.AppendText($"[color=#cccccc]GP[/color]  {gp}\n");
-		_invStatsText.AppendText($"[color=#aa8855]SP[/color]  {sp}\n");
-		_invStatsText.AppendText($"[color=#cc8844]CP[/color]  {cp}\n");
+		_invStatsText.AppendText($"[b]{_charName}[/b]\n");
+		_invStatsText.AppendText($"{_charLevel}   {_cls}\n");
+		_invStatsText.AppendText($"Tunare\n"); // Placeholder deity
+		
+		_invStatsText.PushTable(2);
+		_invStatsText.SetTableColumnExpand(0, true, 1);
+		_invStatsText.SetTableColumnExpand(1, true, 1);
+
+		void AddRow(string label, string value, bool bold = false) {
+			_invStatsText.PushCell();
+			if (bold) _invStatsText.PushBold();
+			_invStatsText.AppendText(label);
+			if (bold) _invStatsText.Pop();
+			_invStatsText.Pop(); // cell
+			_invStatsText.PushCell();
+			_invStatsText.PushParagraph(HorizontalAlignment.Right);
+			_invStatsText.AppendText(value);
+			_invStatsText.Pop(); // paragraph
+			_invStatsText.Pop(); // cell
+		}
+
+		AddRow("HP", $"{_currentHp}/{_maxHp}");
+		AddRow("MP", $"{_currentMana}/{_maxMana}");
+		AddRow("EN", "0/0");
+		AddRow("AC", $"{_ac}");
+		AddRow("ATK", "0");
+		AddRow("STR", $"{_statStr}");
+		AddRow("STA", $"{_statSta}");
+		AddRow("AGI", $"{_statAgi}");
+		AddRow("DEX", $"{_statDex}");
+		AddRow("WIS", $"{_statWis}");
+		AddRow("INT", $"{_statInt}");
+		AddRow("CHA", $"{_statCha}");
+		AddRow("POISON", "0");
+		AddRow("MAGIC", "0");
+		AddRow("DISEASE", "0");
+		AddRow("FIRE", "0");
+		AddRow("COLD", "0");
+		AddRow("CORRUPT", "0");
+		AddRow("WEIGHT", "0/100");
+
+		_invStatsText.Pop(); // table
+		
+		UpdateDetailedStats(source);
+		UpdateCurrencyDisplay();
+	}
+
+	private void UpdateDetailedStats(JsonElement source)
+	{
+		if (_detailedStatsText == null) return;
+		_detailedStatsText.Clear();
+		if (_detailedStatsRight != null) _detailedStatsRight.Clear();
+
+		// Helper: add a stat row to a given RichTextLabel
+		void AddRow(RichTextLabel rt, string label, string value) {
+			rt.PushCell();
+			rt.AppendText(label);
+			rt.Pop(); // cell
+			rt.PushCell();
+			rt.PushParagraph(HorizontalAlignment.Right);
+			rt.AppendText(value);
+			rt.Pop(); // paragraph
+			rt.Pop(); // cell
+		}
+
+		// Helper: add a section header
+		void AddHeader(RichTextLabel rt, string title) {
+			rt.PushCell();
+			rt.PushBold();
+			rt.PushColor(new Color(0.7f, 0.7f, 0.7f));
+			rt.AppendText(title);
+			rt.Pop(); // color
+			rt.Pop(); // bold
+			rt.Pop(); // cell
+			rt.PushCell();
+			rt.AppendText("");
+			rt.Pop(); // cell
+		}
+
+		// Helper: start a 2-column table
+		void StartTable(RichTextLabel rt) {
+			rt.PushTable(2);
+			rt.SetTableColumnExpand(0, true, 1);
+			rt.SetTableColumnExpand(1, true, 1);
+		}
+
+		// ═══════ LEFT COLUMN ═══════
+		var L = _detailedStatsText;
+		StartTable(L);
+
+		AddRow(L, "HP", $"{_currentHp}/{_maxHp}");
+		AddRow(L, "Mana", $"{_currentMana}/{_maxMana}");
+		AddRow(L, "Endurance", "0/0");
+		AddRow(L, "Armor Class", $"{_ac}");
+		AddRow(L, "Attack", "0");
+		AddRow(L, "Haste", "0%");
+		AddRow(L, "Velocity", "0");
+
+		AddHeader(L, "Regen");
+		AddRow(L, "Combat HP Regen", "0");
+		AddRow(L, "Combat Mana Regen", "0");
+		AddRow(L, "Combat End Regen", "0");
+
+		AddHeader(L, "Stats");
+		AddRow(L, "Strength", $"{_statStr}");
+		AddRow(L, "Stamina", $"{_statSta}");
+		AddRow(L, "Intelligence", $"{_statInt}");
+		AddRow(L, "Wisdom", $"{_statWis}");
+		AddRow(L, "Agility", $"{_statAgi}");
+		AddRow(L, "Dexterity", $"{_statDex}");
+		AddRow(L, "Charisma", $"{_statCha}");
+
+		AddHeader(L, "Resists");
+		AddRow(L, "Magic", "0/550");
+		AddRow(L, "Fire", "0/550");
+		AddRow(L, "Cold", "0/550");
+		AddRow(L, "Disease", "0/500");
+		AddRow(L, "Poison", "0/500");
+		AddRow(L, "Corruption", "0/500");
+
+		L.Pop(); // table
+
+		// ═══════ RIGHT COLUMN ═══════
+		var R = _detailedStatsRight ?? _detailedStatsText; // fallback
+		if (R != _detailedStatsText) {
+			StartTable(R);
+
+			AddHeader(R, "Heroic Mods");
+			AddRow(R, "Accuracy", "0/150");
+			AddRow(R, "Avoidance", "0/100");
+			AddRow(R, "Combat Effects", "0/100");
+			AddRow(R, "Damage Shielding", "0/35");
+			AddRow(R, "Dmg Shield Mitig.", "0/25");
+			AddRow(R, "DoT Shielding", "0/35");
+			AddRow(R, "Melee Shielding", "0/50");
+			AddRow(R, "Spell Shielding", "0/35");
+			AddRow(R, "Strike Through", "0/35");
+			AddRow(R, "Stun Resist", "0/35");
+
+			AddHeader(R, "Spell Mods");
+			AddRow(R, "Heal Amount", "0");
+			AddRow(R, "Spell Damage", "0");
+			AddRow(R, "Clairvoyance", "0");
+			AddRow(R, "Luck", "0");
+
+			AddHeader(R, "Skill Damage Mod");
+			AddRow(R, "Bash", "0/100");
+			AddRow(R, "Backstab", "0/125");
+			AddRow(R, "Dragon Punch", "0/100");
+			AddRow(R, "Eagle Strike", "0/100");
+			AddRow(R, "Flying Kick", "0/100");
+			AddRow(R, "Frenzy", "0/125");
+			AddRow(R, "Kick", "0/100");
+			AddRow(R, "Round Kick", "0/100");
+			AddRow(R, "Tiger Claw", "0/100");
+
+			AddHeader(R, "Vision");
+			AddRow(R, "Ultravision", "No");
+			AddRow(R, "Infravision", "No");
+			AddRow(R, "See Invisible", "No");
+
+			R.Pop(); // table
+		}
+	}
+
+	private void UpdateCurrencyDisplay()
+	{
+		int value = _copper;
+		int pp = value / 1000;
+		int gp = (value % 1000) / 100;
+		int sp = (value % 100) / 10;
+		int cp = value % 10;
+		
+		if (_currencyLabels[0] != null) _currencyLabels[0].Text = pp.ToString();
+		if (_currencyLabels[1] != null) _currencyLabels[1].Text = gp.ToString();
+		if (_currencyLabels[2] != null) _currencyLabels[2].Text = sp.ToString();
+		if (_currencyLabels[3] != null) _currencyLabels[3].Text = cp.ToString();
 	}
 
 	private string MapSlotToName(int slot) {
 		return slot switch {
+			1 => "Ear",      // Ear1
 			2 => "Head",
 			3 => "Face",
-			4 => "Ear",      // Ear1
+			4 => "Ear2",     // Ear2
 			5 => "Neck",
 			6 => "Shoulders",
 			7 => "Arms",
 			8 => "Back",
 			9 => "Wrist",    // Wrist1
 			10 => "Wrist2",  // Wrist2
-			11 => "Ear",     // Ear2 (shares slot)
+			11 => "Range",
 			12 => "Hands",
 			13 => "Primary",
 			14 => "Secondary",
-			15 => "Ring",     // Ring1
-			16 => "Ring2",    // Ring2
+			15 => "Ring",    // Ring1
+			16 => "Ring2",   // Ring2
 			17 => "Chest",
 			18 => "Legs",
 			19 => "Feet",
 			20 => "Waist",
-			21 => "Range",
-			22 => "Ammo",
+			21 => "Ammo",
 			_ => null,
 		};
 	}
@@ -573,95 +773,80 @@ public partial class MainUI
 				_hotbarManager.Init(_client, charName);
 			}
 		}
+		
+		if (source.TryGetProperty("class", out var classProp))
+		{
+			string className = classProp.GetString();
+			if (!string.IsNullOrEmpty(className)) {
+				var path = $"res://Assets/UI/ClassicUI/{className}01.tga";
+				if (ResourceLoader.Exists(path)) {
+					var tex = GD.Load<Texture2D>(path);
+					var classIcon = _inventoryWindow.GetNodeOrNull<ClassIconAnim>("MainVBox/TabContainer/Inventory/PaperdollColumn/PaperdollPanel/ClassIconAnim");
+					if (classIcon != null) {
+						classIcon.SetTextureSheet(tex);
+					}
+				}
+			}
+		}
+		
 		UpdateInventorySkills(source);
 	}
 
 	private void UpdateInventorySkills(JsonElement source)
 	{
-		if (_invSkillsText == null) return;
+		if (_skillsListContainer == null) return;
 		if (!source.TryGetProperty("skills", out var skillsProp) || skillsProp.ValueKind != JsonValueKind.Object) return;
 
-		// Vision skill keys that should appear under Racial Traits instead of Skills
-		var visionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+		// Clear existing skills
+		foreach (Node child in _skillsListContainer.GetChildren())
 		{
-			"normal_vision", "weak_normal_vision", "infravision", "ultravision", "cat_eye", "serpent_sight"
-		};
-
-		var sb = new System.Text.StringBuilder();
-		sb.AppendLine("[color=#d4a840]-- Racial Traits --[/color]\n");
-
-		// List each vision skill the character possesses
-		foreach (var skill in skillsProp.EnumerateObject())
-		{
-			if (visionKeys.Contains(skill.Name))
-			{
-				string displayName = FormatSkillName(skill.Name);
-				sb.AppendLine($"[color=#88cc88]{displayName}[/color]");
-			}
+			child.QueueFree();
 		}
 
-		sb.AppendLine();
-		sb.AppendLine("[color=#d4a840]-- Skills --[/color]\n");
-
-		// List non-vision skills
+		// Sort skills alphabetically for display
+		var sortedSkills = new List<(string Name, int Value)>();
 		foreach (var skill in skillsProp.EnumerateObject())
 		{
-			if (visionKeys.Contains(skill.Name)) continue;
-			string skillName = FormatSkillName(skill.Name);
-			int val = skill.Value.GetInt32();
-			sb.AppendLine($"[color=#88cc88]{skillName}[/color]  {val}");
+			sortedSkills.Add((skill.Name, skill.Value.GetInt32()));
 		}
-		_invSkillsText.Text = sb.ToString();
+		sortedSkills.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+
+		foreach (var skill in sortedSkills)
+		{
+			var row = new HBoxContainer();
+			row.AddThemeConstantOverride("separation", 0);
+
+			var pad = new Control { CustomMinimumSize = new Vector2(6, 0) };
+			row.AddChild(pad);
+
+			var nameLbl = new Label();
+			nameLbl.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+			nameLbl.Text = FormatSkillName(skill.Name);
+			nameLbl.AddThemeFontSizeOverride("font_size", 11);
+			nameLbl.AddThemeColorOverride("font_color", new Color(0.85f, 0.85f, 0.85f));
+			row.AddChild(nameLbl);
+
+			var rankLbl = new Label();
+			rankLbl.CustomMinimumSize = new Vector2(80, 0);
+			rankLbl.HorizontalAlignment = HorizontalAlignment.Center;
+			rankLbl.Text = "Average"; // Placeholder for rank calculation
+			rankLbl.AddThemeFontSizeOverride("font_size", 11);
+			rankLbl.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
+			row.AddChild(rankLbl);
+
+			var valLbl = new Label();
+			valLbl.CustomMinimumSize = new Vector2(60, 0);
+			valLbl.HorizontalAlignment = HorizontalAlignment.Center;
+			valLbl.Text = skill.Value.ToString() + "/255"; // Placeholder max
+			valLbl.AddThemeFontSizeOverride("font_size", 11);
+			valLbl.AddThemeColorOverride("font_color", new Color(0.85f, 0.85f, 0.85f));
+			row.AddChild(valLbl);
+
+			_skillsListContainer.AddChild(row);
+		}
 	}
 
-	private void BuildSkillsTab()
-	{
-		var titleHBox = _inventoryWindow.GetNode<HBoxContainer>("MainVBox/TitleBar/HBox");
-		var titleLabel = titleHBox.GetNode<Label>("Title");
 
-		var skillsBtn = new Button { Text = "Skills", ToggleMode = true };
-		skillsBtn.CustomMinimumSize = new Vector2(55, 0);
-		skillsBtn.AddThemeFontSizeOverride("font_size", 11);
-		titleHBox.AddChild(skillsBtn);
-		titleHBox.MoveChild(skillsBtn, titleLabel.GetIndex() + 1);
-
-		var mainVBox = _inventoryWindow.GetNode<VBoxContainer>("MainVBox");
-		var contentHBox = mainVBox.GetNode<HBoxContainer>("ContentHBox");
-		var slotsSection = mainVBox.GetNode<VBoxContainer>("SlotsSection");
-
-		var skillsPanel = new PanelContainer();
-		skillsPanel.Name = "SkillsPanel";
-		skillsPanel.SizeFlagsVertical = SizeFlags.ExpandFill;
-		skillsPanel.Visible = false;
-		var sbx = new StyleBoxFlat();
-		sbx.BgColor = new Color(0.04f, 0.04f, 0.04f, 0.9f);
-		sbx.BorderWidthLeft = 1; sbx.BorderWidthTop = 1; sbx.BorderWidthRight = 1; sbx.BorderWidthBottom = 1;
-		sbx.BorderColor = new Color(0.3f, 0.25f, 0.15f, 0.7f);
-		skillsPanel.AddThemeStyleboxOverride("panel", sbx);
-
-		var skillsScroll = new ScrollContainer();
-		skillsScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-		skillsPanel.AddChild(skillsScroll);
-
-		_invSkillsText = new RichTextLabel();
-		_invSkillsText.BbcodeEnabled = true;
-		_invSkillsText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-		_invSkillsText.SizeFlagsVertical = SizeFlags.ExpandFill;
-		_invSkillsText.AddThemeColorOverride("default_color", new Color(0.8f, 0.8f, 0.7f));
-		_invSkillsText.AddThemeFontSizeOverride("normal_font_size", 12);
-		_invSkillsText.FitContent = true;
-		skillsScroll.AddChild(_invSkillsText);
-
-		mainVBox.AddChild(skillsPanel);
-		mainVBox.MoveChild(skillsPanel, contentHBox.GetIndex() + 1);
-
-		skillsBtn.Toggled += (toggled) => {
-			contentHBox.Visible = !toggled;
-			slotsSection.Visible = !toggled;
-			skillsPanel.Visible = toggled;
-			titleLabel.Text = toggled ? "Skills" : "Inventory";
-		};
-	}
 
 	private void SetupInventoryDrag()
 	{

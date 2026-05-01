@@ -34,16 +34,28 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (GetNodeOrNull<CollisionShape3D>("Collision") == null) {
             var col = new CollisionShape3D {
                 Name = "Collision",
-                Shape = new CapsuleShape3D { Radius = 1.0f, Height = 6.2f },
-                Position = new Vector3(0, 3.1f, 0) // Centered at 3.1 so bottom is at 0
+                Shape = new CapsuleShape3D { Radius = 1.0f, Height = 4.7f },
+                Position = new Vector3(0, 3.85f, 0) // Shifted up to make room for stair ray
             };
             AddChild(col);
         }
 
+        // Separation ray acts as a "spring leg" to glide up stairs seamlessly
+        if (GetNodeOrNull<CollisionShape3D>("StairRay") == null) {
+            var ray = new CollisionShape3D {
+                Name = "StairRay",
+                Shape = new SeparationRayShape3D { Length = 1.5f },
+                Position = new Vector3(0, 1.5f, 0),
+                RotationDegrees = new Vector3(90, 0, 0) // Pointing straight down
+            };
+            AddChild(ray);
+        }
+
         // Configure CharacterBody3D for stairs and curbs
         FloorSnapLength = 0.5f; // Helps stick to stairs going down
-        FloorMaxAngle = Mathf.DegToRad(60f); // Allow climbing steeper inclines/curbs
+        FloorMaxAngle = Mathf.DegToRad(75f); // Allow climbing very steep inclines and stairs
         FloorBlockOnWall = false; // Don't get stuck on small vertical lips
+        SafeMargin = 0.05f; // Crucial for preventing sticking on geometry seams and stair lips
 
         // Separate Area3D for mouse click targeting — covers the visible model
         if (GetNodeOrNull<Area3D>("ClickArea") == null) {
@@ -486,7 +498,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         // but their active animations lift them 15+ units into the sky.
         if (_characterModel != null && _nameLabel != null)
         {
-            var skeleton = FindSkeleton(_characterModel);
+            var skeleton = _cachedSkeleton;
             if (skeleton != null && skeleton.GetBoneCount() > 0)
             {
                 float maxY = -1000f;
@@ -718,6 +730,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     }
 
     private Node3D _characterModel;
+    private Skeleton3D _cachedSkeleton;
 
     public float EyeHeight { get; private set; } = 5.8f;
     public float OverheadHeight { get; private set; } = 7.0f;
@@ -736,7 +749,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         bool isPlayable = (race >= 1 && race <= 12) || race == 128 || race == 130 || race == 330;
         
         float baseMultiplier = 1.5f;
-        if (isPlayable) baseMultiplier = 1.65f;
+        if (isPlayable) baseMultiplier = 1.5f;
         if (race == 34) baseMultiplier = 1.0f; // Bats are naturally large in Lantern exports
         
         float raceScale = GetRaceScale(race) * baseMultiplier;
@@ -885,11 +898,17 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         // Scale physics collision capsule to match race scale (always anchored to ground for gravity)
                         var col = GetNodeOrNull<CollisionShape3D>("Collision");
                         if (col != null) {
-                            col.Position = new Vector3(0, 3.1f * raceScale, 0);
+                            col.Position = new Vector3(0, 3.85f * raceScale, 0);
                             col.Shape = new CapsuleShape3D {
                                 Radius = 1.0f * raceScale,
-                                Height = 6.2f * raceScale
+                                Height = 4.7f * raceScale
                             };
+                        }
+
+                        var stairRay = GetNodeOrNull<CollisionShape3D>("StairRay");
+                        if (stairRay != null) {
+                            stairRay.Position = new Vector3(0, 1.5f * raceScale, 0);
+                            stairRay.Shape = new SeparationRayShape3D { Length = 1.5f * raceScale };
                         }
                         
                         // Position click targeting area at the VISUAL center of the model
@@ -918,6 +937,9 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         // Fix materials: EQ textures are painted sprites, not metallic.
                         // Remove specular/metallic to prevent shiny sun/moon reflections.
                         FixCharacterMaterials(_characterModel);
+
+                        // Cache the Skeleton3D to prevent expensive recursive lookups in _PhysicsProcess
+                        _cachedSkeleton = FindSkeleton(_characterModel);
 
                         // Store AnimationPlayer reference and start idle
                         _animPlayer = FindAnimationPlayer(_characterModel);
@@ -1066,7 +1088,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_characterModel == null) return;
 
         // Remove existing weapon bone attachments (they are named "attach_r_point", "attach_l_point", "attach_shield_point")
-        var skeleton = FindSkeleton(_characterModel);
+        var skeleton = _cachedSkeleton;
         if (skeleton != null)
         {
             var toRemove = new System.Collections.Generic.List<Node>();
@@ -1077,7 +1099,6 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             }
             foreach (var node in toRemove)
             {
-                skeleton.RemoveChild(node);
                 node.QueueFree();
             }
         }
@@ -1127,7 +1148,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     {
         // In Godot, bones are NOT child nodes — they live in Skeleton3D.
         // We must use BoneAttachment3D to parent objects to bones.
-        var skeleton = FindSkeleton(modelRoot);
+        var skeleton = _cachedSkeleton ?? FindSkeleton(modelRoot);
         if (skeleton == null)
         {
             GD.Print($"[MODEL] No Skeleton3D found for {idfile}");

@@ -37,6 +37,8 @@ public partial class Spellbook : Panel
 		public string Effect;
 		public int Level;
 		public string Description;
+		public int MemIcon;
+		public int Icon;
 	}
 
 	private Dictionary<int, BookSpell> _bookSpells = new Dictionary<int, BookSpell>();
@@ -44,6 +46,24 @@ public partial class Spellbook : Panel
 
 	// ── Swap State ──────────────────────────────────────────────────
 	private int _swapFromSlot = -1; // bookSlot of the spell being swapped
+
+	// Right-click inspect
+	private double _rightClickTimer = -1;
+	private int _rightClickSlot = -1;
+
+	public override void _Process(double delta)
+	{
+		if (_rightClickTimer >= 0) {
+			_rightClickTimer += delta;
+			if (_rightClickTimer >= 1.0 && _rightClickSlot >= 0) {
+				if (_bookSpells.TryGetValue(_rightClickSlot, out var spell)) {
+					GameClient.Instance.SendRaw($"{{\"type\": \"SPELL_INSPECT\", \"spellId\": {spell.SpellId}}}");
+				}
+				_rightClickTimer = -1;
+				_rightClickSlot = -1;
+			}
+		}
+	}
 
 	// ── UI References ───────────────────────────────────────────────
 	private Panel _bookPanel;
@@ -247,7 +267,10 @@ public partial class Spellbook : Panel
 			btn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 			btn.SizeFlagsVertical = SizeFlags.ExpandFill;
 			btn.ClipText = true;
-			btn.AddThemeFontSizeOverride("font_size", 10);
+			btn.AddThemeFontSizeOverride("font_size", 9);
+			btn.IconAlignment = HorizontalAlignment.Center;
+			btn.VerticalIconAlignment = VerticalAlignment.Top;
+			btn.ExpandIcon = true;
 			btn.AddThemeStyleboxOverride("normal", slotStyle);
 			btn.AddThemeStyleboxOverride("hover", hoverStyle);
 			btn.AddThemeStyleboxOverride("pressed", hoverStyle);
@@ -255,12 +278,24 @@ public partial class Spellbook : Panel
 			// Wire click handler
 			btn.GuiInput += (ev) =>
 			{
-				if (ev is not InputEventMouseButton mb || !mb.Pressed) return;
-				int bookSlot = GetBookSlotForPageSlot(slotIdx, isLeft);
-				if (mb.ButtonIndex == MouseButton.Left)
-					OnSlotLeftClicked(bookSlot);
-				else if (mb.ButtonIndex == MouseButton.Right)
-					OnSlotRightClicked(bookSlot);
+				if (ev is InputEventMouseButton mb) {
+					int bookSlot = GetBookSlotForPageSlot(slotIdx, isLeft);
+					if (mb.ButtonIndex == MouseButton.Left && mb.Pressed) {
+						OnSlotLeftClicked(bookSlot);
+					}
+					else if (mb.ButtonIndex == MouseButton.Right) {
+						if (mb.Pressed) {
+							_rightClickTimer = 0;
+							_rightClickSlot = bookSlot;
+						} else {
+							if (_rightClickTimer >= 0 && _rightClickTimer < 1.0) {
+								OnSlotRightClicked(bookSlot);
+							}
+							_rightClickTimer = -1;
+							_rightClickSlot = -1;
+						}
+					}
+				}
 			};
 
 			grid.AddChild(btn);
@@ -296,6 +331,8 @@ public partial class Spellbook : Panel
 					Effect = entry.TryGetProperty("effect", out var ef) ? ef.GetString() : "unknown",
 					Level = entry.TryGetProperty("level", out var lv) ? lv.GetInt32() : 1,
 					Description = entry.TryGetProperty("description", out var desc) ? desc.GetString() : "",
+					MemIcon = entry.TryGetProperty("memIcon", out var mi) ? mi.GetInt32() : 0,
+					Icon = entry.TryGetProperty("icon", out var ic) ? ic.GetInt32() : 0,
 				};
 				_bookSpells[bookSlot] = spell;
 			}
@@ -366,10 +403,18 @@ public partial class Spellbook : Panel
 	{
 		if (_bookSpells.TryGetValue(bookSlot, out var spell))
 		{
-			btn.Text = $"{spell.Name}\n[{spell.ManaCost}m] Lv{spell.Level}";
+			btn.Text = spell.Name;
 			string descLine = !string.IsNullOrEmpty(spell.Description) ? $"\n{spell.Description}" : "";
 			btn.TooltipText = $"{spell.Name}\nMana: {spell.ManaCost} | Cast: {spell.CastTime:F1}s\nLevel: {spell.Level} | Type: {spell.Effect}{descLine}";
 			btn.Disabled = false;
+
+			// Load spell gem icon
+			var iconMgr = IconManager.Instance;
+			btn.Icon = null;
+			if (iconMgr != null && spell.MemIcon > 0) {
+				var gemTex = iconMgr.GetSpellGem(spell.MemIcon);
+				if (gemTex != null) btn.Icon = gemTex;
+			}
 
 			// Highlight if this is the swap source
 			if (_swapFromSlot == bookSlot)
@@ -395,6 +440,7 @@ public partial class Spellbook : Panel
 		else
 		{
 			btn.Text = "";
+			btn.Icon = null;
 			btn.TooltipText = $"Empty (Slot {bookSlot + 1})";
 			btn.Disabled = false; // Needs to be clickable for swap target
 

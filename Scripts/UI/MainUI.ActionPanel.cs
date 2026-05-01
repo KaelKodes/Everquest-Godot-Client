@@ -291,26 +291,40 @@ public partial class MainUI
 						}
 					}
 				}
-				else if (mb.ButtonIndex == MouseButton.Middle)
+				else if (mb.ButtonIndex == MouseButton.Right)
 				{
-					if (_hotbarManager != null)
+					if (mb.CtrlPressed)
 					{
-						var sm = _hotbarManager.GetSocialManager();
-						if (sm != null && socialIdx < sm.Socials.Length && !sm.Socials[socialIdx].IsEmpty)
+						if (_hotbarManager != null)
 						{
-							var social = sm.Socials[socialIdx];
-							_hotbarManager?.StartSocialDrag(socialIdx, social.Name, social.Color);
+							var sm = _hotbarManager.GetSocialManager();
+							if (sm != null && socialIdx < sm.Socials.Length && !sm.Socials[socialIdx].IsEmpty)
+							{
+								var social = sm.Socials[socialIdx];
+								_hotbarManager?.StartSocialDrag(socialIdx, social.Name, social.Color);
+							}
 						}
+						GetViewport().SetInputAsHandled();
+						return;
 					}
+					// Social right click not implemented here yet
 				}
-				// Social right click not implemented here yet
 				break;
 			}
 			case 1: // Abilities
 			{
 				if (btnIdx == 0)
 				{
-					if (mb.ButtonIndex == MouseButton.Left)
+					if (mb.ButtonIndex == MouseButton.Right)
+					{
+						if (mb.CtrlPressed)
+						{
+							_hotbarManager?.StartAbilityDrag("Attack");
+							GetViewport().SetInputAsHandled();
+							return;
+						}
+					}
+					else if (mb.ButtonIndex == MouseButton.Left)
 					{
 						OnAutoFightPressed();
 						SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
@@ -321,16 +335,18 @@ public partial class MainUI
 					string assigned = _assignedAbilities[btnIdx];
 					if (mb.ButtonIndex == MouseButton.Right)
 					{
+						if (mb.CtrlPressed && !string.IsNullOrEmpty(assigned))
+						{
+							_hotbarManager?.StartAbilityDrag(assigned);
+							GetViewport().SetInputAsHandled();
+							return;
+						}
 						ShowActionContextMenu(btnIdx, _assignedAbilities, "ability", btn);
 					}
 					else if (mb.ButtonIndex == MouseButton.Left && !string.IsNullOrEmpty(assigned))
 					{
 						GD.Print($"[UI] Ability pressed: {assigned}");
 						_client.SendRaw($"{{\"type\":\"ABILITY\", \"ability\":\"{assigned}\"}}");
-					}
-					else if (mb.ButtonIndex == MouseButton.Middle && !string.IsNullOrEmpty(assigned))
-					{
-						_hotbarManager?.StartAbilityDrag(assigned);
 					}
 				}
 				break;
@@ -340,6 +356,12 @@ public partial class MainUI
 				string assigned = _assignedSkills[btnIdx];
 				if (mb.ButtonIndex == MouseButton.Right)
 				{
+					if (mb.CtrlPressed && !string.IsNullOrEmpty(assigned))
+					{
+						_hotbarManager?.StartAbilityDrag(assigned); // Abilities and skills use the same drag payload
+						GetViewport().SetInputAsHandled();
+						return;
+					}
 					ShowActionContextMenu(btnIdx, _assignedSkills, "skill", btn);
 				}
 				else if (mb.ButtonIndex == MouseButton.Left && !string.IsNullOrEmpty(assigned))
@@ -357,10 +379,6 @@ public partial class MainUI
 							_client.SendRaw($"{{\"type\":\"ABILITY\", \"ability\":\"{skill}\"}}");
 							break;
 					}
-				}
-				else if (mb.ButtonIndex == MouseButton.Middle && !string.IsNullOrEmpty(assigned))
-				{
-					_hotbarManager?.StartAbilityDrag(assigned); // Abilities and skills use the same drag payload
 				}
 				break;
 			}

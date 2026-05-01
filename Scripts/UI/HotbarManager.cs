@@ -24,6 +24,9 @@ public partial class HotbarManager : Control
 	// Item equip callback (set by MainUI)
 	public Action<int> EquipItemById;
 
+	// Auto attack toggle callback
+	public Action ToggleAutoAttack;
+
 	// ── State ───────────────────────────────────────────────────────
 
 	private List<Hotbar> _hotbars = new();
@@ -101,6 +104,7 @@ public partial class HotbarManager : Control
 
 		// Wire signals
 		bar.HotbuttonActivated += OnHotbuttonActivated;
+		bar.HotbuttonInspectRequested += OnHotbuttonInspectRequested;
 		bar.NewHotbarRequested += () => CreateHotbar();
 		bar.HotbarClosed += OnHotbarClosed;
 
@@ -141,6 +145,22 @@ public partial class HotbarManager : Control
 		ExecuteHotbutton(data);
 	}
 
+	private void OnHotbuttonInspectRequested(int barIndex, int page, int slot)
+	{
+		if (barIndex < 0 || barIndex >= _hotbars.Count) return;
+		var bar = _hotbars[barIndex];
+		var data = bar.SlotData[page, slot];
+		if (data.Type == Hotbar.HotbuttonType.Spell)
+		{
+			// Try to get spell ID
+			int spellId = GetSpellIdForSlot?.Invoke(data.SpellSlotIndex) ?? -1;
+			if (spellId > 0)
+			{
+				GameClient.Instance.SendRaw($"{{\"type\": \"SPELL_INSPECT\", \"spellId\": {spellId}}}");
+			}
+		}
+	}
+
 	private void ExecuteHotbutton(Hotbar.HotbuttonData data)
 	{
 		if (data == null || data.Type == Hotbar.HotbuttonType.Empty) return;
@@ -158,7 +178,14 @@ public partial class HotbarManager : Control
 			case Hotbar.HotbuttonType.Ability:
 			{
 				string ability = data.AbilityName.ToLower();
-				_client.SendRaw($"{{\"type\": \"ABILITY\", \"ability\": \"{ability}\"}}");
+				if (ability == "attack")
+				{
+					ToggleAutoAttack?.Invoke();
+				}
+				else
+				{
+					_client.SendRaw($"{{\"type\": \"ABILITY\", \"ability\": \"{ability}\"}}");
+				}
 				break;
 			}
 			case Hotbar.HotbuttonType.Item:
@@ -320,13 +347,7 @@ public partial class HotbarManager : Control
 			}
 		}
 
-		// Ctrl+A: Toggle Action Panel (ActionBarWindow)
-		if (k.CtrlPressed && k.Keycode == Key.A)
-		{
-			var mainUI = GetNodeOrNull<MainUI>("/root/MainUI");
-			if (mainUI != null) mainUI.ToggleActionBarWindow();
-			return;
-		}
+
 
 		// Alt+H: Toggle hotbar 1 visibility
 		if (k.AltPressed && k.Keycode == Key.H)
@@ -405,7 +426,7 @@ public partial class HotbarManager : Control
 
 	private string GetSavePath()
 	{
-		return $"user://hotbars_{_characterName}.json";
+		return UILayoutManager.GetCurrentLayoutFileName(_characterName);
 	}
 
 	public void SaveState()
@@ -428,8 +449,8 @@ public partial class HotbarManager : Control
 				barDict["showSlotNumbers"] = bar.ShowSlotNumbers;
 				barDict["fadeWhenInactive"] = bar.FadeWhenInactive;
 				barDict["alpha"] = bar.BarAlpha;
-				barDict["bgColor"] = bar.BgColor.ToHtml();
-				barDict["borderColor"] = bar.BorderColor.ToHtml();
+				if (bar.BgColor != default) barDict["bgColor"] = bar.BgColor.ToHtml();
+				if (bar.BorderColor != default) barDict["borderColor"] = bar.BorderColor.ToHtml();
 
 				var layoutInfo = bar.GetLayout();
 				barDict["layoutIndex"] = layoutInfo.layoutIndex;
@@ -460,17 +481,13 @@ public partial class HotbarManager : Control
 				barsArray.Add(barDict);
 			}
 
-			saveData["hotbars"] = barsArray;
-			saveData["socials"] = _socialManager.ExportSocials();
+			// Add to UILayoutManager
+			UILayoutManager.SetSection("Hotbars", new Godot.Collections.Dictionary { ["bars"] = barsArray });
+			UILayoutManager.SetSection("Socials", new Godot.Collections.Dictionary { ["data"] = _socialManager.ExportSocials() });
 
-			// Write to file
-			string jsonStr = Json.Stringify(saveData, "\t");
-			using var file = FileAccess.Open(GetSavePath(), FileAccess.ModeFlags.Write);
-			if (file != null)
-			{
-				file.StoreString(jsonStr);
-				GD.Print($"[HOTBAR] Saved state to {GetSavePath()}");
-			}
+			// Actually save the file
+			UILayoutManager.SaveLayout(_characterName);
+			GD.Print($"[HOTBAR] Saved state to {GetSavePath()}");
 		}
 		catch (Exception ex)
 		{
@@ -482,33 +499,59 @@ public partial class HotbarManager : Control
 	{
 		try
 		{
-			string path = GetSavePath();
-			if (!FileAccess.FileExists(path)) return false;
+			// Load from UILayoutManager first
+			var hotbarsSection = UILayoutManager.GetSection("Hotbars");
+			var socialsSection = UILayoutManager.GetSection("Socials");
 
-			using var file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
-			if (file == null) return false;
-
-			string jsonStr = file.GetAsText();
-			var parsed = Json.ParseString(jsonStr);
-			if (parsed.VariantType != Variant.Type.Dictionary) return false;
-
-			var saveData = parsed.AsGodotDictionary();
-
-			// Load socials
-			if (saveData.ContainsKey("socials"))
+			if (hotbarsSection.Count == 0 && socialsSection.Count == 0)
 			{
-				var socialsData = saveData["socials"].AsGodotArray<Godot.Collections.Dictionary>();
-				_socialManager.ImportSocials(socialsData);
+				// Legacy fallback
+				string path = $"user://hotbars_{_characterName}.json";
+				if (!FileAccess.FileExists(path)) return false;
+
+				using var file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
+				if (file == null) return false;
+
+				string jsonStr = file.GetAsText();
+				var parsed = Json.ParseString(jsonStr);
+				if (parsed.VariantType != Variant.Type.Dictionary) return false;
+
+				var saveData = parsed.AsGodotDictionary();
+				if (saveData.ContainsKey("socials"))
+					_socialManager.ImportSocials(saveData["socials"].AsGodotArray<Godot.Collections.Dictionary>());
+
+				if (saveData.ContainsKey("hotbars"))
+					LoadHotbarsFromArray(saveData["hotbars"].AsGodotArray<Godot.Collections.Dictionary>());
+
+				return _hotbars.Count > 0;
 			}
 
-			// Load hotbars
-			if (saveData.ContainsKey("hotbars"))
+			if (socialsSection.ContainsKey("data"))
 			{
-				var barsData = saveData["hotbars"].AsGodotArray<Godot.Collections.Dictionary>();
-				foreach (var barDict in barsData)
-				{
-					var bar = CreateHotbar();
-					if (bar == null) break;
+				_socialManager.ImportSocials(socialsSection["data"].AsGodotArray<Godot.Collections.Dictionary>());
+			}
+
+			if (hotbarsSection.ContainsKey("bars"))
+			{
+				LoadHotbarsFromArray(hotbarsSection["bars"].AsGodotArray<Godot.Collections.Dictionary>());
+				return _hotbars.Count > 0;
+			}
+
+			return false;
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[HOTBAR] Load error: {ex.Message}");
+			return false;
+		}
+	}
+
+	private void LoadHotbarsFromArray(Godot.Collections.Array<Godot.Collections.Dictionary> barsData)
+	{
+		foreach (var barDict in barsData)
+		{
+			var bar = CreateHotbar();
+			if (bar == null) break;
 
 					bar.Position = new Vector2(
 						barDict.ContainsKey("posX") ? barDict["posX"].AsSingle() : 400,
@@ -555,16 +598,21 @@ public partial class HotbarManager : Control
 					bar.RefreshSlots();
 				}
 
-				GD.Print($"[HOTBAR] Loaded {_hotbars.Count} hotbar(s) from {path}");
-				return _hotbars.Count > 0;
-			}
+		GD.Print($"[HOTBAR] Loaded {_hotbars.Count} hotbar(s) from UILayoutManager.");
+	}
 
-			return false;
-		}
-		catch (Exception ex)
+	public void ReloadHotbars()
+	{
+		// Called by MainUI when copying a layout
+		foreach (var h in _hotbars)
 		{
-			GD.PrintErr($"[HOTBAR] Load error: {ex.Message}");
-			return false;
+			h.QueueFree();
+		}
+		_hotbars.Clear();
+		
+		if (!LoadState())
+		{
+			CreateHotbar();
 		}
 	}
 

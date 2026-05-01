@@ -114,6 +114,38 @@ public partial class EQAssetCache : RefCounted
         return null;
     }
 
+    // ── Texture Cache ───────────────────────────────────────────
+
+    private Dictionary<string, Texture2D> _textureCache = new Dictionary<string, Texture2D>();
+
+    /// <summary>
+    /// Loads an image file from disk as a Texture2D, caching the result.
+    /// Used primarily for loading animated material frames.
+    /// </summary>
+    public Texture2D LoadTexture(string path)
+    {
+        if (_textureCache.TryGetValue(path, out var cached))
+            return cached;
+
+        if (!System.IO.File.Exists(path))
+            return null;
+
+        try
+        {
+            var image = Godot.Image.LoadFromFile(path);
+            if (image == null) return null;
+
+            var texture = Godot.ImageTexture.CreateFromImage(image);
+            _textureCache[path] = texture;
+            return texture;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[AssetCache] Failed to load texture '{path}': {ex.Message}");
+            return null;
+        }
+    }
+
     // ── Cache Management ────────────────────────────────────────
 
     /// <summary>Clear the entire session cache. Called on game exit.</summary>
@@ -134,6 +166,7 @@ public partial class EQAssetCache : RefCounted
 
         _extractedZones.Clear();
         _extractedCharacters.Clear();
+        _textureCache.Clear();
         EnsureCacheDir();
     }
 

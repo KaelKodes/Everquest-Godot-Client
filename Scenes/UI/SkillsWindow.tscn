@@ -1,0 +1,133 @@
+[gd_scene load_steps=4 format=3 uid="uid://c6j2k4l7m8n9p"]
+
+[ext_resource type="Script" uid="uid://cody276iur5gx" path="res://Scripts/UI/DraggablePanel.cs" id="1_draggable"]
+
+[sub_resource type="StyleBoxFlat" id="sb_skills_window"]
+bg_color = Color(0.0705882, 0.0666667, 0.054902, 0.968627)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.54902, 0.45098, 0.2, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0, 0, 0, 0.392157)
+shadow_size = 8
+
+[sub_resource type="StyleBoxFlat" id="sb_skills_title"]
+bg_color = Color(0.121569, 0.101961, 0.0745098, 1)
+border_width_bottom = 1
+border_color = Color(0.54902, 0.45098, 0.2, 1)
+
+[node name="SkillsWindow" type="PanelContainer"]
+custom_minimum_size = Vector2(300, 400)
+offset_right = 300.0
+offset_bottom = 400.0
+theme_override_styles/panel = SubResource("sb_skills_window")
+script = ExtResource("1_draggable")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="TitleBar" type="PanelContainer" parent="VBox"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("sb_skills_title")
+
+[node name="HBox" type="HBoxContainer" parent="VBox/TitleBar"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Control" type="Control" parent="VBox/TitleBar/HBox"]
+custom_minimum_size = Vector2(4, 0)
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBox/TitleBar/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.85, 0.75, 0.45, 1)
+theme_override_font_sizes/font_size = 14
+text = "Skills"
+horizontal_alignment = 1
+
+[node name="CloseBtn" type="Button" parent="VBox/TitleBar/HBox"]
+custom_minimum_size = Vector2(24, 24)
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "X"
+
+[node name="TableHeader" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="Control" type="Control" parent="VBox/TableHeader"]
+custom_minimum_size = Vector2(6, 0)
+layout_mode = 2
+
+[node name="Name" type="Label" parent="VBox/TableHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.5, 0.6, 0.85, 1)
+theme_override_font_sizes/font_size = 11
+text = "Skill Name"
+
+[node name="Rank" type="Label" parent="VBox/TableHeader"]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.6, 0.85, 1)
+theme_override_font_sizes/font_size = 11
+text = "Rank"
+horizontal_alignment = 1
+
+[node name="Value" type="Label" parent="VBox/TableHeader"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.6, 0.85, 1)
+theme_override_font_sizes/font_size = 11
+text = "Value"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="Scroll" type="ScrollContainer" parent="VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="SkillList" type="VBoxContainer" parent="VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 1
+
+[node name="Control" type="Control" parent="VBox"]
+custom_minimum_size = Vector2(0, 4)
+layout_mode = 2
+
+[node name="ButtonBar" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+alignment = 1
+
+[node name="HotkeyBtn" type="Button" parent="VBox/ButtonBar"]
+custom_minimum_size = Vector2(80, 24)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+disabled = true
+text = "Make Hotkey"
+
+[node name="Control" type="Control" parent="VBox/ButtonBar"]
+custom_minimum_size = Vector2(20, 0)
+layout_mode = 2
+
+[node name="DoneBtn" type="Button" parent="VBox/ButtonBar"]
+custom_minimum_size = Vector2(80, 24)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "Done"
+
+[node name="Control2" type="Control" parent="VBox"]
+custom_minimum_size = Vector2(0, 4)
+layout_mode = 2

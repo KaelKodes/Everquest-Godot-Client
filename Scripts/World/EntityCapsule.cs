@@ -12,6 +12,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private AnimationPlayer _animPlayer;
     private string _currentAnim = "";
     private readonly System.Collections.Generic.HashSet<string> _warnedAnims = new();
+    private static readonly System.Collections.Generic.HashSet<int> _warnedRaces = new();
 
     // Torch / Light Source
     private OmniLight3D _torchLight;
@@ -22,6 +23,13 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public string EntityName { get; private set; } = "Entity";
     public string EntityType { get; private set; } = "enemy";
     public int Gender { get; private set; } = 0; // 0=Male, 1=Female, 2=Neutral
+    
+    // Swimming State
+    public bool IsInWater { get; private set; } = false;
+    public void SetInWater(bool inWater)
+    {
+        IsInWater = inWater;
+    }
 
     public override void _Ready()
     {
@@ -189,6 +197,24 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
             if (resolved == null)
             {
+                // Try movement fallbacks
+                if (animName == "l01" || animName == "l02")
+                {
+                    if (animName == "l01" && _animPlayer.HasAnimation("l02")) resolved = "l02";
+                    else if (animName == "l02" && _animPlayer.HasAnimation("l01")) resolved = "l01";
+                    else if (_animPlayer.HasAnimation("p01")) resolved = "p01";
+                    else
+                    {
+                        foreach (var a in _animPlayer.GetAnimationList())
+                        {
+                            if (a.ToString().StartsWith("p")) { resolved = a; break; }
+                        }
+                    }
+                }
+            }
+
+            if (resolved == null)
+            {
                 // Only warn once per entity per animation to avoid log spam
                 if (_warnedAnims.Add(animName))
                 {
@@ -230,8 +256,21 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_isSitting && horizSpeed < 0.5f && isOnFloor) return;
         if (_isSitting && horizSpeed > 0.5f) _isSitting = false;
 
-        // Priority: jump/fall > run/walk > combat > idle
-        if (!isOnFloor)
+        // Priority: water > jump/fall > run/walk > combat > idle
+        if (IsInWater)
+        {
+            if (horizSpeed > 0.5f || Mathf.Abs(velocity.Y) > 0.5f)
+            {
+                PlayAnimation("s02"); // swimming forwards
+                _animPlayer.SpeedScale = Mathf.Clamp(new Vector3(velocity.X, velocity.Y, velocity.Z).Length() / 6.0f, 0.5f, 2.0f);
+            }
+            else
+            {
+                PlayAnimation("s01"); // treading water
+                _animPlayer.SpeedScale = 1.0f;
+            }
+        }
+        else if (!isOnFloor)
         {
             _airborneTime += 0.016; // ~1 frame at 60fps
             if (_airborneTime > 1.0 && velocity.Y < -5f)
@@ -545,8 +584,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         var velocity = Velocity;
 
         // Apply gravity
-        if (!IsOnFloor())
+        if (!IsOnFloor() && !IsInWater)
             velocity.Y -= gravity * (float)delta;
+        else if (IsInWater && !IsOnFloor())
+            velocity.Y = 0f; // Neutral buoyancy
         else
             velocity.Y = 0;
 
@@ -871,9 +912,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         _characterModel.RotationDegrees = new Vector3(0, yRot, 0);
 
                         float modelCorrection = 1.0f;
+                        var rawAabb = GetCombinedAABB(_characterModel);
+                        
                         if (isFaceVariant)
                         {
-                            var rawAabb = GetCombinedAABB(_characterModel);
                             float modelHeight = rawAabb.Size.Y;
                             if (modelHeight > 10f)
                             {
@@ -884,8 +926,9 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         float finalScaleY = raceScale * modelCorrection;
                         _characterModel.Scale = new Vector3(finalScaleY, finalScaleY, finalScaleY);
                         
-                        // Shift model up so its native origin is lifted by 3.1 Godot units (standard EQ humanoid waist)
-                        _characterModel.Position = new Vector3(0, 3.1f * finalScaleY, 0);
+                        // Shift model up so its lowest vertex sits exactly at Y=0 (the capsule floor)
+                        // This handles humanoids (origin at waist) and creatures (origin at bottom) seamlessly.
+                        _characterModel.Position = new Vector3(0, -rawAabb.Position.Y * finalScaleY, 0);
 
                         // Now that the model is positioned and scaled, measure its FINAL visual bounds
                         // so we can properly place the NameLabel and ClickArea (especially for flying bats)
@@ -965,7 +1008,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
         else
         {
-            GD.Print($"[MODEL] No race mapping for '{name}' (race={race} gender={gender}), using capsule");
+            if (_warnedRaces.Add(race))
+            {
+                GD.Print($"[MODEL] No race mapping for '{name}' (race={race} gender={gender}), using capsule");
+            }
         }
 
         if (!modelLoaded)
@@ -1219,16 +1265,33 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             if (mi.Mesh != null)
             {
                 var aabb = mi.GetAabb();
-                // Transform AABB to the root's local space
-                // (Assuming meshes are direct or near-direct children with minimal complex transforms)
+                // Transform the AABB by the MeshInstance3D's transform relative to the root node
+                Transform3D transform = mi.Transform;
+                var root3D = root as Node3D;
+                
+                if (root.IsInsideTree() && mi.IsInsideTree() && root3D != null) {
+                    transform = root3D.GlobalTransform.AffineInverse() * mi.GlobalTransform;
+                } else {
+                    // Manually walk up the parents
+                    var parent = mi.GetParent<Node3D>();
+                    while (parent != null && parent != root) {
+                        transform = parent.Transform * transform;
+                        parent = parent.GetParent<Node3D>();
+                    }
+                }
+                
+                // Godot's AABB doesn't have a direct transform method that takes a Transform3D,
+                // so we approximate by transforming the endpoints.
+                var transformedAabb = transform * aabb;
+                
                 if (first)
                 {
-                    combined = aabb;
+                    combined = transformedAabb;
                     first = false;
                 }
                 else
                 {
-                    combined = combined.Merge(aabb);
+                    combined = combined.Merge(transformedAabb);
                 }
             }
         }

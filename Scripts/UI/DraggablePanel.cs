@@ -1,7 +1,7 @@
 using Godot;
 using System;
 
-public partial class DraggablePanel : PanelContainer
+public partial class DraggablePanel : Control
 {
 	private bool _dragging = false;
 

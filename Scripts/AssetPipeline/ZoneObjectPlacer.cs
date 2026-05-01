@@ -164,11 +164,11 @@ public partial class ZoneObjectPlacer : RefCounted
             if (Animator != null)
             {
                 string matListFile = Path.Combine(objectsDir, "MaterialLists", $"{modelName}.txt");
-                GD.Print($"[Anim Debug] Object: {modelName}. Checking for mat list: {matListFile}");
+                // GD.Print($"[Anim Debug] Object: {modelName}. Checking for mat list: {matListFile}");
                 if (File.Exists(matListFile))
                 {
                     var animData = ParseMaterialList(matListFile);
-                    GD.Print($"[Anim Debug] Object: {modelName}. Found mat list. Parsed {animData.Count} animated materials.");
+                    // GD.Print($"[Anim Debug] Object: {modelName}. Found mat list. Parsed {animData.Count} animated materials.");
                     if (animData.Count > 0)
                     {
                         string texturesDir = Path.Combine(objectsDir, "Textures");
@@ -182,7 +182,7 @@ public partial class ZoneObjectPlacer : RefCounted
                     if (matListFile != null)
                     {
                         var animData = ParseMaterialList(matListFile);
-                        GD.Print($"[Anim Debug] Object: {modelName}. Found mat list via fallback. Parsed {animData.Count} animated materials.");
+                        // GD.Print($"[Anim Debug] Object: {modelName}. Found mat list via fallback. Parsed {animData.Count} animated materials.");
                         if (animData.Count > 0)
                         {
                             string texturesDir = Path.Combine(objectsDir, "Textures");
@@ -191,13 +191,13 @@ public partial class ZoneObjectPlacer : RefCounted
                     }
                     else
                     {
-                        GD.Print($"[Anim Debug] Object: {modelName}. No mat list found.");
+                        // GD.Print($"[Anim Debug] Object: {modelName}. No mat list found.");
                     }
                 }
             }
             else
             {
-                GD.Print($"[Anim Debug] Animator is null for {modelName}!");
+                // GD.Print($"[Anim Debug] Animator is null for {modelName}!");
             }
 
             // Pack it so we can instantiate multiple copies efficiently
@@ -528,11 +528,11 @@ public partial class ZoneObjectPlacer : RefCounted
     {
         if (node is MeshInstance3D meshInst)
         {
-            GD.Print($"[Anim Debug] Inspecting MeshInstance3D: {meshInst.Name}");
+            // GD.Print($"[Anim Debug] Inspecting MeshInstance3D: {meshInst.Name}");
             for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
             {
                 var mat = meshInst.GetSurfaceOverrideMaterial(i);
-                GD.Print($"[Anim Debug] Override Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
+                // GD.Print($"[Anim Debug] Override Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
                 if (mat is StandardMaterial3D stdMat)
                 {
                     if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
@@ -541,11 +541,11 @@ public partial class ZoneObjectPlacer : RefCounted
             }
             if (meshInst.Mesh != null)
             {
-                GD.Print($"[Anim Debug] Mesh has {meshInst.Mesh.GetSurfaceCount()} surfaces.");
+                // GD.Print($"[Anim Debug] Mesh has {meshInst.Mesh.GetSurfaceCount()} surfaces.");
                 for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
                 {
                     var mat = meshInst.Mesh.SurfaceGetMaterial(i);
-                    GD.Print($"[Anim Debug] Surface Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
+                    // GD.Print($"[Anim Debug] Surface Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
                     if (mat is StandardMaterial3D stdMat)
                     {
                         if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
@@ -558,7 +558,7 @@ public partial class ZoneObjectPlacer : RefCounted
                             {
                                 if (kvp.Key.Equals(stdMat.ResourceName, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    GD.Print($"[Anim Debug] Case mismatch fixed! {stdMat.ResourceName} matched {kvp.Key}");
+                                    // GD.Print($"[Anim Debug] Case mismatch fixed! {stdMat.ResourceName} matched {kvp.Key}");
                                     Animator.RegisterMaterial(stdMat, kvp.Value.frames, kvp.Value.delay, texturesDir);
                                     break;
                                 }

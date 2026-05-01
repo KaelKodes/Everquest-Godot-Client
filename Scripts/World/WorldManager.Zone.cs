@@ -393,26 +393,28 @@ public partial class WorldManager : Node3D
             zoneRoot.AddChild(scene);
             _zoneGeometryContainer.AddChild(zoneRoot);
 
-            // Fix Materials: Strip Unshaded and apply proper roughness so clustered lighting works.
-            FixZoneMaterials(zoneRoot);
-
             // Register Animated Materials for the zone
             string cachePath = EQAssetCache.Instance.GetZonePath(zoneId);
             string zoneMatList = System.IO.Path.Combine(cachePath, "Zone", "MaterialLists", $"{zoneId}.txt");
+            Dictionary<string, (string[] frames, float delay)> animData = null;
             if (System.IO.File.Exists(zoneMatList))
             {
-                var animData = ParseMaterialList(zoneMatList);
-                if (animData.Count > 0)
-                {
-                    string texturesDir = System.IO.Path.Combine(cachePath, "Zone", "Textures");
-                    RegisterAnimationsRecursive(scene, animData, texturesDir);
-                }
+                animData = ParseMaterialList(zoneMatList);
+            }
+
+            // Fix Materials: Strip Unshaded and apply proper roughness so clustered lighting works.
+            FixZoneMaterials(zoneRoot, animData);
+
+            if (animData != null && animData.Count > 0)
+            {
+                string texturesDir = System.IO.Path.Combine(cachePath, "Zone", "Textures");
+                RegisterAnimationsRecursive(scene, animData, texturesDir);
             }
 
             // Generate collision for walkable geometry
             int meshCount = 0;
             int collisionCount = 0;
-            GenerateCollisionRecursive(scene, ref meshCount, ref collisionCount);
+            GenerateCollisionRecursive(scene, ref meshCount, ref collisionCount, null, animData);
 
             // Calculate bounds for boundary walls
             var aabb = CalculateWorldAabb(zoneRoot);
@@ -459,51 +461,140 @@ public partial class WorldManager : Node3D
 
         _musicPlayer.PlayZoneMusic(zoneId);
     }
-    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null)
+    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
-            meshCount++;
-            meshInst.CreateTrimeshCollision();
-            collisionCount++;
+            // Check if this mesh contains ANY liquid surfaces
+            bool hasSolid = false;
+            var faces = new System.Collections.Generic.List<Vector3>();
+            var liquidFaces = new System.Collections.Generic.List<Vector3>();
 
-            var staticBody = meshInst.GetChild<StaticBody3D>(meshInst.GetChildCount() - 1);
-            if (staticBody != null)
+            if (meshInst.Mesh is ArrayMesh arrayMesh)
             {
-                if (targetBody != null)
+                for (int i = 0; i < arrayMesh.GetSurfaceCount(); i++)
                 {
-                    // Move collision shapes directly to the target AnimatableBody3D
-                    // BUT we MUST preserve their local transform relative to the targetBody!
-                    // Since the meshInst might be buried deep inside the GLTF scene, 
-                    // we calculate the relative transform from staticBody to targetBody.
-                    Transform3D relativeTransform = targetBody.GlobalTransform.AffineInverse() * staticBody.GlobalTransform;
+                    var mat = arrayMesh.SurfaceGetMaterial(i);
+                    bool isLiquid = mat != null && IsLiquidMaterial(mat.ResourceName, animData);
                     
-                    foreach (Node child in staticBody.GetChildren())
+                    if (!isLiquid) hasSolid = true;
+                    
+                    var arrays = arrayMesh.SurfaceGetArrays(i);
+                    var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                    var indicesObj = arrays[(int)Mesh.ArrayType.Index];
+                    
+                    if (indicesObj.VariantType != Variant.Type.Nil)
                     {
-                        if (child is CollisionShape3D colShape)
+                        var indices = indicesObj.AsInt32Array();
+                        for (int j = 0; j < indices.Length; j++)
                         {
-                            staticBody.RemoveChild(colShape);
-                            targetBody.AddChild(colShape);
-                            colShape.Transform = relativeTransform * colShape.Transform;
+                            if (isLiquid) liquidFaces.Add(vertices[indices[j]]);
+                            else faces.Add(vertices[indices[j]]);
                         }
                     }
-                    
-                    meshInst.RemoveChild(staticBody);
-                    staticBody.CallDeferred("queue_free");
+                    else
+                    {
+                        for (int j = 0; j < vertices.Length; j++)
+                        {
+                            if (isLiquid) liquidFaces.Add(vertices[j]);
+                            else faces.Add(vertices[j]);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Fallback for non-ArrayMesh (unlikely from GLTF)
+                hasSolid = true;
+                // We'd have to just use the whole mesh, but GLTF is always ArrayMesh
+            }
+            
+            if (hasSolid && faces.Count > 0)
+            {
+                meshCount++;
+                collisionCount++;
+
+                var shape = new ConcavePolygonShape3D();
+                shape.SetFaces(faces.ToArray());
+
+                var colShape = new CollisionShape3D { Shape = shape };
+                var staticBody = new StaticBody3D();
+                staticBody.AddChild(colShape);
+                
+                if (targetBody != null)
+                {
+                    // Move collision shape directly to the target AnimatableBody3D
+                    Transform3D relativeTransform = targetBody.GlobalTransform.AffineInverse() * meshInst.GlobalTransform;
+                    staticBody.RemoveChild(colShape);
+                    targetBody.AddChild(colShape);
+                    colShape.Transform = relativeTransform;
+                    staticBody.QueueFree(); // Don't need the static body
                 }
                 else
                 {
                     staticBody.InputRayPickable = false;
+                    meshInst.AddChild(staticBody);
                 }
+            }
+            
+            if (liquidFaces.Count > 0)
+            {
+                var shape = new ConcavePolygonShape3D();
+                shape.SetFaces(liquidFaces.ToArray());
+
+                var colShape = new CollisionShape3D { Shape = shape };
+                var waterArea = new Area3D();
+                waterArea.Name = "WaterArea";
+                
+                waterArea.AddChild(colShape);
+                meshInst.AddChild(waterArea);
+                
+                waterArea.BodyEntered += (Node3D body) => {
+                    if (body is EntityCapsule ec) ec.SetInWater(true);
+                };
+                waterArea.BodyExited += (Node3D body) => {
+                    if (body is EntityCapsule ec) ec.SetInWater(false);
+                };
             }
         }
 
         foreach (var child in node.GetChildren())
         {
-            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody);
+            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody, animData);
         }
     }
-    private void FixZoneMaterials(Node node)
+
+    private bool IsLiquidMaterial(string matName, Dictionary<string, (string[] frames, float delay)> animData = null)
+    {
+        if (string.IsNullOrEmpty(matName)) return false;
+        
+        string lower = matName.ToLower();
+        
+        // Check base name
+        if (IsLiquidName(lower)) return true;
+        
+        // Check animated frames
+        if (animData != null && animData.TryGetValue(matName, out var anim))
+        {
+            foreach (var frame in anim.frames)
+            {
+                if (IsLiquidName(frame.ToLower())) return true;
+            }
+        }
+        
+        return false;
+    }
+
+    private bool IsLiquidName(string name)
+    {
+        // Many variations of water and lava
+        return name.Contains("water") || name.Contains("wawa") || name.Contains("fwater") || 
+               name.Contains("swater") || name.Contains("lava") || name.Contains("slime") ||
+               name == "ow1" || name == "w1" || name == "fw1" || name == "sw1" || 
+               name.StartsWith("falls") || name == "t50_w1" || name == "d_ow1";
+    }
+
+    private void FixZoneMaterials(Node node, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
         if (node is MeshInstance3D meshInst)
         {
@@ -516,7 +607,29 @@ public partial class WorldManager : Node3D
                     mat.Roughness = 1.0f;
                     mat.Metallic = 0.0f;
                     mat.MetallicSpecular = 0.0f;
-                    mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled; 
+                    
+                    if (IsLiquidMaterial(mat.ResourceName, animData))
+                    {
+                        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                        
+                        string n = mat.ResourceName.ToLower();
+                        if (n.Contains("lava")) {
+                            mat.AlbedoColor = new Color(0.8f, 0.2f, 0.0f, 0.85f);
+                            mat.EmissionEnabled = true;
+                            mat.Emission = new Color(0.8f, 0.2f, 0.0f);
+                            mat.EmissionEnergyMultiplier = 2.0f;
+                        } else if (n.Contains("slime")) {
+                            mat.AlbedoColor = new Color(0.1f, 0.8f, 0.1f, 0.75f);
+                        } else {
+                            // Water
+                            mat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
+                        }
+                    }
+                    else
+                    {
+                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                    }
                     
                     // UNIVERSAL BACKLIGHT FIX: 
                     // This forces the polygon to receive light from BOTH SIDES.
@@ -533,18 +646,40 @@ public partial class WorldManager : Node3D
                     var mat = meshInst.Mesh.SurfaceGetMaterial(i) as StandardMaterial3D;
                     if (mat != null)
                     {
-                        var newMat = mat.Duplicate(true) as StandardMaterial3D;
-                        newMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
-                        newMat.Roughness = 1.0f;
-                        newMat.Metallic = 0.0f;
-                        newMat.MetallicSpecular = 0.0f;
+                    var newMat = mat.Duplicate(true) as StandardMaterial3D;
+                    newMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
+                    newMat.Roughness = 1.0f;
+                    newMat.Metallic = 0.0f;
+                    newMat.MetallicSpecular = 0.0f;
+                    
+                    if (IsLiquidMaterial(newMat.ResourceName, animData))
+                    {
+                        newMat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
                         newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                         
-                        // Apply backlight to surface overrides too
-                        newMat.BacklightEnabled = true;
-                        newMat.Backlight = new Color(1, 1, 1);
-                        
-                        meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                        string n = newMat.ResourceName.ToLower();
+                        if (n.Contains("lava")) {
+                            newMat.AlbedoColor = new Color(0.8f, 0.2f, 0.0f, 0.85f);
+                            newMat.EmissionEnabled = true;
+                            newMat.Emission = new Color(0.8f, 0.2f, 0.0f);
+                            newMat.EmissionEnergyMultiplier = 2.0f;
+                        } else if (n.Contains("slime")) {
+                            newMat.AlbedoColor = new Color(0.1f, 0.8f, 0.1f, 0.75f);
+                        } else {
+                            // Water
+                            newMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
+                        }
+                    }
+                    else
+                    {
+                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                    }
+                    
+                    // Apply backlight to surface overrides too
+                    newMat.BacklightEnabled = true;
+                    newMat.Backlight = new Color(1, 1, 1);
+                    
+                    meshInst.SetSurfaceOverrideMaterial(i, newMat);
                     }
                 }
             }
@@ -552,7 +687,7 @@ public partial class WorldManager : Node3D
 
         foreach (var child in node.GetChildren())
         {
-            FixZoneMaterials(child);
+            FixZoneMaterials(child, animData);
         }
     }
     private void CalculateAabbRecursive(Node node, ref Aabb combined, ref bool first)

@@ -121,7 +121,7 @@ public partial class WorldManager : Node3D
         }
         else
         {
-            GD.PrintErr($"[WORLD] Received state change for unknown door: {doorId}");
+            GD.Print($"[WORLD] Ignored state change for unspawned/invisible door: {doorId}");
         }
     }
     private void ConnectDoorInputsRecursive(Node node, DoorEntity doorEntity)

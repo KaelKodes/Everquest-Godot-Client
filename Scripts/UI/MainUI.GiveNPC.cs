@@ -20,6 +20,7 @@ public partial class MainUI
 			UpdateGiveNPCSlot(0);
 			CancelHeldItem();
 		}
+		SyncInventorySlotsWithGiveNPC();
 	}
 
 	private void OnGiveNPCSlotClicked(int index)
@@ -40,7 +41,7 @@ public partial class MainUI
 			UpdateGiveNPCSlot(index);
 			
 			int pIconId = _heldItem.Value.TryGetProperty("icon", out var pProp) ? pProp.GetInt32() : 0;
-			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+			var iconMgr = IconManager.Instance;
 			_cursorIcon.Texture = (pIconId > 0 && iconMgr != null) ? iconMgr.GetItemIcon(pIconId) : null;
 			_cursorIcon.Visible = true;
 		}
@@ -51,6 +52,7 @@ public partial class MainUI
 			UpdateGiveNPCSlot(index);
 			CancelHeldItem();
 		}
+		SyncInventorySlotsWithGiveNPC();
 	}
 
 	private void UpdateGiveNPCSlot(int index)
@@ -58,12 +60,19 @@ public partial class MainUI
 		if (_giveNPCItemData[index].HasValue)
 		{
 			var item = _giveNPCItemData[index].Value;
-			string name = item.TryGetProperty("itemName", out var n) ? n.GetString() : "Item";
-			_giveNPCSlots[index].Text = name.Length > 8 ? name.Substring(0, 8) + ".." : name;
+			_giveNPCSlots[index].Text = "";
+			int iconId = item.TryGetProperty("icon", out var iProp) ? iProp.GetInt32() : 0;
+			var iconMgr = IconManager.Instance;
+			if (iconId > 0 && iconMgr != null) {
+				_giveNPCSlots[index].Icon = iconMgr.GetItemIcon(iconId);
+				_giveNPCSlots[index].ExpandIcon = true;
+				_giveNPCSlots[index].IconAlignment = HorizontalAlignment.Center;
+			}
 		}
 		else
 		{
 			_giveNPCSlots[index].Text = (index + 1).ToString();
+			_giveNPCSlots[index].Icon = null;
 		}
 	}
 
@@ -99,6 +108,7 @@ public partial class MainUI
 			UpdateGiveNPCSlot(i);
 		}
 		_giveNPCWindow.Hide();
+		SyncInventorySlotsWithGiveNPC();
 	}
 
 	private void OnGiveNPCCancel()
@@ -113,6 +123,7 @@ public partial class MainUI
 			UpdateGiveNPCSlot(i);
 		}
 		_giveNPCWindow.Hide();
+		SyncInventorySlotsWithGiveNPC();
 	}
 
 	public JsonElement? GetHeldItem()

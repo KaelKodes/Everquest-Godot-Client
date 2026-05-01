@@ -49,6 +49,8 @@ public partial class WorldManager : Node3D
     private bool _isSneaking = false;
     private bool _isHiding = false;
     public bool PlayerHasStealthSkill { get; set; } = false;
+    public float PlayerSwimmingSkill { get; set; } = 0f;
+    private double _swimTimer = 0;
     private bool _isCrouching = false;
     private bool _playerInCombat = false;
     private double _zoneImmunityTimer = 0.0; // Seconds of immunity after teleport
@@ -502,22 +504,23 @@ public partial class WorldManager : Node3D
             }
         }
 
-        // --- WASD Movement & Turning ---
-        float baseSpeed = 8f;
-        if (_isCrouching) baseSpeed = 4f;
-        else if (Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning) baseSpeed = 40f;
-        
-        float speed = baseSpeed;
+        var velocity = _playerCapsule.Velocity;
+        float speed = 15.0f;
+        if (_isCrouching) speed = 8.0f;
+
+        // Apply Swimming speed multiplier
+        if (_playerCapsule.IsInWater)
+        {
+            speed *= (1.0f + (PlayerSwimmingSkill / 200f) * 0.5f);
+        }
+        else if (Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning)
+        {
+            speed = 25.0f;
+        }
+
+        bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
         if (_flyMode) speed *= 5f; // Admin fly mode gets 5x speed
         float gravity = 50f;
-        Vector3 velocity = _playerCapsule.Velocity;
-        bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
-        
-        // Handle Gravity
-        if (!_flyMode && !_playerCapsule.IsOnFloor())
-        {
-            velocity.Y -= gravity * (float)delta;
-        }
 
         bool isTyping = MainUI.Instance != null && MainUI.Instance.IsChatFocused;
         
@@ -632,7 +635,37 @@ public partial class WorldManager : Node3D
             if (!isTyping)
             {
                 if (Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = speed;
-                if (Input.IsPhysicalKeyPressed(Key.C)) velocity.Y = -speed;
+                if (Input.IsPhysicalKeyPressed(Key.C) || Input.IsPhysicalKeyPressed(Key.Ctrl)) velocity.Y = -speed;
+            }
+        }
+        else if (_playerCapsule.IsInWater)
+        {
+            // Water mode: Space = up, Ctrl = down, neutral buoyancy
+            velocity.Y = 0; // neutral buoyancy
+            bool isMovingInWater = false;
+            
+            if (!isTyping)
+            {
+                if (Input.IsPhysicalKeyPressed(Key.Space)) { velocity.Y = speed; isMovingInWater = true; }
+                if (Input.IsPhysicalKeyPressed(Key.Ctrl)) { velocity.Y = -speed; isMovingInWater = true; }
+            }
+            
+            if (velocity.X != 0 || velocity.Z != 0) isMovingInWater = true;
+            
+            // Skill up ticks
+            if (isMovingInWater)
+            {
+                _swimTimer += delta;
+                if (_swimTimer >= 3.0)
+                {
+                    _swimTimer = 0;
+                    GetNode<MainUI>("/root/MainScene/UI")?.GetClient()?.SendRaw("{\"type\": \"SWIM_TICK\"}");
+                }
+            }
+            else
+            {
+                _swimTimer = 0;
+                // Slowly sink if not moving (optional EQ mechanic, disabled for pure neutral)
             }
         }
         else if (!_playerCapsule.IsOnFloor())
@@ -786,6 +819,16 @@ public partial class WorldManager : Node3D
                                 {
                                     string npcId = capsule.Name.ToString().Replace("mob_", "");
                                     MainUI.Instance?.OpenGiveNPCWindow(npcId, capsule.EntityName);
+                                }
+                            }
+                            else if (mouseBtnEvent.ButtonIndex == MouseButton.Right)
+                            {
+                                SetTarget(capsule);
+                                var client = GetNodeOrNull<GameClient>("/root/GameClient");
+                                if (client != null)
+                                {
+                                    var dict = new { targetId = capsule.Name.ToString() };
+                                    client.SendMessage("RIGHT_CLICK", dict);
                                 }
                             }
                             break;

@@ -39,15 +39,7 @@ public partial class MainUI
 				int itemType = item.TryGetProperty("itemtype", out var it) ? it.GetInt32() : 0;
 				int classes = item.TryGetProperty("classes", out var cl) ? cl.GetInt32() : 65535;
 				int recLevel = item.TryGetProperty("reclevel", out var rl) ? rl.GetInt32() : 0;
-
-				// Build stats snippet
-				var statParts = new List<string>();
-				if (item.TryGetProperty("ac", out var ac) && ac.GetInt32() > 0) statParts.Add($"AC:{ac.GetInt32()}");
-				if (item.TryGetProperty("damage", out var dmg) && dmg.GetInt32() > 0) statParts.Add($"Dmg:{dmg.GetInt32()}");
-				if (item.TryGetProperty("delay", out var dly) && dly.GetInt32() > 0) statParts.Add($"Dly:{dly.GetInt32()}");
-				if (item.TryGetProperty("hp", out var hp) && hp.GetInt32() > 0) statParts.Add($"HP:+{hp.GetInt32()}");
-				if (item.TryGetProperty("mana", out var mana) && mana.GetInt32() > 0) statParts.Add($"Mana:+{mana.GetInt32()}");
-				string statsStr = statParts.Count > 0 ? $" ({string.Join(" ", statParts)})" : "";
+				int icon = item.TryGetProperty("icon", out var ic) ? ic.GetInt32() : 0;
 
 				_merchantItems.Add(new MerchantItem
 				{
@@ -55,20 +47,39 @@ public partial class MainUI
 					ItemKey = iKey,
 					Price = price,
 					PriceText = priceText,
-					StatsStr = statsStr,
+					StatsStr = "", // Not needed in list view
 					ScrollLevel = scrollLevel,
 					ItemType = itemType,
 					Classes = classes,
 					RecLevel = recLevel,
 					NpcId = npcId,
+					Icon = icon
 				});
 			}
 
-			// Build sort/filter bar
-			BuildMerchantSortBar();
+			// Setup UI events if not already done
+			if (!_merchantSearchInput.HasSignal("text_changed") || _merchantSearchInput.GetSignalConnectionList("text_changed").Count == 0)
+			{
+				_merchantSearchInput.TextChanged += (text) => RebuildMerchantList();
+				_merchantTabs.TabChanged += (tab) => {
+					if (tab == 0) RebuildMerchantList();
+					else _client.SendRaw($"{{\"type\": \"BUY_RECOVER\", \"npcId\": \"{_activeMerchantId}\"}}"); // Fetch recover list when switching to tab
+				};
+				
+				_merchantActionBtn.Pressed += OnMerchantActionClicked;
+				_merchantSellJunkBtn.Pressed += () => _client.SendRaw($"{{\"type\": \"SELL_JUNK\", \"npcId\": \"{_activeMerchantId}\"}}");
+				
+				// Enable drop on slot rect
+				_merchantSlotRect.MouseFilter = Control.MouseFilterEnum.Stop;
+				// Connect GUI input directly since Godot C# CanDropData/DropData override can be finicky on TextureRect
+				_merchantSlotRect.GuiInput += OnMerchantSlotGuiInput;
+			}
+
+			// Reset Selection Slot
+			ClearMerchantSelection();
 
 			// Render the list
-			_merchantSortMode = "name";
+			_merchantTabs.CurrentTab = 0;
 			RebuildMerchantList();
 
 			_merchantWindow.Show();
@@ -80,161 +91,274 @@ public partial class MainUI
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Merchant Error: {ex.Message}"); }
 	}
-
-	private void BuildMerchantSortBar()
+	
+	private void OnMerchantSlotGuiInput(InputEvent @event)
 	{
-		// Remove old sort bar if it exists
-		if (_merchantSortBar != null && IsInstanceValid(_merchantSortBar))
+		if (@event is InputEventMouseButton mouseBtn && !mouseBtn.Pressed && mouseBtn.ButtonIndex == MouseButton.Left)
 		{
-			_merchantSortBar.QueueFree();
-			_merchantSortBar = null;
-		}
-
-		var vbox = _merchantWindow.GetNode<VBoxContainer>("VBox");
-		if (vbox == null) return;
-
-		_merchantSortBar = new HBoxContainer();
-		_merchantSortBar.Name = "SortBar";
-		_merchantSortBar.CustomMinimumSize = new Vector2(0, 24);
-		_merchantSortBar.AddThemeConstantOverride("separation", 4);
-
-		var sortLabel = new Label { Text = "Sort:" };
-		sortLabel.AddThemeFontSizeOverride("font_size", 11);
-		sortLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
-		_merchantSortBar.AddChild(sortLabel);
-
-		string[] sortModes = { "Name", "Price", "Level" };
-		foreach (var mode in sortModes)
-		{
-			var btn = new Button { Text = mode };
-			btn.CustomMinimumSize = new Vector2(50, 22);
-			btn.AddThemeFontSizeOverride("font_size", 11);
-			string modeKey = mode.ToLower();
-			btn.Pressed += () =>
+			// Try to get drop data from viewport
+			var viewport = GetViewport();
+			var dragData = viewport.GuiGetDragData();
+			if (dragData.VariantType != Variant.Type.Nil)
 			{
-				_merchantSortMode = modeKey;
-				RebuildMerchantList();
-			};
-			_merchantSortBar.AddChild(btn);
+				string json = (string)dragData;
+				using var doc = JsonDocument.Parse(json);
+				if (doc.RootElement.GetProperty("type").GetString() == "INVENTORY_ITEM")
+				{
+					string itemKey = doc.RootElement.GetProperty("itemKey").GetString();
+					string instId = doc.RootElement.GetProperty("instanceId").GetString();
+					
+					// Request offer from server
+					_client.SendRaw($"{{\"type\": \"GET_OFFER\", \"npcId\": \"{_activeMerchantId}\", \"itemInstanceId\": \"{instId}\"}}");
+				}
+			}
 		}
-
-		// Spacer
-		var spacer = new Control();
-		spacer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-		_merchantSortBar.AddChild(spacer);
-
-		// Show Usable checkbox
-		var usableCheck = new CheckBox { Text = "Usable" };
-		usableCheck.AddThemeFontSizeOverride("font_size", 11);
-		usableCheck.AddThemeColorOverride("font_color", new Color(0.8f, 0.9f, 0.6f));
-		usableCheck.ButtonPressed = _merchantShowUsable;
-		usableCheck.Toggled += (toggled) =>
+	}
+	
+	private void OnMerchantOfferReceived(Variant data)
+	{
+		try
 		{
-			_merchantShowUsable = toggled;
-			RebuildMerchantList();
-		};
-		_merchantSortBar.AddChild(usableCheck);
+			string json = (string)data;
+			using var doc = JsonDocument.Parse(json);
+			var root = doc.RootElement;
+			
+			string name = root.GetProperty("name").GetString();
+			int instId = root.GetProperty("itemId").GetInt32();
+			int price = root.GetProperty("price").GetInt32();
+			string priceText = root.GetProperty("priceText").GetString();
+			int icon = root.GetProperty("icon").GetInt32();
+			
+			_merchantSelectedItemId = instId.ToString();
+			_merchantSelectedItemKey = null;
+			_merchantSelectedAction = "SELL";
+			
+			_merchantSelectionName.Text = name;
+			_merchantSelectionPrice.Text = $"Offer: {priceText}";
+			_merchantSlotRect.Texture = IconManager.Instance.GetItemIcon(icon);
+			
+			_merchantActionBtn.Text = "Accept";
+			_merchantActionBtn.Disabled = false;
+		}
+		catch (Exception ex) { GD.PrintErr($"[UI] Merchant Offer Error: {ex.Message}"); }
+	}
+	
+	private void OnMerchantRecoverListReceived(Variant data)
+	{
+		try
+		{
+			string json = (string)data;
+			using var doc = JsonDocument.Parse(json);
+			var root = doc.RootElement;
+			
+			// Rebuild Recover List
+			foreach (Node child in _merchantRecoverList.GetChildren()) child.QueueFree();
+			
+			var items = root.GetProperty("items");
+			var iconMgr = IconManager.Instance;
+			
+			foreach (var item in items.EnumerateArray())
+			{
+				string name = item.GetProperty("name").GetString();
+				string iKey = item.GetProperty("itemKey").ToString().Trim('"');
+				int price = item.TryGetProperty("price", out var pv) ? pv.GetInt32() : 0;
+				string priceText = item.TryGetProperty("priceText", out var pt) ? pt.GetString() : $"{price}cp";
+				int icon = item.TryGetProperty("icon", out var ic) ? ic.GetInt32() : 0;
+				int buybackId = item.GetProperty("buybackId").GetInt32();
+				
+				var row = CreateMerchantRow(name, priceText, icon, iconMgr, () => {
+					_merchantSelectedItemId = null;
+					_merchantSelectedItemKey = iKey;
+					_merchantSelectedBuybackId = buybackId;
+					_merchantSelectedPrice = price;
+					_merchantSelectedAction = "BUY_RECOVER";
+					
+					_merchantSelectionName.Text = name;
+					_merchantSelectionPrice.Text = $"Cost: {priceText}";
+					_merchantSlotRect.Texture = iconMgr.GetItemIcon(icon);
+					_merchantActionBtn.Text = "Accept";
+					_merchantActionBtn.Disabled = _copper < price;
+				});
+				_merchantRecoverList.AddChild(row);
+			}
+		}
+		catch (Exception ex) { GD.PrintErr($"[UI] Merchant Recover List Error: {ex.Message}"); }
+	}
+	
+	private void ClearMerchantSelection()
+	{
+		_merchantSelectedItemId = null;
+		_merchantSelectedItemKey = null;
+		_merchantSelectedBuybackId = -1;
+		_merchantSelectedAction = "";
+		
+		_merchantSelectionName.Text = "Select or Drop Item";
+		_merchantSelectionPrice.Text = "---";
+		_merchantSlotRect.Texture = null;
+		_merchantActionBtn.Text = "Action";
+		_merchantActionBtn.Disabled = true;
+	}
 
-		// Insert sort bar after Title (index 1, before Scroll)
-		vbox.AddChild(_merchantSortBar);
-		vbox.MoveChild(_merchantSortBar, 1);
+	private void OnMerchantActionClicked()
+	{
+		if (_merchantSelectedAction == "BUY" && _merchantSelectedItemKey != null)
+		{
+			if (_copper < _merchantSelectedPrice) {
+				Log("SYSTEM", "[color=red]You don't have enough money.[/color]");
+				return;
+			}
+			_client.SendRaw($"{{\"type\": \"BUY\", \"npcId\": \"{_activeMerchantId}\", \"itemKey\": \"{_merchantSelectedItemKey}\"}}");
+		}
+		else if (_merchantSelectedAction == "SELL" && _merchantSelectedItemId != null)
+		{
+			_client.SendRaw($"{{\"type\": \"SELL\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {_merchantSelectedItemId}}}");
+			ClearMerchantSelection();
+		}
+		else if (_merchantSelectedAction == "BUY_RECOVER" && _merchantSelectedBuybackId != -1)
+		{
+			if (_copper < _merchantSelectedPrice) {
+				Log("SYSTEM", "[color=red]You don't have enough money.[/color]");
+				return;
+			}
+			_client.SendRaw($"{{\"type\": \"BUY_RECOVER\", \"npcId\": \"{_activeMerchantId}\", \"buybackId\": {_merchantSelectedBuybackId}}}");
+			ClearMerchantSelection();
+		}
 	}
 
 	private void RebuildMerchantList()
 	{
 		// Clear old items
-		foreach (Node child in _merchantItemList.GetChildren()) child.QueueFree();
+		foreach (Node child in _merchantTradeList.GetChildren()) child.QueueFree();
+
+		string searchText = _merchantSearchInput.Text.ToLower();
 
 		// Filter
 		var filtered = new List<MerchantItem>();
 		foreach (var mi in _merchantItems)
 		{
-			if (_merchantShowUsable)
-			{
-				// Check class bitmask
-				if (mi.Classes != 65535 && (mi.Classes & _merchantPlayerClassBitmask) == 0)
-					continue;
-				// Check level for spells or required level
-				int reqLevel = mi.ScrollLevel > 0 ? mi.ScrollLevel : mi.RecLevel;
-				if (reqLevel > _merchantPlayerLevel)
-					continue;
-			}
+			if (!string.IsNullOrEmpty(searchText) && !mi.Name.ToLower().Contains(searchText))
+				continue;
 			filtered.Add(mi);
 		}
 
-		// Sort
-		switch (_merchantSortMode)
-		{
-			case "price":
-				filtered.Sort((a, b) => a.Price.CompareTo(b.Price));
-				break;
-			case "level":
-				filtered.Sort((a, b) =>
-				{
-					int la = a.ScrollLevel > 0 ? a.ScrollLevel : a.RecLevel;
-					int lb = b.ScrollLevel > 0 ? b.ScrollLevel : b.RecLevel;
-					int cmp = la.CompareTo(lb);
-					return cmp != 0 ? cmp : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-				});
-				break;
-			default: // name
-				filtered.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-				break;
-		}
+		filtered.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+
+		var iconMgr = IconManager.Instance;
 
 		// Render
 		foreach (var mi in filtered)
 		{
-			var row = new HBoxContainer();
-			row.CustomMinimumSize = new Vector2(0, 26);
-
-			var infoVbox = new VBoxContainer();
-			infoVbox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-
-			// Name with level tag for spells
 			string displayName = mi.Name;
 			if (mi.ScrollLevel > 0)
 				displayName = $"{mi.Name} (Lv {mi.ScrollLevel})";
 			else if (mi.RecLevel > 0)
 				displayName = $"{mi.Name} (Req Lv {mi.RecLevel})";
-
-			var nameLabel = new Label { Text = $"{displayName}{mi.StatsStr}" };
-			nameLabel.AddThemeFontSizeOverride("font_size", 13);
-
-			// Color: cyan for spells, gold for normal, grey for unusable
+				
+			var row = CreateMerchantRow(displayName, mi.PriceText, mi.Icon, iconMgr, () => {
+				_merchantSelectedItemId = null;
+				_merchantSelectedItemKey = mi.ItemKey;
+				_merchantSelectedPrice = mi.Price;
+				_merchantSelectedAction = "BUY";
+				
+				_merchantSelectionName.Text = displayName;
+				_merchantSelectionPrice.Text = $"Cost: {mi.PriceText}";
+				_merchantSlotRect.Texture = iconMgr.GetItemIcon(mi.Icon);
+				
+				_merchantActionBtn.Text = "Accept";
+				_merchantActionBtn.Disabled = _copper < mi.Price;
+			});
+			
+			// Set color based on usability
 			bool isUsable = true;
 			if (mi.Classes != 65535 && (mi.Classes & _merchantPlayerClassBitmask) == 0)
 				isUsable = false;
 			int effectiveLevel = mi.ScrollLevel > 0 ? mi.ScrollLevel : mi.RecLevel;
 			if (effectiveLevel > _merchantPlayerLevel)
 				isUsable = false;
-
+				
+			var nameLbl = row.GetNode<Label>("RowHBox/NameLbl");
 			if (!isUsable)
-				nameLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.5f));
+				nameLbl.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.5f));
 			else if (mi.ItemType == 20 || mi.ScrollLevel > 0)
-				nameLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.85f, 1.0f));
+				nameLbl.AddThemeColorOverride("font_color", new Color(0.6f, 0.85f, 1.0f));
 			else
-				nameLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+				nameLbl.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
 
-			var priceLabel = new Label { Text = mi.PriceText };
-			priceLabel.AddThemeFontSizeOverride("font_size", 11);
-			priceLabel.AddThemeColorOverride("font_color", new Color(0.85f, 0.75f, 0.3f));
-			infoVbox.AddChild(nameLabel);
-			infoVbox.AddChild(priceLabel);
-
-			var buyBtn = new Button { Text = "Buy" };
-			buyBtn.CustomMinimumSize = new Vector2(50, 0);
-			string capturedKey = mi.ItemKey;
-			string capturedNpcId = mi.NpcId;
-			buyBtn.Pressed += () =>
-			{
-				_client.SendRaw($"{{\"type\": \"BUY\", \"npcId\": \"{capturedNpcId}\", \"itemKey\": \"{capturedKey}\"}}");
-			};
-
-			row.AddChild(infoVbox);
-			row.AddChild(buyBtn);
-			_merchantItemList.AddChild(row);
+			_merchantTradeList.AddChild(row);
 		}
+	}
+	
+	private MarginContainer CreateMerchantRow(string name, string priceText, int icon, IconManager iconMgr, Action onClick)
+	{
+		var container = new MarginContainer();
+		container.CustomMinimumSize = new Vector2(0, 40);
+		
+		var btn = new Button {
+			Flat = true,
+			FocusMode = Control.FocusModeEnum.None,
+			MouseFilter = Control.MouseFilterEnum.Stop
+		};
+		btn.Pressed += () => onClick();
+		container.AddChild(btn);
+
+		var row = new HBoxContainer();
+		row.Name = "RowHBox";
+		row.MouseFilter = Control.MouseFilterEnum.Ignore;
+		row.AddThemeConstantOverride("separation", 10);
+		
+		var iconRect = new TextureRect {
+			Texture = iconMgr.GetItemIcon(icon),
+			CustomMinimumSize = new Vector2(40, 40),
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		
+		var nameLbl = new Label {
+			Name = "NameLbl",
+			Text = name,
+			SizeFlagsHorizontal = SizeFlags.ExpandFill,
+			VerticalAlignment = VerticalAlignment.Center,
+			TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+			ClipText = true,
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		nameLbl.AddThemeFontSizeOverride("font_size", 14);
+		
+		var qtyLbl = new Label {
+			Text = "--",
+			CustomMinimumSize = new Vector2(40, 0),
+			HorizontalAlignment = HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		
+		var costLbl = new Label {
+			Text = priceText,
+			CustomMinimumSize = new Vector2(100, 0),
+			HorizontalAlignment = HorizontalAlignment.Right,
+			VerticalAlignment = VerticalAlignment.Center,
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		costLbl.AddThemeColorOverride("font_color", new Color(0.85f, 0.75f, 0.3f));
+		
+		var lvlLbl = new Label {
+			Text = "--",
+			CustomMinimumSize = new Vector2(40, 0),
+			HorizontalAlignment = HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		
+		row.AddChild(iconRect);
+		row.AddChild(nameLbl);
+		row.AddChild(qtyLbl);
+		row.AddChild(costLbl);
+		row.AddChild(lvlLbl);
+		
+		container.AddChild(row);
+		
+		return container;
 	}
 
 	// ═══════════════════════════════════════════════════════════════

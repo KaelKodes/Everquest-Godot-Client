@@ -27,6 +27,8 @@ public partial class GameClient : Node
     [Signal] public delegate void LoginOkReceivedEventHandler(Variant data);
     [Signal] public delegate void NpcSayReceivedEventHandler(Variant data);
     [Signal] public delegate void MerchantOpenedEventHandler(Variant data);
+    [Signal] public delegate void MerchantOfferReceivedEventHandler(Variant data);
+    [Signal] public delegate void MerchantRecoverListReceivedEventHandler(Variant data);
     [Signal] public delegate void TrainerOpenedEventHandler(Variant data);
     [Signal] public delegate void BankOpenedEventHandler(Variant data);
     [Signal] public delegate void AccountOkReceivedEventHandler(Variant data);
@@ -73,6 +75,14 @@ public partial class GameClient : Node
         if (err != Error.Ok)
         {
             GD.PrintErr($"[NET] Could not connect: {err}");
+        }
+    }
+
+    public void DisconnectFromServer()
+    {
+        if (_socket.GetReadyState() == WebSocketPeer.State.Open)
+        {
+            _socket.Close();
         }
     }
 
@@ -198,6 +208,12 @@ public partial class GameClient : Node
                     break;
                 case "OPEN_MERCHANT":
                     EmitSignal(SignalName.MerchantOpened, message);
+                    break;
+                case "MERCHANT_OFFER":
+                    EmitSignal(SignalName.MerchantOfferReceived, message);
+                    break;
+                case "MERCHANT_RECOVER_LIST":
+                    EmitSignal(SignalName.MerchantRecoverListReceived, message);
                     break;
                 case "OPEN_TRAINER":
                     EmitSignal(SignalName.TrainerOpened, message);

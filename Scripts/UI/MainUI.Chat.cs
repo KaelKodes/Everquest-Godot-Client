@@ -119,9 +119,16 @@ public partial class MainUI
 			}
 			case "LOOT":
 			{
-				string item = evt.GetProperty("item").GetString();
-				string from = evt.TryGetProperty("source", out var src) ? src.GetString() : "a corpse";
-				Log("LOOT", $"You loot {item} from {from}.");
+				if (evt.TryGetProperty("text", out var textProp))
+				{
+					Log("LOOT", textProp.GetString());
+				}
+				else
+				{
+					string item = evt.GetProperty("item").GetString();
+					string from = evt.TryGetProperty("source", out var src) ? src.GetString() : "a corpse";
+					Log("LOOT", $"You loot {item} from {from}.");
+				}
 				UISoundPlayer.Instance?.PlayLoot();
 				break;
 			}
@@ -152,6 +159,12 @@ public partial class MainUI
 			{
 				string text = evt.GetProperty("text").GetString();
 				Log("SYSTEM", text);
+				break;
+			}
+			case "ERROR":
+			{
+				string text = evt.GetProperty("text").GetString();
+				Log("ERROR", text);
 				break;
 			}
 			case "NPC_SAY":
@@ -470,6 +483,7 @@ public partial class MainUI
 			"FIZZLE"    => "#aa55aa",   // Purple
 			"RESIST"    => "#aa55aa",   // Purple
 			"SYSTEM"    => "#dd8833",   // Orange
+			"ERROR"     => "#ff4444",   // Red for system errors
 			"CON_GREEN" => "#00cc00",   // EQ green con
 			"CON_BLUE"  => "#4488ff",   // EQ blue con
 			"CON_YELLOW"=> "#ffff00",   // EQ yellow con

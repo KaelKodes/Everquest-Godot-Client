@@ -110,12 +110,33 @@ public partial class ItemDetailsWindow : PanelContainer
         contentVBox.AddChild(_augmentsText);
     }
 
+    /// <summary>Safely extract an int from a JsonElement that may be a number, string, or decimal.</summary>
+    private static int SafeInt(JsonElement el)
+    {
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (el.TryGetInt32(out int iv)) return iv;
+                return (int)el.GetDouble(); // handles decimals like 10.0
+            case JsonValueKind.String:
+                return int.TryParse(el.GetString(), out int sv) ? sv : 0;
+            default:
+                return 0;
+        }
+    }
+
+    /// <summary>Safely extract a string from a JsonElement that may be a string, number, or null.</summary>
+    private static string SafeStr(JsonElement el)
+    {
+        return el.ValueKind == JsonValueKind.String ? el.GetString() ?? "" : el.ToString();
+    }
+
     public void ShowItem(JsonElement item, Vector2 pos)
     {
-        string name = item.TryGetProperty("itemName", out var n) ? n.GetString() : "Unknown Item";
+        string name = item.TryGetProperty("itemName", out var n) ? SafeStr(n) : "Unknown Item";
         _titleLabel.Text = name;
 
-        int iconId = item.TryGetProperty("icon", out var ic) ? ic.GetInt32() : 0;
+        int iconId = item.TryGetProperty("icon", out var ic) ? SafeInt(ic) : 0;
         var iconMgr = IconManager.Instance;
         if (iconMgr != null && iconId > 0) {
             _itemIcon.Texture = iconMgr.GetItemIcon(iconId);
@@ -123,15 +144,15 @@ public partial class ItemDetailsWindow : PanelContainer
             _itemIcon.Texture = null;
         }
 
-        int classes = item.TryGetProperty("classes", out var cl) ? cl.GetInt32() : 0;
-        int races = item.TryGetProperty("races", out var r) ? r.GetInt32() : 0;
-        int equipSlot = item.TryGetProperty("equipSlot", out var es) ? es.GetInt32() : 0;
+        int classes = item.TryGetProperty("classes", out var cl) ? SafeInt(cl) : 0;
+        int races = item.TryGetProperty("races", out var r) ? SafeInt(r) : 0;
+        int equipSlot = item.TryGetProperty("equipSlot", out var es) ? SafeInt(es) : 0;
         
-        string magic = (item.TryGetProperty("magic", out var mg) && mg.GetInt32() > 0) ? "MAGIC ITEM  " : "";
-        string lore = (item.TryGetProperty("lore", out var lr) && !string.IsNullOrEmpty(lr.GetString())) ? "LORE ITEM  " : "";
-        string nodrop = (item.TryGetProperty("nodrop", out var nd) && nd.GetInt32() == 0) ? "NO DROP  " : "";
-        string norent = (item.TryGetProperty("norent", out var nr) && nr.GetInt32() == 0) ? "NO RENT  " : "";
-        string placeable = (item.TryGetProperty("placeable", out var pl) && pl.GetInt32() > 0) ? "PLACEABLE  " : "";
+        string magic = (item.TryGetProperty("magic", out var mg) && SafeInt(mg) > 0) ? "MAGIC ITEM  " : "";
+        string lore = (item.TryGetProperty("lore", out var lr) && !string.IsNullOrEmpty(SafeStr(lr))) ? "LORE ITEM  " : "";
+        string nodrop = (item.TryGetProperty("nodrop", out var nd) && SafeInt(nd) == 0) ? "NO DROP  " : "";
+        string norent = (item.TryGetProperty("norent", out var nr) && SafeInt(nr) == 0) ? "NO RENT  " : "";
+        string placeable = (item.TryGetProperty("placeable", out var pl) && SafeInt(pl) > 0) ? "PLACEABLE  " : "";
 
         string flags = (magic + lore + nodrop + norent + placeable).Trim();
 
@@ -160,18 +181,18 @@ public partial class ItemDetailsWindow : PanelContainer
 
         // Stats
         _statsText.Clear();
-        int hp = item.TryGetProperty("hp", out var h) ? h.GetInt32() : 0;
-        int mana = item.TryGetProperty("mana", out var m) ? m.GetInt32() : 0;
-        int endur = item.TryGetProperty("endur", out var en) ? en.GetInt32() : 0;
-        int ac = item.TryGetProperty("ac", out var a) ? a.GetInt32() : 0;
+        int hp = item.TryGetProperty("hp", out var h) ? SafeInt(h) : 0;
+        int mana = item.TryGetProperty("mana", out var m) ? SafeInt(m) : 0;
+        int endur = item.TryGetProperty("endur", out var en) ? SafeInt(en) : 0;
+        int ac = item.TryGetProperty("ac", out var a) ? SafeInt(a) : 0;
         
-        int damage = item.TryGetProperty("damage", out var dmg) ? dmg.GetInt32() : 0;
-        int delay = item.TryGetProperty("delay", out var dly) ? dly.GetInt32() : 0;
-        int weight = item.TryGetProperty("weight", out var w) ? w.GetInt32() : 0;
-        int size = item.TryGetProperty("size", out var sz) ? sz.GetInt32() : 0;
+        int damage = item.TryGetProperty("damage", out var dmg) ? SafeInt(dmg) : 0;
+        int delay = item.TryGetProperty("delay", out var dly) ? SafeInt(dly) : 0;
+        int weight = item.TryGetProperty("weight", out var w) ? SafeInt(w) : 0;
+        int size = item.TryGetProperty("size", out var sz) ? SafeInt(sz) : 0;
         
-        int reqLevel = item.TryGetProperty("reqlevel", out var req) ? req.GetInt32() : 0;
-        int recLevel = item.TryGetProperty("reclevel", out var rec) ? rec.GetInt32() : 0;
+        int reqLevel = item.TryGetProperty("reqlevel", out var req) ? SafeInt(req) : 0;
+        int recLevel = item.TryGetProperty("reclevel", out var rec) ? SafeInt(rec) : 0;
 
         // Build a grid using spaces or a table (BBCode table is supported in Godot RichTextLabel)
         _statsText.AppendText("[table=3]");
@@ -215,19 +236,19 @@ public partial class ItemDetailsWindow : PanelContainer
         _statsText.AppendText("[/table]\n\n");
 
         // Base Stats
-        int str = item.TryGetProperty("str", out var s) ? s.GetInt32() : 0;
-        int sta = item.TryGetProperty("sta", out var st) ? st.GetInt32() : 0;
-        int intel = item.TryGetProperty("int", out var i) ? i.GetInt32() : 0;
-        int wis = item.TryGetProperty("wis", out var wi) ? wi.GetInt32() : 0;
-        int agi = item.TryGetProperty("agi", out var ag) ? ag.GetInt32() : 0;
-        int dex = item.TryGetProperty("dex", out var dx) ? dx.GetInt32() : 0;
-        int cha = item.TryGetProperty("cha", out var c) ? c.GetInt32() : 0;
+        int str = item.TryGetProperty("str", out var s) ? SafeInt(s) : 0;
+        int sta = item.TryGetProperty("sta", out var st) ? SafeInt(st) : 0;
+        int intel = item.TryGetProperty("int", out var i) ? SafeInt(i) : 0;
+        int wis = item.TryGetProperty("wis", out var wi) ? SafeInt(wi) : 0;
+        int agi = item.TryGetProperty("agi", out var ag) ? SafeInt(ag) : 0;
+        int dex = item.TryGetProperty("dex", out var dx) ? SafeInt(dx) : 0;
+        int cha = item.TryGetProperty("cha", out var c) ? SafeInt(c) : 0;
         
-        int mr = item.TryGetProperty("mr", out var mr_prop) ? mr_prop.GetInt32() : 0;
-        int fr = item.TryGetProperty("fr", out var fr_prop) ? fr_prop.GetInt32() : 0;
-        int cr = item.TryGetProperty("cr", out var cr_prop) ? cr_prop.GetInt32() : 0;
-        int dr = item.TryGetProperty("dr", out var dr_prop) ? dr_prop.GetInt32() : 0;
-        int pr = item.TryGetProperty("pr", out var pr_prop) ? pr_prop.GetInt32() : 0;
+        int mr = item.TryGetProperty("mr", out var mr_prop) ? SafeInt(mr_prop) : 0;
+        int fr = item.TryGetProperty("fr", out var fr_prop) ? SafeInt(fr_prop) : 0;
+        int cr = item.TryGetProperty("cr", out var cr_prop) ? SafeInt(cr_prop) : 0;
+        int dr = item.TryGetProperty("dr", out var dr_prop) ? SafeInt(dr_prop) : 0;
+        int pr = item.TryGetProperty("pr", out var pr_prop) ? SafeInt(pr_prop) : 0;
 
         _statsText.AppendText("[table=2]");
         if (str != 0) _statsText.AppendText($"[cell]Strength: {str}[/cell]"); else _statsText.AppendText("[cell][/cell]");
@@ -254,7 +275,7 @@ public partial class ItemDetailsWindow : PanelContainer
         bool hasAugs = false;
         for (int augIdx = 1; augIdx <= 6; augIdx++) {
             if (item.TryGetProperty($"augslot{augIdx}type", out var augProp)) {
-                int augType = augProp.GetInt32();
+                int augType = SafeInt(augProp);
                 if (augType > 0) {
                     _augmentsText.AppendText($"Slot {augIdx}, type {augType}: empty\n");
                     hasAugs = true;

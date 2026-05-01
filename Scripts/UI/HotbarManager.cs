@@ -349,11 +349,11 @@ public partial class HotbarManager : Control
 
 
 
-		// Alt+H: Toggle hotbar 1 visibility
+		// Alt+H: Toggle all hotbar visibility
 		if (k.AltPressed && k.Keycode == Key.H)
 		{
-			if (_hotbars.Count > 0)
-				_hotbars[0].Visible = !_hotbars[0].Visible;
+			foreach (var hb in _hotbars)
+				hb.Visible = !hb.Visible;
 			return;
 		}
 

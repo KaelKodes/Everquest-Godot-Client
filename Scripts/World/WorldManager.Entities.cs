@@ -104,7 +104,7 @@ public partial class WorldManager : Node3D
 
             if (!existingIds.Contains(id))
             {
-                GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
+                // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
                 SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
             }

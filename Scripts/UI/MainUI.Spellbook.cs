@@ -175,9 +175,9 @@ public partial class MainUI
 		_spellSlotLabels[slotIndex].Text = sp.Name;
 		_spellSlotLabels[slotIndex].AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
 
-		var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+		var iconMgr = IconManager.Instance;
 		if (iconMgr != null) {
-			GD.Print($"[SPELLBOOK DEBUG] Rendering {sp.Name} with memIcon: {sp.MemIcon}");
+			// GD.Print($"[SPELLBOOK DEBUG] Rendering {sp.Name} with memIcon: {sp.MemIcon}");
 			var icon = iconMgr.GetSpellGem(sp.MemIcon);
 			if (icon != null) {
 				slotBtn.Icon = icon;
@@ -256,7 +256,7 @@ public partial class MainUI
 				string description = spell.TryGetProperty("description", out var descProp) ? descProp.GetString() : "";
 				int memIcon = spell.TryGetProperty("memIcon", out var memProp) ? memProp.GetInt32() : 0;
 				int iconId = spell.TryGetProperty("icon", out var iconProp) ? iconProp.GetInt32() : 0;
-				GD.Print($"[DEBUG] Parsed Spell {name}: memIcon={memIcon}, icon={iconId}");
+				// GD.Print($"[DEBUG] Parsed Spell {name}: memIcon={memIcon}, icon={iconId}");
 
 				// Add to known spells list (for right-click memorize picker)
 				_knownSpells.Add(new KnownSpell {
@@ -295,9 +295,9 @@ public partial class MainUI
 				_spellSlotLabels[slot].Text = name;
 				_spellSlotLabels[slot].AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
 				
-				var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+				var iconMgr = IconManager.Instance;
 				if (iconMgr != null) {
-					GD.Print($"[SPELLBAR DEBUG] Rendering {name} with memIcon: {memIcon}");
+					// GD.Print($"[SPELLBAR DEBUG] Rendering {name} with memIcon: {memIcon}");
 					var icon = iconMgr.GetSpellGem(memIcon);
 					if (icon != null) {
 						slotBtn.Icon = icon;

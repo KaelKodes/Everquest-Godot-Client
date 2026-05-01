@@ -96,8 +96,24 @@ public partial class MainUI : Control
 	private Button _giveNPCOk;
 	private Button _giveNPCCancel;
 	private string _giveNPCId;
-	private VBoxContainer _merchantItemList;
 	private Label _merchantTitle;
+	private TabContainer _merchantTabs;
+	private VBoxContainer _merchantTradeList;
+	private VBoxContainer _merchantRecoverList;
+	private LineEdit _merchantSearchInput;
+	private TextureRect _merchantSlotRect;
+	private Label _merchantSelectionName;
+	private Label _merchantSelectionPrice;
+	private Button _merchantActionBtn;
+	private Button _merchantSellJunkBtn;
+
+	// Track the selected item in the merchant slot
+	private string _merchantSelectedItemId = null;
+	private string _merchantSelectedItemKey = null;
+	private int _merchantSelectedPrice = 0;
+	private int _merchantSelectedBuybackId = -1;
+	private string _merchantSelectedAction = ""; // "SELL", "BUY", "BUY_RECOVER"
+	
 	private string _activeMerchantId = null; // Track open merchant for sell transactions
 
 	// Merchant sort/filter state
@@ -113,6 +129,7 @@ public partial class MainUI : Control
 		public int Classes;
 		public int RecLevel;
 		public string NpcId;
+		public int Icon;
 	}
 	private List<MerchantItem> _merchantItems = new List<MerchantItem>();
 	private int _merchantPlayerClassBitmask = 65535;
@@ -123,10 +140,12 @@ public partial class MainUI : Control
 
 	// Chat input
 	private LineEdit _chatInput;
-	private PanelContainer _chatWindow;
+	private Control _chatWindow;
 	private string _lastWhisperSender = "";
 	private bool _chatInputFocused = false;
 	public bool IsChatFocused => _chatInputFocused;
+	
+	public GameClient GetClient() => _client;
 	
 	public void ReleaseChatFocus()
 	{
@@ -316,6 +335,8 @@ public partial class MainUI : Control
 		_client.HideBrokenReceived += OnHideBrokenReceived;
 		_client.NpcSayReceived += OnNpcSayReceived;
 		_client.MerchantOpened += OnMerchantOpened;
+		_client.MerchantOfferReceived += OnMerchantOfferReceived;
+		_client.MerchantRecoverListReceived += OnMerchantRecoverListReceived;
 		_client.TrainerOpened += OnTrainerOpened;
 		_client.BankOpened += OnBankOpened;
 		_client.ChatReceived += OnChatReceived;
@@ -324,7 +345,7 @@ public partial class MainUI : Control
 		_client.MessageReceived += OnGenericMessage;
 
 		// Wire up chat input
-		_chatWindow = GetNode<PanelContainer>("ChatWindow");
+		_chatWindow = GetNode<Control>("ChatWindow");
 		
 		_chatInput = GetNode<LineEdit>("%ChatInput");
 		if (_chatInput != null)
@@ -335,10 +356,6 @@ public partial class MainUI : Control
 		}
 
 		// Create Windows (hidden by default)
-		var iconManager = new IconManager();
-		iconManager.Name = "IconManager";
-		AddChild(iconManager);
-
 		_inventoryWindow = _inventoryWindowScene.Instantiate<Control>();
 		AddChild(_inventoryWindow);
 		_inventoryWindow.Hide();
@@ -391,7 +408,7 @@ public partial class MainUI : Control
 		for (int i = 0; i < 4; i++) {
 			var coinRow = _currencyLabels[i]?.GetParent();
 			if (coinRow == null) continue;
-			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+			var iconMgr = IconManager.Instance;
 			if (iconMgr == null) continue;
 			var coinTex = iconMgr.GetItemIcon(coinIconIds[i]);
 			if (coinTex == null) continue;
@@ -440,28 +457,21 @@ public partial class MainUI : Control
 		_merchantWindow = _merchantWindowScene.Instantiate<Control>();
 		AddChild(_merchantWindow);
 		_merchantWindow.Hide();
-		_merchantItemList = _merchantWindow.GetNode<VBoxContainer>("VBox/Scroll/ItemList");
+		ApplyWindowPos(_merchantWindow, "MerchantWindow", UILayoutManager.GetSection("Windows"));
+		
 		_merchantTitle = _merchantWindow.GetNode<Label>("VBox/Title");
+		_merchantTabs = _merchantWindow.GetNode<TabContainer>("VBox/TabContainer");
+		_merchantTradeList = _merchantWindow.GetNode<VBoxContainer>("VBox/TabContainer/Trade/Scroll/ItemList");
+		_merchantRecoverList = _merchantWindow.GetNode<VBoxContainer>("VBox/TabContainer/Recover/Scroll/RecoverList");
+		_merchantSearchInput = _merchantWindow.GetNode<LineEdit>("VBox/TabContainer/Trade/SearchBar");
+		
+		_merchantSlotRect = _merchantWindow.GetNode<TextureRect>("VBox/SelectionPanel/HBox/SlotRect");
+		_merchantSelectionName = _merchantWindow.GetNode<Label>("VBox/SelectionPanel/HBox/VBox/SelectionName");
+		_merchantSelectionPrice = _merchantWindow.GetNode<Label>("VBox/SelectionPanel/HBox/VBox/SelectionPrice");
+		_merchantActionBtn = _merchantWindow.GetNode<Button>("VBox/SelectionPanel/HBox/ActionBtn");
+		_merchantSellJunkBtn = _merchantWindow.GetNode<Button>("VBox/BottomRow/SellJunkBtn");
 
-		// Give NPC Window
-		_giveNPCWindow = _giveNPCWindowScene.Instantiate<Control>();
-		AddChild(_giveNPCWindow);
-		_giveNPCWindow.Hide();
-		_giveNPCTitle = _giveNPCWindow.GetNode<Label>("VBox/Title");
-		_giveNPCSlots[0] = _giveNPCWindow.GetNode<Button>("VBox/Slot1");
-		_giveNPCSlots[1] = _giveNPCWindow.GetNode<Button>("VBox/Slot2");
-		_giveNPCSlots[2] = _giveNPCWindow.GetNode<Button>("VBox/Slot3");
-		_giveNPCSlots[3] = _giveNPCWindow.GetNode<Button>("VBox/Slot4");
-		_giveNPCOk = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnOK");
-		_giveNPCCancel = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnCancel");
-
-		_giveNPCOk.Pressed += OnGiveNPCOk;
-		_giveNPCCancel.Pressed += OnGiveNPCCancel;
-		for (int i = 0; i < 4; i++) {
-			int slotIndex = i;
-			_giveNPCSlots[i].Pressed += () => OnGiveNPCSlotClicked(slotIndex);
-		}
-		_merchantWindow.GetNode<Button>("VBox/CloseBtn").Pressed += () => {
+		_merchantWindow.GetNode<Button>("VBox/BottomRow/CloseBtn").Pressed += () => {
 			_merchantWindow.Hide();
 			_activeMerchantId = null;
 			// Refresh inventory to hide sell buttons
@@ -469,7 +479,25 @@ public partial class MainUI : Control
 				OnInventoryUpdated(_client.LastInventoryPayload);
 		};
 
-		// Link HUD UI nodes
+		// Give NPC Window
+		_giveNPCWindow = _giveNPCWindowScene.Instantiate<Control>();
+		AddChild(_giveNPCWindow);
+		_giveNPCWindow.Hide();
+
+		_giveNPCTitle = _giveNPCWindow.GetNode<Label>("VBox/Title");
+		for (int i = 0; i < 4; i++)
+		{
+			int idx = i;
+			_giveNPCSlots[i] = _giveNPCWindow.GetNode<Button>($"VBox/Slot{i + 1}");
+			_giveNPCSlots[i].Pressed += () => OnGiveNPCSlotClicked(idx);
+		}
+
+		_giveNPCOk = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnOK");
+		_giveNPCCancel = _giveNPCWindow.GetNode<Button>("VBox/HBox/BtnCancel");
+
+		_giveNPCOk.Pressed += OnGiveNPCOk;
+		_giveNPCCancel.Pressed += OnGiveNPCCancel;
+
 		_hpBar = GetNode<ProgressBar>("%HPBar");
 		_hpLabel = GetNode<Label>("%HPLabel");
 		
@@ -1101,12 +1129,12 @@ public partial class MainUI : Control
 		// Catch-up on missed signals during scene transition
 		if (!string.IsNullOrEmpty(_client.LastStatusPayload))
 		{
-			GD.Print("[UI] Caught up on cached character status.");
+			// GD.Print("[UI] Caught up on cached character status.");
 			OnCharacterStatusReceived(_client.LastStatusPayload);
 		}
 		if (!string.IsNullOrEmpty(_client.LastSpellbookPayload))
 		{
-			GD.Print("[UI] Caught up on cached Spellbook.");
+			// GD.Print("[UI] Caught up on cached Spellbook.");
 			OnSpellbookUpdated(_client.LastSpellbookPayload);
 		}
 
@@ -1122,22 +1150,22 @@ public partial class MainUI : Control
 		// NOW catch up on the full spellbook (after UI exists)
 		if (!string.IsNullOrEmpty(_client.LastSpellbookFullPayload))
 		{
-			GD.Print("[UI] Caught up on cached Spellbook Full.");
+			// GD.Print("[UI] Caught up on cached Spellbook Full.");
 			OnSpellbookFullReceived(_client.LastSpellbookFullPayload);
 		}
 		if (!string.IsNullOrEmpty(_client.LastInventoryPayload))
 		{
-			GD.Print("[UI] Caught up on cached Inventory.");
+			// GD.Print("[UI] Caught up on cached Inventory.");
 			OnInventoryUpdated(_client.LastInventoryPayload);
 		}
 		if (!string.IsNullOrEmpty(_client.LastZoneStatePayload))
 		{
-			GD.Print("[UI] Caught up on cached Zone State.");
+			// GD.Print("[UI] Caught up on cached Zone State.");
 			OnZoneStateReceived(_client.LastZoneStatePayload);
 		}
 		if (!string.IsNullOrEmpty(_client.LastBuffsPayload))
 		{
-			GD.Print("[UI] Caught up on cached Buffs.");
+			// GD.Print("[UI] Caught up on cached Buffs.");
 			OnBuffsUpdated(_client.LastBuffsPayload);
 		}
 
@@ -1269,7 +1297,7 @@ public partial class MainUI : Control
 			}
 			else if (k.Keycode == Key.O && k.AltPressed)
 			{
-				if (_optionsPanel != null) _optionsPanel.Visible = !_optionsPanel.Visible;
+				ToggleOptionsPanel();
 			}
 			else if (k.Keycode == Key.Escape)
 			{
@@ -1827,6 +1855,7 @@ public partial class MainUI : Control
 		if (statusWindow != null) ApplyWindowPos(statusWindow, "StatusWindow", windows);
 		
 		if (_copyLayoutWindow != null) ApplyWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
+		if (_merchantWindow != null) ApplyWindowPos(_merchantWindow, "MerchantWindow", windows);
 	}
 
 	private void ApplyWindowPos(Node panel, string key, Godot.Collections.Dictionary windows)
@@ -1871,6 +1900,7 @@ public partial class MainUI : Control
 		if (statusWindow != null) StoreWindowPos(statusWindow, "StatusWindow", windows);
 		
 		if (_copyLayoutWindow != null) StoreWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
+		if (_merchantWindow != null) StoreWindowPos(_merchantWindow, "MerchantWindow", windows);
 		
 		UILayoutManager.SetSection("Windows", windows);
 		if (!string.IsNullOrEmpty(GameState.CharacterName))

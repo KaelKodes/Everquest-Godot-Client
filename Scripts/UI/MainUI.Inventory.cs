@@ -44,7 +44,7 @@ public partial class MainUI
 				}
 			}
 
-			var iconMgr = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+			var iconMgr = IconManager.Instance;
 			foreach (var item in inventory.EnumerateArray())
 			{
 				int slotId = item.GetProperty("slotId").GetInt32();
@@ -100,6 +100,55 @@ public partial class MainUI
 			}
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Inv Error: {ex.Message}"); }
+		
+		SyncInventorySlotsWithGiveNPC();
+	}
+
+	public void SyncInventorySlotsWithGiveNPC()
+	{
+		// Gather inst_ids currently in the Give Window
+		var giveWindowInstIds = new HashSet<int>();
+		if (_giveNPCWindow != null && _giveNPCWindow.Visible)
+		{
+			for (int i = 0; i < 4; i++)
+			{
+				if (_giveNPCItemData[i].HasValue)
+				{
+					if (_giveNPCItemData[i].Value.TryGetProperty("item_id", out var instIdProp))
+					{
+						giveWindowInstIds.Add(instIdProp.GetInt32());
+					}
+				}
+			}
+		}
+
+		// Check all active buttons in _slotItemData
+		foreach (var kvp in _slotItemData)
+		{
+			var btn = kvp.Key;
+			var itemData = kvp.Value;
+			if (itemData.TryGetProperty("item_id", out var instIdProp))
+			{
+				int instId = instIdProp.GetInt32();
+				// If the item is in the Give Window, or it's currently on the cursor, dim it
+				if (giveWindowInstIds.Contains(instId))
+				{
+					btn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f);
+				}
+				else
+				{
+					// Avoid un-dimming if it's the item we are currently holding on the cursor
+					if (_heldItem.HasValue && _heldItem.Value.TryGetProperty("item_id", out var heldInst) && heldInst.GetInt32() == instId)
+					{
+						btn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f);
+					}
+					else
+					{
+						btn.Modulate = Colors.White;
+					}
+				}
+			}
+		}
 	}
 
 	/// <summary>
@@ -194,6 +243,21 @@ public partial class MainUI
 	{
 		if (inputEvent is InputEventMouseButton mb) {
 			if (mb.ButtonIndex == MouseButton.Left && mb.Pressed) {
+				// Merchant Selling Logic Check
+				if (_merchantWindow != null && _merchantWindow.Visible) {
+					if (slotId < 22) {
+						Log("SYSTEM", "[color=yellow]You must unequip that item before selling it.[/color]");
+					} else if (_slotItemData.TryGetValue(btn, out var itemData)) {
+						if (itemData.TryGetProperty("item_id", out var instIdProp)) {
+							int instId = instIdProp.GetInt32();
+							if (!string.IsNullOrEmpty(_activeMerchantId)) {
+								_client.SendRaw($"{{\"type\": \"GET_OFFER\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {instId}}}");
+							}
+						}
+					}
+					return; // Block normal inventory dragging
+				}
+
 				if (_heldItem.HasValue) {
 					// Place held item into this slot
 					PlaceHeldItem(slotId, btn);
@@ -233,7 +297,7 @@ public partial class MainUI
 		_heldItem = itemData;
 		_heldFromSlotId = slotId;
 		int pIconId = itemData.TryGetProperty("icon", out var pProp) ? pProp.GetInt32() : 0;
-		var iconMgr2 = GetNodeOrNull<IconManager>("/root/MainUI/IconManager") ?? IconManager.Instance;
+		var iconMgr2 = IconManager.Instance;
 		_cursorIcon.Texture = (pIconId > 0 && iconMgr2 != null) ? iconMgr2.GetItemIcon(pIconId) : null;
 		_cursorIcon.Visible = true;
 		sourceBtn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f); // dim the source
@@ -459,7 +523,11 @@ public partial class MainUI
 	private int _statWis = 0;
 	private int _statInt = 0;
 	private int _statCha = 0;
-	private int _ac = 0;
+	private int _statDmg = 0;
+	private int _statDly = 0;
+	private int _statOffhandDmg = 0;
+	private int _statOffhandDly = 0;
+	private int _ac, _mitigationAC, _avoidanceAC;
 	private float _xpPct = 0f;
 	private string _cls = "";
 
@@ -480,7 +548,9 @@ public partial class MainUI
 		if (source.TryGetProperty("maxHp", out var mh)) _maxHp = mh.GetDouble();
 		if (source.TryGetProperty("mana", out var mn)) _currentMana = mn.GetDouble();
 		if (source.TryGetProperty("maxMana", out var mm)) _maxMana = mm.GetDouble();
-		if (source.TryGetProperty("ac", out var a)) _ac = a.GetInt32();
+		if (source.TryGetProperty("ac", out var aProp)) { _ac = aProp.GetInt32(); }
+		if (source.TryGetProperty("mitigationAC", out var mAcProp)) { _mitigationAC = mAcProp.GetInt32(); }
+		if (source.TryGetProperty("avoidanceAC", out var aAcProp)) { _avoidanceAC = aAcProp.GetInt32(); }
 		
 		if (source.TryGetProperty("str", out var s1)) _statStr = s1.GetInt32();
 		if (source.TryGetProperty("sta", out var s2)) _statSta = s2.GetInt32();
@@ -490,7 +560,13 @@ public partial class MainUI
 		if (source.TryGetProperty("intel", out var s6)) _statInt = s6.GetInt32();
 		if (source.TryGetProperty("cha", out var s7)) _statCha = s7.GetInt32();
 		
+		if (source.TryGetProperty("dmg", out var d1)) _statDmg = d1.GetInt32();
+		if (source.TryGetProperty("dly", out var d2)) _statDly = d2.GetInt32();
+		if (source.TryGetProperty("offhandDmg", out var d3)) _statOffhandDmg = d3.GetInt32();
+		if (source.TryGetProperty("offhandDly", out var d4)) _statOffhandDly = d4.GetInt32();
+		
 		if (source.TryGetProperty("xpPercent", out var xp)) _xpPct = (float)xp.GetDouble();
+		if (source.TryGetProperty("copper", out var cProp)) _copper = cProp.GetInt32();
 
 		_invStatsText.Clear();
 		_invStatsText.AppendText($"[b]{_charName}[/b]\n");
@@ -518,7 +594,11 @@ public partial class MainUI
 		AddRow("MP", $"{_currentMana}/{_maxMana}");
 		AddRow("EN", "0/0");
 		AddRow("AC", $"{_ac}");
+		AddRow("Mitigation", $"{_mitigationAC}");
+		AddRow("Avoidance", $"{_avoidanceAC}");
 		AddRow("ATK", "0");
+		AddRow("DMG", $"{_statDmg}");
+		AddRow("DLY", $"{_statDly}");
 		AddRow("STR", $"{_statStr}");
 		AddRow("STA", $"{_statSta}");
 		AddRow("AGI", $"{_statAgi}");
@@ -588,6 +668,12 @@ public partial class MainUI
 		AddRow(L, "Endurance", "0/0");
 		AddRow(L, "Armor Class", $"{_ac}");
 		AddRow(L, "Attack", "0");
+		AddRow(L, "Damage", $"{_statDmg}");
+		AddRow(L, "Delay", $"{_statDly}");
+		if (_statOffhandDmg > 0) {
+			AddRow(L, "Offhand Dmg", $"{_statOffhandDmg}");
+			AddRow(L, "Offhand Dly", $"{_statOffhandDly}");
+		}
 		AddRow(L, "Haste", "0%");
 		AddRow(L, "Velocity", "0");
 
@@ -807,7 +893,17 @@ public partial class MainUI
 		var sortedSkills = new List<(string Name, int Value)>();
 		foreach (var skill in skillsProp.EnumerateObject())
 		{
-			sortedSkills.Add((skill.Name, skill.Value.GetInt32()));
+			int val = skill.Value.GetInt32();
+			sortedSkills.Add((skill.Name, val));
+			
+			if (skill.Name == "swimming")
+			{
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null)
+				{
+					wm.PlayerSwimmingSkill = val;
+				}
+			}
 		}
 		sortedSkills.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 

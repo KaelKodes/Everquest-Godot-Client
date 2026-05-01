@@ -1,65 +1,210 @@
-[gd_scene load_steps=3 format=3 uid="uid://c8l7n2p1y2k1q"]
+[gd_scene load_steps=4 format=3 uid="uid://c8l7n2p1y2k1q"]
+
+[ext_resource type="Script" uid="uid://cody276iur5gx" path="res://Scripts/UI/DraggablePanel.cs" id="1_draggable"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_window"]
-bg_color = Color(0.05, 0.05, 0.07, 0.95)
+bg_color = Color(0.08, 0.09, 0.12, 0.95)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.2, 0.55, 0.7, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-shadow_color = Color(0, 0, 0, 0.5)
-shadow_size = 10
+border_color = Color(0.25, 0.35, 0.45, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+shadow_color = Color(0, 0, 0, 0.6)
+shadow_size = 15
 
 [node name="MerchantWindow" type="Panel"]
-custom_minimum_size = Vector2(400, 500)
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = -250.0
-offset_right = 200.0
-offset_bottom = 250.0
-grow_horizontal = 2
-grow_vertical = 2
+custom_minimum_size = Vector2(500, 650)
+offset_left = 390.0
+offset_top = 35.0
+offset_right = 890.0
+offset_bottom = 685.0
 theme_override_styles/panel = SubResource("StyleBoxFlat_window")
+script = ExtResource("1_draggable")
 
 [node name="VBox" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = -10.0
+offset_left = 15.0
+offset_top = 15.0
+offset_right = -15.0
+offset_bottom = -15.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 10
 
 [node name="Title" type="Label" parent="VBox"]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.4, 0.9, 1, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 20
 text = "Merchant Name"
 horizontal_alignment = 1
 
-[node name="Scroll" type="ScrollContainer" parent="VBox"]
+[node name="TabContainer" type="TabContainer" parent="VBox"]
 layout_mode = 2
 size_flags_vertical = 3
+tab_alignment = 1
+current_tab = 0
 
-[node name="ItemList" type="VBoxContainer" parent="VBox/Scroll"]
+[node name="Trade" type="VBoxContainer" parent="VBox/TabContainer"]
+layout_mode = 2
+theme_override_constants/separation = 8
+metadata/_tab_index = 0
+
+[node name="SearchBar" type="LineEdit" parent="VBox/TabContainer/Trade"]
+layout_mode = 2
+placeholder_text = "Search wares..."
+clear_button_enabled = true
+
+[node name="HeaderRow" type="HBoxContainer" parent="VBox/TabContainer/Trade"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="IconSpacer" type="Control" parent="VBox/TabContainer/Trade/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="NameLbl" type="Label" parent="VBox/TabContainer/Trade/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Item Name"
+
+[node name="QtyLbl" type="Label" parent="VBox/TabContainer/Trade/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+text = "Qty"
+horizontal_alignment = 1
+
+[node name="CostLbl" type="Label" parent="VBox/TabContainer/Trade/HeaderRow"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+text = "Cost"
+horizontal_alignment = 2
+
+[node name="LvlLbl" type="Label" parent="VBox/TabContainer/Trade/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+text = "Lvl"
+horizontal_alignment = 1
+
+[node name="ScrollbarSpacer" type="Control" parent="VBox/TabContainer/Trade/HeaderRow"]
+custom_minimum_size = Vector2(12, 0)
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="VBox/TabContainer/Trade"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ItemList" type="VBoxContainer" parent="VBox/TabContainer/Trade/Scroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 5
 
-[node name="CloseBtn" type="Button" parent="VBox"]
-custom_minimum_size = Vector2(100, 30)
+[node name="Recover" type="VBoxContainer" parent="VBox/TabContainer"]
+visible = false
 layout_mode = 2
-size_flags_horizontal = 4
+theme_override_constants/separation = 8
+metadata/_tab_index = 1
+
+[node name="HeaderRow" type="HBoxContainer" parent="VBox/TabContainer/Recover"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="IconSpacer" type="Control" parent="VBox/TabContainer/Recover/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="NameLbl" type="Label" parent="VBox/TabContainer/Recover/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Item Name"
+
+[node name="QtyLbl" type="Label" parent="VBox/TabContainer/Recover/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+text = "Qty"
+horizontal_alignment = 1
+
+[node name="CostLbl" type="Label" parent="VBox/TabContainer/Recover/HeaderRow"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+text = "Cost"
+horizontal_alignment = 2
+
+[node name="LvlLbl" type="Label" parent="VBox/TabContainer/Recover/HeaderRow"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+text = "Lvl"
+horizontal_alignment = 1
+
+[node name="ScrollbarSpacer" type="Control" parent="VBox/TabContainer/Recover/HeaderRow"]
+custom_minimum_size = Vector2(12, 0)
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="VBox/TabContainer/Recover"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="RecoverList" type="VBoxContainer" parent="VBox/TabContainer/Recover/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+
+[node name="HSeparator" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="SelectionPanel" type="PanelContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="HBox" type="HBoxContainer" parent="VBox/SelectionPanel"]
+layout_mode = 2
+theme_override_constants/separation = 15
+
+[node name="SlotRect" type="TextureRect" parent="VBox/SelectionPanel/HBox"]
+custom_minimum_size = Vector2(50, 50)
+layout_mode = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="VBox" type="VBoxContainer" parent="VBox/SelectionPanel/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+
+[node name="SelectionName" type="Label" parent="VBox/SelectionPanel/HBox/VBox"]
+layout_mode = 2
+text = "Select or Drop Item"
+
+[node name="SelectionPrice" type="Label" parent="VBox/SelectionPanel/HBox/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.843137, 0, 1)
+text = "---"
+
+[node name="ActionBtn" type="Button" parent="VBox/SelectionPanel/HBox"]
+custom_minimum_size = Vector2(80, 40)
+layout_mode = 2
+size_flags_vertical = 4
+text = "Action"
+disabled = true
+
+[node name="BottomRow" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="SellJunkBtn" type="Button" parent="VBox/BottomRow"]
+custom_minimum_size = Vector2(120, 35)
+layout_mode = 2
+text = "Sell Junk"
+
+[node name="CloseBtn" type="Button" parent="VBox/BottomRow"]
+custom_minimum_size = Vector2(120, 35)
+layout_mode = 2
 text = "Done"

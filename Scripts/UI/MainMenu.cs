@@ -31,8 +31,21 @@ public partial class MainMenu : Control
     private Button _enterWorldButton;
     private Button _newCharButton;
     private Button _deleteCharButton;
+    private Button _returnHomeButton;
+    private Button _quitButton;
+    private CheckBox _resetUICheckbox;
     private Label _charSelectHeader;
     private string _selectedCharName = null;
+
+    // Character Select 3D Preview
+    private SubViewportContainer _charSelectPreviewContainer;
+    private SubViewport _charSelectPreviewViewport;
+    private Node3D _charSelectPreviewRoot;
+    private Node3D _charSelectPreviewModel;
+    private Camera3D _charSelectPreviewCamera;
+    private int _selectedCharRaceId = 1;
+    private int _selectedCharGender = 0;
+    private int _selectedCharFace = 0;
 
     // ── Create Panel Nodes ───────────────────────────────────────
     private LineEdit _nameInput;
@@ -481,63 +494,141 @@ public partial class MainMenu : Control
         (_charSelectPanel as PanelContainer).AddThemeStyleboxOverride("panel", style);
 
         _charSelectPanel.SetAnchorsPreset(Control.LayoutPreset.Center);
-        _charSelectPanel.OffsetLeft = -240;
-        _charSelectPanel.OffsetRight = 240;
-        _charSelectPanel.OffsetTop = -220;
-        _charSelectPanel.OffsetBottom = 220;
+        _charSelectPanel.OffsetLeft = -400;
+        _charSelectPanel.OffsetRight = 400;
+        _charSelectPanel.OffsetTop = -300;
+        _charSelectPanel.OffsetBottom = 300;
 
-        var vbox = new VBoxContainer();
-        vbox.AddThemeConstantOverride("separation", 10);
-        vbox.OffsetLeft = 20; vbox.OffsetTop = 20; vbox.OffsetRight = -20; vbox.OffsetBottom = -20;
-        vbox.SetAnchorsPreset(LayoutPreset.FullRect);
+        var hSplit = new HBoxContainer();
+        hSplit.AddThemeConstantOverride("separation", 20);
+        hSplit.OffsetLeft = 20; hSplit.OffsetTop = 20; hSplit.OffsetRight = -20; hSplit.OffsetBottom = -20;
+        hSplit.SetAnchorsPreset(LayoutPreset.FullRect);
 
-        // Header
+        // ════════ LEFT COLUMN: Characters and Buttons ════════
+        var leftCol = new VBoxContainer();
+        leftCol.AddThemeConstantOverride("separation", 10);
+        leftCol.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        leftCol.SizeFlagsStretchRatio = 0.4f;
+        leftCol.CustomMinimumSize = new Vector2(250, 0);
+
         _charSelectHeader = new Label();
-        _charSelectHeader.Text = "Select Character";
+        _charSelectHeader.Text = "Characters";
         _charSelectHeader.HorizontalAlignment = HorizontalAlignment.Center;
         _charSelectHeader.AddThemeFontSizeOverride("font_size", 22);
         _charSelectHeader.AddThemeColorOverride("font_color", new Color(0.85f, 0.7f, 0.25f, 1f));
-        vbox.AddChild(_charSelectHeader);
+        leftCol.AddChild(_charSelectHeader);
 
         // Scrollable character list
         var scroll = new ScrollContainer();
         scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
-        scroll.CustomMinimumSize = new Vector2(0, 280);
 
         _charListContainer = new VBoxContainer();
         _charListContainer.AddThemeConstantOverride("separation", 6);
         _charListContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         scroll.AddChild(_charListContainer);
-        vbox.AddChild(scroll);
+        leftCol.AddChild(scroll);
 
-        // Enter world button
-        _enterWorldButton = new Button();
-        _enterWorldButton.Text = "Enter World";
-        _enterWorldButton.CustomMinimumSize = new Vector2(0, 44);
-        _enterWorldButton.AddThemeFontSizeOverride("font_size", 18);
-        _enterWorldButton.Disabled = true;
-        _enterWorldButton.Pressed += OnEnterWorldPressed;
-        vbox.AddChild(_enterWorldButton);
+        // Separator
+        leftCol.AddChild(new HSeparator());
 
-        // New character button
-        _newCharButton = new Button();
-        _newCharButton.Text = "Create New Character";
+        // Buttons
+        _newCharButton = new Button { Text = "Create Character" };
         _newCharButton.CustomMinimumSize = new Vector2(0, 36);
         _newCharButton.AddThemeFontSizeOverride("font_size", 14);
         _newCharButton.Pressed += () => ShowPanel("create");
-        vbox.AddChild(_newCharButton);
+        leftCol.AddChild(_newCharButton);
 
-        // Delete character button
-        _deleteCharButton = new Button();
-        _deleteCharButton.Text = "Delete Character";
+        _deleteCharButton = new Button { Text = "Delete Character", Disabled = true };
         _deleteCharButton.CustomMinimumSize = new Vector2(0, 36);
         _deleteCharButton.AddThemeFontSizeOverride("font_size", 14);
         _deleteCharButton.AddThemeColorOverride("font_color", new Color(0.8f, 0.3f, 0.3f, 1f));
-        _deleteCharButton.Disabled = true;
         _deleteCharButton.Pressed += OnDeleteCharPressed;
-        vbox.AddChild(_deleteCharButton);
+        leftCol.AddChild(_deleteCharButton);
 
-        (_charSelectPanel as PanelContainer).AddChild(vbox);
+        _returnHomeButton = new Button { Text = "Return Home" };
+        _returnHomeButton.CustomMinimumSize = new Vector2(0, 36);
+        _returnHomeButton.AddThemeFontSizeOverride("font_size", 14);
+        _returnHomeButton.Pressed += () => { GameClient.Instance.DisconnectFromServer(); ShowPanel("login"); };
+        leftCol.AddChild(_returnHomeButton);
+
+        var resetUIRow = new HBoxContainer();
+        resetUIRow.Alignment = BoxContainer.AlignmentMode.Center;
+        _resetUICheckbox = new CheckBox { Text = "Reset UI?" };
+        _resetUICheckbox.AddThemeFontSizeOverride("font_size", 13);
+        resetUIRow.AddChild(_resetUICheckbox);
+        leftCol.AddChild(resetUIRow);
+
+        _enterWorldButton = new Button { Text = "Enter", Disabled = true };
+        _enterWorldButton.CustomMinimumSize = new Vector2(0, 44);
+        _enterWorldButton.AddThemeFontSizeOverride("font_size", 18);
+        _enterWorldButton.Pressed += OnEnterWorldPressed;
+        leftCol.AddChild(_enterWorldButton);
+
+        leftCol.AddChild(new HSeparator());
+
+        _quitButton = new Button { Text = "Quit" };
+        _quitButton.CustomMinimumSize = new Vector2(0, 36);
+        _quitButton.AddThemeFontSizeOverride("font_size", 14);
+        _quitButton.Pressed += () => GetTree().Quit();
+        leftCol.AddChild(_quitButton);
+
+        hSplit.AddChild(leftCol);
+
+        // ════════ RIGHT COLUMN: 3D Preview ════════
+        var rightCol = new VBoxContainer();
+        rightCol.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        rightCol.SizeFlagsStretchRatio = 0.6f;
+
+        _charSelectPreviewContainer = new SubViewportContainer();
+        _charSelectPreviewContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _charSelectPreviewContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _charSelectPreviewContainer.Stretch = true;
+        
+        var previewStyle = new StyleBoxFlat();
+        previewStyle.BgColor = new Color(0.02f, 0.02f, 0.04f, 1f);
+        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 1;
+        previewStyle.BorderColor = new Color(0.5f, 0.4f, 0.15f, 0.6f);
+        previewStyle.CornerRadiusTopLeft = previewStyle.CornerRadiusTopRight = previewStyle.CornerRadiusBottomLeft = previewStyle.CornerRadiusBottomRight = 4;
+        
+        var bgPanel = new PanelContainer();
+        bgPanel.SizeFlagsVertical = SizeFlags.ExpandFill;
+        bgPanel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        bgPanel.AddThemeStyleboxOverride("panel", previewStyle);
+
+        _charSelectPreviewViewport = new SubViewport();
+        _charSelectPreviewViewport.Size = new Vector2I(400, 500);
+        _charSelectPreviewViewport.TransparentBg = true;
+        _charSelectPreviewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+        _charSelectPreviewViewport.OwnWorld3D = true;
+
+        _charSelectPreviewCamera = new Camera3D();
+        _charSelectPreviewCamera.Position = new Vector3(0, 1.0f, 10.0f);
+        _charSelectPreviewCamera.RotationDegrees = new Vector3(-4f, 0, 0);
+        _charSelectPreviewCamera.Fov = 30f;
+        _charSelectPreviewViewport.AddChild(_charSelectPreviewCamera);
+
+        var previewLight = new DirectionalLight3D();
+        previewLight.RotationDegrees = new Vector3(-30, -45, 0);
+        previewLight.LightEnergy = 1.2f;
+        _charSelectPreviewViewport.AddChild(previewLight);
+        
+        var fillLight = new DirectionalLight3D();
+        fillLight.RotationDegrees = new Vector3(-15, 135, 0);
+        fillLight.LightEnergy = 0.4f;
+        _charSelectPreviewViewport.AddChild(fillLight);
+
+        _charSelectPreviewRoot = new Node3D();
+        _charSelectPreviewRoot.Name = "CharSelectPreviewRoot";
+        _charSelectPreviewRoot.Rotation = new Vector3(0, -Mathf.Pi / 2f, 0); // Face front
+        _charSelectPreviewViewport.AddChild(_charSelectPreviewRoot);
+
+        _charSelectPreviewContainer.AddChild(_charSelectPreviewViewport);
+        bgPanel.AddChild(_charSelectPreviewContainer);
+        rightCol.AddChild(bgPanel);
+
+        hSplit.AddChild(rightCol);
+
+        (_charSelectPanel as PanelContainer).AddChild(hSplit);
         AddChild(_charSelectPanel);
     }
 
@@ -1334,6 +1425,29 @@ public partial class MainMenu : Control
         GD.Print($"[MENU] Sent CREATE_CHARACTER: {name} ({classKey}/{race}) gender={_selectedGender} face={_selectedFace} deity={deity}");
     }
 
+    private int GetDragItem111ClassIconIndex(int classId)
+    {
+        return classId switch {
+            1 => 27, // Warrior
+            2 => 17, // Cleric
+            3 => 16, // Paladin
+            4 => 11, // Ranger
+            5 => 23, // Shadow Knight
+            6 => 21, // Druid
+            7 => 15, // Monk
+            8 => 4,  // Bard
+            9 => 30, // Rogue
+            10 => 31, // Shaman
+            11 => 9,  // Necromancer
+            12 => 22, // Wizard
+            13 => 10, // Magician
+            14 => 28, // Enchanter
+            15 => 29, // Beastlord
+            16 => 5,  // Berserker
+            _ => 27
+        };
+    }
+
     private void PopulateCharacterList(JsonElement characters)
     {
         // Clear existing
@@ -1342,6 +1456,13 @@ public partial class MainMenu : Control
 
         _selectedCharName = null;
         _enterWorldButton.Disabled = true;
+        _deleteCharButton.Disabled = true;
+
+        if (_charSelectPreviewModel != null)
+        {
+            _charSelectPreviewModel.QueueFree();
+            _charSelectPreviewModel = null;
+        }
 
         if (characters.GetArrayLength() == 0)
         {
@@ -1360,16 +1481,74 @@ public partial class MainMenu : Control
             string className = ch.GetProperty("className").GetString();
             string race = ch.GetProperty("race").GetString();
             int level = ch.GetProperty("level").GetInt32();
+            
+            int raceId = ch.TryGetProperty("raceId", out var rProp) ? rProp.GetInt32() : 1;
+            int gender = ch.TryGetProperty("gender", out var gProp) ? gProp.GetInt32() : 0;
+            int face = ch.TryGetProperty("face", out var fProp) ? fProp.GetInt32() : 0;
+
+            // Resolve Class ID
+            int classId = 1;
+            foreach (var kvp in ClassKeys)
+            {
+                if (kvp.Value.Equals(className, StringComparison.OrdinalIgnoreCase))
+                {
+                    classId = kvp.Key;
+                    break;
+                }
+            }
 
             var btn = new Button();
-            btn.Text = $"  {charName}  —  Lv{level} {Capitalize(race)} {Capitalize(className)}";
-            btn.CustomMinimumSize = new Vector2(0, 40);
-            btn.AddThemeFontSizeOverride("font_size", 14);
-            btn.Alignment = HorizontalAlignment.Left;
+            btn.CustomMinimumSize = new Vector2(0, 50);
             btn.ToggleMode = true;
+            btn.FocusMode = FocusModeEnum.None;
+
+            var hbox = new HBoxContainer();
+            hbox.SetAnchorsPreset(LayoutPreset.FullRect);
+            hbox.AddThemeConstantOverride("separation", 10);
             
+            // Margin for padding
+            var margin = new MarginContainer();
+            margin.AddThemeConstantOverride("margin_left", 8);
+            margin.AddThemeConstantOverride("margin_top", 4);
+            margin.AddThemeConstantOverride("margin_bottom", 4);
+            margin.AddThemeConstantOverride("margin_right", 8);
+            hbox.AddChild(margin);
+
+            // Class Icon
+            var iconRect = new TextureRect();
+            iconRect.CustomMinimumSize = new Vector2(40, 40);
+            iconRect.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+            int localIndex = GetDragItem111ClassIconIndex(classId);
+            iconRect.Texture = IconManager.Instance.GetItemIcon(4460 + localIndex);
+            margin.AddChild(iconRect);
+
+            // Text Info
+            var vboxInfo = new VBoxContainer();
+            vboxInfo.Alignment = BoxContainer.AlignmentMode.Center;
+            vboxInfo.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            vboxInfo.AddThemeConstantOverride("separation", -2);
+
+            var nameLabel = new Label();
+            nameLabel.Text = charName;
+            nameLabel.AddThemeFontSizeOverride("font_size", 16);
+            nameLabel.AddThemeColorOverride("font_color", new Color(1f, 0.9f, 0.6f, 1f));
+            vboxInfo.AddChild(nameLabel);
+
+            var classLabel = new Label();
+            classLabel.Text = $"Lv{level} {Capitalize(race)} {Capitalize(className)}";
+            classLabel.AddThemeFontSizeOverride("font_size", 12);
+            classLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f, 1f));
+            vboxInfo.AddChild(classLabel);
+
+            hbox.AddChild(vboxInfo);
+            btn.AddChild(hbox);
+
             // Capture for lambda
             string capturedName = charName;
+            int capRaceId = raceId;
+            int capGender = gender;
+            int capFace = face;
+
             btn.Pressed += () =>
             {
                 // Deselect all others
@@ -1379,11 +1558,105 @@ public partial class MainMenu : Control
                 }
                 _selectedCharName = capturedName;
                 _enterWorldButton.Disabled = false;
-                _enterWorldButton.Text = $"Enter World as {capturedName}";
                 _deleteCharButton.Disabled = false;
+                
+                UpdateCharSelectPreviewModel(capRaceId, capGender, capFace);
             };
 
             _charListContainer.AddChild(btn);
+        }
+    }
+
+    private void UpdateCharSelectPreviewModel(int raceId, int gender, int face)
+    {
+        if (_charSelectPreviewRoot == null) return;
+
+        if (_charSelectPreviewModel != null)
+        {
+            _charSelectPreviewModel.QueueFree();
+            _charSelectPreviewModel = null;
+        }
+
+        if (!RaceModelCodes.TryGetValue(raceId, out string[] codes)) return;
+        
+        string modelCode = (gender == 0) ? codes[0] : codes[1];
+        
+        string modelPath;
+        if (face > 0)
+        {
+            string facePath = $"res://Data/Characters/{modelCode}_face{face}.glb";
+            modelPath = ResourceLoader.Exists(facePath) ? facePath : $"res://Data/Characters/{modelCode}.glb";
+        }
+        else
+        {
+            modelPath = $"res://Data/Characters/{modelCode}.glb";
+        }
+
+        if (!ResourceLoader.Exists(modelPath)) return;
+
+        try
+        {
+            var gltfDoc = new GltfDocument();
+            var gltfState = new GltfState();
+            using var file = FileAccess.Open(modelPath, FileAccess.ModeFlags.Read);
+            byte[] glbBytes = file.GetBuffer((long)file.GetLength());
+            var err = gltfDoc.AppendFromBuffer(glbBytes, "", gltfState);
+            if (err != Error.Ok) return;
+
+            Node scene = gltfDoc.GenerateScene(gltfState);
+            if (scene == null) return;
+
+            _charSelectPreviewModel = new Node3D();
+            _charSelectPreviewModel.AddChild(scene);
+            _charSelectPreviewRoot.AddChild(_charSelectPreviewModel);
+
+            float scale = 1.0f;
+            float yRotation = 0f;
+            float camHeight = 1.0f;
+            float lookAtY = 0.7f;
+            float zoom = 12.0f;
+
+            if (raceId == 9 || raceId == 10) scale = 0.7f;
+            else if (raceId == 2) scale = 0.85f;
+            else if (raceId == 11 || raceId == 12) scale = 1.4f;
+
+            if (raceId == 128)
+            {
+                yRotation = Mathf.Pi;
+                camHeight = 5.0f;
+                lookAtY = 3.5f;
+                zoom = 24.0f;
+            }
+
+            _charSelectPreviewModel.Scale = Vector3.One * scale;
+            _charSelectPreviewModel.RotationDegrees = new Vector3(0, Mathf.RadToDeg(yRotation), 0);
+
+            if (_charSelectPreviewCamera != null)
+            {
+                _charSelectPreviewCamera.Position = new Vector3(0, camHeight, zoom);
+                _charSelectPreviewCamera.LookAtFromPosition(new Vector3(0, camHeight, zoom), new Vector3(0, lookAtY, 0), Vector3.Up);
+            }
+
+            var animPlayer = FindPreviewAnimationPlayer(scene);
+            if (animPlayer != null)
+            {
+                string idleAnim = null;
+                if (animPlayer.HasAnimation("p01")) idleAnim = "p01";
+                else
+                {
+                    foreach (var animName in animPlayer.GetAnimationList())
+                    {
+                        if (animName.StartsWith("p")) { idleAnim = animName; break; }
+                    }
+                    if (idleAnim == null && animPlayer.GetAnimationList().Length > 0)
+                        idleAnim = animPlayer.GetAnimationList()[0];
+                }
+                if (idleAnim != null) animPlayer.Play(idleAnim);
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MENU] CharSelect Preview error: {ex.Message}");
         }
     }
 
@@ -1729,6 +2002,8 @@ public partial class MainMenu : Control
         }
     }
 
+    private float _charSelectPreviewRotation = -Mathf.Pi / 2f;
+
     public override void _Process(double delta)
     {
         if (_previewRoot != null && _createPanel != null && _createPanel.Visible)
@@ -1744,6 +2019,12 @@ public partial class MainMenu : Control
                 _previewCamera.Position = new Vector3(0, _previewCamHeight, _previewZoom);
                 _previewCamera.LookAt(new Vector3(0, _previewLookAtY, 0), Vector3.Up);
             }
+        }
+
+        if (_charSelectPreviewRoot != null && _charSelectPanel != null && _charSelectPanel.Visible)
+        {
+            _charSelectPreviewRotation += (float)delta * 0.5f;
+            _charSelectPreviewRoot.Rotation = new Vector3(0, _charSelectPreviewRotation, 0);
         }
     }
 

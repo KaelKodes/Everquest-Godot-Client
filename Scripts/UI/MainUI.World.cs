@@ -363,6 +363,10 @@ public partial class MainUI
 						{
 							_buffContextMenu.AddItem("Remove", 1);
 						}
+						_buffContextMenu.AddSeparator();
+						_buffContextMenu.AddItem("Move Window", 2);
+						_buffContextMenu.AddItem("Resize Window", 3);
+						
 						var mousePos = GetGlobalMousePosition();
 						_buffContextMenu.Position = new Vector2I((int)mousePos.X, (int)mousePos.Y);
 						_buffContextMenu.Popup();

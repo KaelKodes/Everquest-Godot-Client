@@ -2451,6 +2451,21 @@ public partial class MainUI : Control
 		{
 			_client.SendRaw($"{{\"type\": \"REMOVE_BUFF\", \"name\": \"{_contextMenuTargetBuff.Name}\"}}");
 		}
+		else if (id == 2 || id == 3) // Move or Resize Window
+		{
+			// Find the parent ResponsiveIconWindow of the buff
+			Node current = _contextMenuTargetBuff.IconNode;
+			while (current != null)
+			{
+				if (current is ResponsiveIconWindow riw)
+				{
+					if (id == 2) riw.StartMove();
+					else riw.StartResize();
+					break;
+				}
+				current = current.GetParent();
+			}
+		}
 
 		_contextMenuTargetBuff = null;
 	}

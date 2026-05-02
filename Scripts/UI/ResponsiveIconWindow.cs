@@ -37,22 +37,26 @@ public partial class ResponsiveIconWindow : Window
         CallDeferred(MethodName.OnSizeChanged);
     }
 
+    public void StartMove()
+    {
+        _isMoving = true;
+        _isResizing = false;
+        Borderless = true;
+        Unfocusable = false;
+    }
+
+    public void StartResize()
+    {
+        _isMoving = false;
+        _isResizing = true;
+        Borderless = false;
+        Unfocusable = false;
+    }
+
     private void OnContextMenuItemPressed(long id)
     {
-        if (id == 0) // Move
-        {
-            _isMoving = true;
-            _isResizing = false;
-            Borderless = true; // Keep borderless for sticky move
-            Unfocusable = false;
-        }
-        else if (id == 1) // Resize
-        {
-            _isMoving = false;
-            _isResizing = true;
-            Borderless = false; // Show OS borders so user can grab edges
-            Unfocusable = false;
-        }
+        if (id == 0) StartMove();
+        else if (id == 1) StartResize();
     }
 
     public override void _UnhandledInput(InputEvent @event)

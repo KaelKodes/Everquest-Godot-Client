@@ -1,4 +1,4 @@
-# 🌑 Everquest.Godt (Client)
+# 🌑 Everquest.Godot (Client)
 
 *The world of Norrath has grown dark. The ancient forests of the Faydark are no longer safe, and the shadows have a life of their own. Steel your nerves, traveler.*
 

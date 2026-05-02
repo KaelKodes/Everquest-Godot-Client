@@ -12,6 +12,8 @@ public partial class MainUI : Control
 	private Label _hpLabel;
 	private ProgressBar _manaBar;
 	private Label _manaLabel;
+	private ProgressBar _enduranceBar;
+	private Label _enduranceLabel;
 	private Label _playerNameLabel;
 	private Button _sitStandBtn;
 	private Button _autoFightBtn;
@@ -70,6 +72,9 @@ public partial class MainUI : Control
 	
 	// Extended Target Frame
 	private Window _targetListWindow;
+	private TrackingWindow _trackingWindow;
+	public void ClearTrackingWindow() { _trackingWindow = null; }
+	private BankWindow _bankWindow;
 	private Button[] _extendedTargetBtns = new Button[10];
 
 	// XP / Level / Zone
@@ -208,7 +213,9 @@ public partial class MainUI : Control
 	private double _maxMana = 0;
 	private double _currentHp = 0;
 	private double _maxHp = 0;
+	private double _currentEndurance = 100;
 	private string _charName;
+	private List<string> _spellLoadouts = new List<string>();
 	public int GetPlayerLevel() => _charLevel;
 	private int _charLevel = 1;
 	private int _raceId = 1;
@@ -338,6 +345,7 @@ public partial class MainUI : Control
 		_client.CharacterStatusReceived += OnCharacterStatusReceived;
 		_client.SpellbookUpdated += OnSpellbookUpdated;
 		_client.SpellbookFullReceived += OnSpellbookFullReceived;
+		_client.SpellLoadoutsReceived += OnSpellLoadoutsReceived;
 		_client.CombatLogReceived += OnCombatLogReceived;
 		_client.BuffsUpdated += OnBuffsUpdated;
 		_client.InventoryUpdated += OnInventoryUpdated;
@@ -374,6 +382,37 @@ public partial class MainUI : Control
 			_chatInput.TextSubmitted += OnChatSubmitted;
 			_chatInput.FocusEntered += () => _chatInputFocused = true;
 			_chatInput.FocusExited += () => _chatInputFocused = false;
+			_chatInput.GuiInput += (ev) => {
+				if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
+				{
+					if (_heldItem.HasValue)
+					{
+						string itemName = _heldItem.Value.GetProperty("itemName").GetString();
+						int itemId = _heldItem.Value.GetProperty("item_id").GetInt32();
+						string link = $"[url={{\"type\":\"item\",\"id\":{itemId}}}][color=#40a0ff][{itemName}][/color][/url]";
+						_chatInput.Text += link;
+						_chatInput.CaretColumn = _chatInput.Text.Length;
+						CancelHeldItem();
+						_chatInput.GrabFocus();
+						GetViewport().SetInputAsHandled();
+					}
+					else if (_hotbarManager != null && _hotbarManager.IsDragging)
+					{
+						var dragData = _hotbarManager.DragData;
+						if (dragData != null && dragData.Type == Hotbar.HotbuttonType.Spell)
+						{
+							string spellName = dragData.DisplayName;
+							int spellId = _spells[dragData.SpellSlotIndex].SpellId;
+							string link = $"[url={{\"type\":\"spell\",\"id\":{spellId}}}][color=#ffb000][{spellName}][/color][/url]";
+							_chatInput.Text += link;
+							_chatInput.CaretColumn = _chatInput.Text.Length;
+							_hotbarManager.CancelDrag();
+							_chatInput.GrabFocus();
+							GetViewport().SetInputAsHandled();
+						}
+					}
+				}
+			};
 		}
 
 		// Create Windows (hidden by default)
@@ -524,6 +563,35 @@ public partial class MainUI : Control
 		
 		_manaBar = GetNode<ProgressBar>("%ManaBar");
 		_manaLabel = GetNode<Label>("%ManaLabel");
+		
+		_enduranceBar = new ProgressBar();
+		_enduranceBar.Name = "EnduranceBar";
+		_enduranceBar.CustomMinimumSize = new Vector2(0, 25);
+		_enduranceBar.ShowPercentage = false;
+		
+		var endurStyle = new StyleBoxFlat();
+		endurStyle.BgColor = new Color(0.8f, 0.8f, 0.1f, 1);
+		endurStyle.BorderWidthBottom = 1; endurStyle.BorderWidthTop = 1; endurStyle.BorderWidthLeft = 1; endurStyle.BorderWidthRight = 1;
+		endurStyle.BorderColor = new Color(0.2f, 0.2f, 0, 1);
+		_enduranceBar.AddThemeStyleboxOverride("fill", endurStyle);
+
+		_enduranceLabel = new Label();
+		_enduranceLabel.Name = "EnduranceLabel";
+		_enduranceLabel.Text = "END: 100/100";
+		_enduranceLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_enduranceLabel.VerticalAlignment = VerticalAlignment.Center;
+		_enduranceLabel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_enduranceLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 1));
+		_enduranceLabel.AddThemeConstantOverride("outline_size", 4);
+		_enduranceLabel.AddThemeFontSizeOverride("font_size", 14);
+
+		_enduranceBar.AddChild(_enduranceLabel);
+		
+		var statusVBox = GetNodeOrNull<VBoxContainer>("StatusWindow/VBox");
+		if (statusVBox != null) {
+			statusVBox.AddChild(_enduranceBar);
+		}
+
 		_playerNameLabel = GetNode<Label>("%PlayerName");
 		
 		_sitStandBtn = GetNodeOrNull<Button>("%SitStandBtn");
@@ -534,6 +602,16 @@ public partial class MainUI : Control
 		if (_campBtn != null) _campBtn.Pressed += OnCampPressed;
 		
 		_actionBar = GetNodeOrNull<VBoxContainer>("%SpellBar") ?? GetNodeOrNull<VBoxContainer>("SpellBarWindow/SpellBar");
+		if (_actionBar != null)
+		{
+			_actionBar.MouseFilter = Control.MouseFilterEnum.Stop;
+			_actionBar.GuiInput += (ev) => {
+				if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Right)
+				{
+					ShowSpellbarContextMenu(_actionBar);
+				}
+			};
+		}
 		_buffBarWindow = GetNodeOrNull<Window>("%BuffWindow");
 		_buffBar = GetNodeOrNull<Container>("%BuffBar");
 
@@ -1380,6 +1458,7 @@ public partial class MainUI : Control
 			_client.CharacterStatusReceived -= OnCharacterStatusReceived;
 			_client.SpellbookUpdated -= OnSpellbookUpdated;
 			_client.SpellbookFullReceived -= OnSpellbookFullReceived;
+			_client.SpellLoadoutsReceived -= OnSpellLoadoutsReceived;
 			_client.CombatLogReceived -= OnCombatLogReceived;
 			_client.BuffsUpdated -= OnBuffsUpdated;
 			_client.InventoryUpdated -= OnInventoryUpdated;
@@ -1724,6 +1803,49 @@ public partial class MainUI : Control
 					if (root.TryGetProperty("skills", out var skillsProp) && _skillsWindow != null)
 					{
 						_skillsWindow.UpdateSkills(skillsProp, _charLevel);
+					}
+					break;
+				}
+				case "ITEM_DETAILS":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("item", out var itemJson))
+					{
+						var pos = GetGlobalMousePosition();
+						var viewportSize = GetViewportRect().Size;
+						if (pos.X + 300 > viewportSize.X) pos.X = viewportSize.X - 300;
+						if (pos.Y + 400 > viewportSize.Y) pos.Y = viewportSize.Y - 400;
+						_itemDetailPopup.ShowItem(itemJson, pos);
+					}
+					break;
+				}
+				case "OPEN_BANK":
+				{
+					if (_bankWindow == null || !IsInstanceValid(_bankWindow))
+					{
+						_bankWindow = new BankWindow();
+						AddChild(_bankWindow);
+					}
+					_bankWindow.Show();
+					_bankWindow.UpdateMoneyDisplay(_copper);
+					// Request an inventory sync so bank slots populate
+					_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
+					break;
+				}
+				case "TRACKING_LIST":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("targets", out var targetsProp))
+					{
+						if (_trackingWindow == null || !IsInstanceValid(_trackingWindow))
+						{
+							_trackingWindow = new TrackingWindow();
+							AddChild(_trackingWindow);
+						}
+						_trackingWindow.UpdateList(targetsProp);
+						_trackingWindow.Show();
 					}
 					break;
 				}

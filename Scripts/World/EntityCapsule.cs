@@ -23,6 +23,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public string EntityName { get; private set; } = "Entity";
     public string EntityType { get; private set; } = "enemy";
     public int Gender { get; private set; } = 0; // 0=Male, 1=Female, 2=Neutral
+    public int Face { get; private set; } = 0;
     
     // Performance Caches
     private Area3D _clickArea;
@@ -968,6 +969,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         EntityName = name;
         EntityType = type;
         Gender = gender;
+        Face = face;
         _nameLabel.Text = name;
         
         // Apply classic EQ color coding
@@ -1027,6 +1029,9 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 break;
             case "mining_node":
                 nameColor = new Color(0.85f, 0.65f, 0.3f); // Gold/brown for ore
+                break;
+            case "corpse":
+                nameColor = new Color(0.6f, 0.6f, 0.6f); // Grey
                 break;
         }
 
@@ -1091,19 +1096,25 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             string modelCode = (gender == 1) ? codes.female : codes.male;
             _modelCode = modelCode;
             
-            // Try face variant first: {code}_face{N}.glb, then fall back to base
-            string modelPath;
+            string modelPath = $"res://Data/Characters/{modelCode}.glb";
+
             if (face > 0)
             {
-                string facePath = $"res://Data/Characters/{modelCode}_face{face}.glb";
-                if (ResourceLoader.Exists(facePath))
-                    modelPath = facePath;
-                else
-                    modelPath = $"res://Data/Characters/{modelCode}.glb";
+                if (modelCode != "frm" && modelCode != "frf" && modelCode != "kem" && modelCode != "kef")
+                {
+                    string facePath = $"res://Data/Characters/{modelCode}_face{face}.glb";
+                    if (ResourceLoader.Exists(facePath))
+                    {
+                        modelPath = facePath;
+                    }
+                }
             }
-            else
+
+            string mergedPath = $"res://Data/Characters/{modelCode}_merged.glb";
+            bool useMergedAnims = false;
+            if (ResourceLoader.Exists(mergedPath))
             {
-                modelPath = $"res://Data/Characters/{modelCode}.glb";
+                useMergedAnims = true;
             }
 
             if (ResourceLoader.Exists(modelPath))
@@ -1114,6 +1125,52 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                     if (scene != null)
                     {
                         _characterModel = scene.Instantiate<Node3D>();
+
+                        if (useMergedAnims)
+                        {
+                            var mergedScene = GD.Load<PackedScene>(mergedPath);
+                            if (mergedScene != null)
+                            {
+                                var mergedInst = mergedScene.Instantiate<Node3D>();
+                                var animPlayer = FindAnimationPlayer(mergedInst);
+                                if (animPlayer != null)
+                                {
+                                    animPlayer.Owner = null;
+                                    animPlayer.GetParent().RemoveChild(animPlayer);
+                                    _characterModel.AddChild(animPlayer);
+                                    animPlayer.Owner = _characterModel;
+
+                                    // Fix broken track paths from the merged GLB
+                                    Skeleton3D skeleton = FindSkeleton(_characterModel);
+                                    if (skeleton != null)
+                                    {
+                                        animPlayer.RootNode = new NodePath("..");
+                                        string skeletonPath = _characterModel.GetPathTo(skeleton);
+                                        foreach (var animName in animPlayer.GetAnimationList())
+                                        {
+                                            var anim = animPlayer.GetAnimation(animName);
+                                            for (int i = 0; i < anim.GetTrackCount(); i++)
+                                            {
+                                                string oldPath = anim.TrackGetPath(i).ToString();
+                                                string subPath = oldPath.Contains(':') ? oldPath.Substring(oldPath.IndexOf(':')) : "";
+                                                subPath = subPath.Replace("Clone of ", "");
+                                                
+                                                if (oldPath.Contains("Skeleton3D"))
+                                                {
+                                                    anim.TrackSetPath(i, skeletonPath + subPath);
+                                                }
+                                                else
+                                                {
+                                                    anim.TrackSetPath(i, "." + subPath);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                mergedInst.QueueFree();
+                            }
+                        }
+
                         // Rotate model to face Godot's -Z forward
                         // LanternExtractor: EQ models face +X, need +90° Y
                         // EQSage exports (Iksar/Vah Shir): face opposite, need +270° Y
@@ -1194,9 +1251,19 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         // Cache the Skeleton3D to prevent expensive recursive lookups in _PhysicsProcess
                         _cachedSkeleton = FindSkeleton(_characterModel);
 
-                        // Store AnimationPlayer reference and start idle
+                        // Store AnimationPlayer reference and start idle/death
                         _animPlayer = FindAnimationPlayer(_characterModel);
-                        PlayAnimation("p01");
+                        if (type.ToLower() == "corpse")
+                        {
+                            PlayDeath();
+                            // Stop the animation at the end so it stays dead
+                            _animPlayer.Advance(_animPlayer.CurrentAnimationLength);
+                            _animPlayer.Pause();
+                        }
+                        else
+                        {
+                            PlayAnimation("p01");
+                        }
 
                         // Apply per-slot armor textures if provided
                         if (!string.IsNullOrEmpty(equipVisualsJson))
@@ -1272,11 +1339,12 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
             foreach (var (partCode, jsonKey) in ArmorSlots)
             {
-                if (!mats.TryGetProperty(jsonKey, out var matVal)) continue;
-                int material = matVal.GetInt32();
-                if (material <= 0) continue; // 0 = cloth/base, skip
-
-                string matStr = material.ToString("D2");
+                string matStr = null;
+                if (mats.TryGetProperty(jsonKey, out var matVal))
+                {
+                    int material = matVal.GetInt32();
+                    if (material > 0) matStr = material.ToString("D2");
+                }
                 ApplyPartTextures(modelRoot, raceCode, partCode, matStr, ref swapped);
             }
 
@@ -1312,8 +1380,33 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 if (digits.Length < 2) continue;
                 string piece = digits.Substring(digits.Length - 2);
 
+                if (matStr == null)
+                {
+                    // If unequipping head armor, check if we need to apply a face texture variant
+                    if (partCode == "he" && Face > 0)
+                    {
+                        // Proceed to load face texture
+                    }
+                    else
+                    {
+                        meshInst.SetSurfaceOverrideMaterial(i, null);
+                        swapped++;
+                        continue;
+                    }
+                }
+
+                string targetMatStr = matStr ?? "00";
+                
+                // If this is the base head texture (no helmet), apply the Face index to the piece number
+                int pieceNum = int.Parse(piece);
+                if (targetMatStr == "00" && partCode == "he" && Face > 0)
+                {
+                    pieceNum += Face * 10;
+                }
+                string targetPiece = pieceNum.ToString("D2");
+
                 // Load armor texture: {race}{part}{material}{piece}.png
-                string texFile = $"{raceCode}{partCode}{matStr}{piece}.png";
+                string texFile = $"{raceCode}{partCode}{targetMatStr}{targetPiece}.png";
                 string texPath = $"res://Data/Characters/Textures/{texFile}";
 
                 if (!ResourceLoader.Exists(texPath)) continue;
@@ -1334,6 +1427,85 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
     }
 
+    private void ApplyLuclinSkinToNode(Node node, string raceCode, int face, ref int swapped)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            int surfaceCount = meshInst.Mesh != null ? meshInst.Mesh.GetSurfaceCount() : 0;
+            for (int i = 0; i < surfaceCount; i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat is not StandardMaterial3D stdMat) continue;
+
+                string matName = stdMat.ResourceName;
+                if (string.IsNullOrEmpty(matName))
+                {
+                    if (stdMat.AlbedoTexture != null)
+                    {
+                        matName = System.IO.Path.GetFileNameWithoutExtension(stdMat.AlbedoTexture.ResourcePath);
+                        if (matName.StartsWith($"{raceCode}_"))
+                        {
+                            matName = matName.Substring(raceCode.Length + 1);
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(matName)) continue;
+
+                if (matName.StartsWith("d_"))
+                {
+                    matName = matName.Substring(2);
+                }
+
+                if ((raceCode == "kem" || raceCode == "kef") && matName.EndsWith("0001"))
+                {
+                    matName = matName.Substring(0, matName.Length - 4) + "sk01";
+                }
+
+                string texPath;
+                if (raceCode == "kem" || raceCode == "kef")
+                {
+                    texPath = $"res://Data/Characters/{raceCode}_face{face}_{matName}.png";
+                }
+                else
+                {
+                    texPath = $"res://Data/Characters/{raceCode}_{face:D2}_{matName}.png";
+                }
+                if (!ResourceLoader.Exists(texPath))
+                {
+                    if (raceCode == "kem" || raceCode == "kef")
+                    {
+                        string fallbackMat = matName;
+                        if (fallbackMat.EndsWith("sk01") || fallbackMat.EndsWith("sk02") || fallbackMat.EndsWith("sk03") || fallbackMat.EndsWith("sk04") || fallbackMat.EndsWith("sk05"))
+                        {
+                            fallbackMat = fallbackMat.Substring(0, fallbackMat.Length - 4) + "0001 (Base Color) image";
+                            string fallbackPath = $"res://Data/Characters/{raceCode}_face{face}_{fallbackMat}.png";
+                            if (ResourceLoader.Exists(fallbackPath))
+                            {
+                                texPath = fallbackPath;
+                            }
+                        }
+                    }
+                }
+
+                if (!ResourceLoader.Exists(texPath)) continue;
+
+                var faceTex = GD.Load<Texture2D>(texPath);
+                if (faceTex == null) continue;
+
+                var newMat = (StandardMaterial3D)stdMat.Duplicate();
+                newMat.AlbedoTexture = faceTex;
+                meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                swapped++;
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            ApplyLuclinSkinToNode(child, raceCode, face, ref swapped);
+        }
+    }
+
     // ═══════ Runtime Equipment Visual Update ══════════════════════════
     /// <summary>
     /// Update equipment visuals on an already-loaded character model.
@@ -1344,13 +1516,13 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_characterModel == null) return;
 
         // Remove existing weapon bone attachments (they are named "attach_r_point", "attach_l_point", "attach_shield_point")
-        var skeleton = _cachedSkeleton;
+        var skeleton = _cachedSkeleton ?? FindSkeleton(_characterModel);
         if (skeleton != null)
         {
             var toRemove = new System.Collections.Generic.List<Node>();
             foreach (var child in skeleton.GetChildren())
             {
-                if (child is BoneAttachment3D ba && ba.Name.ToString().StartsWith("attach_"))
+                if (child is BoneAttachment3D ba && ba.Name.ToString().Contains("attach_"))
                     toRemove.Add(child);
             }
             foreach (var node in toRemove)
@@ -1359,12 +1531,26 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             }
         }
 
+        // Determine model code for armor textures
+        string modelCode = _modelCode; // Use the stored model code (e.g. frm, hum)
+        if (string.IsNullOrEmpty(modelCode))
+        {
+            modelCode = _characterModel.Name.ToString().Replace("equip_", "");
+        }
+        
+        string safeVisualsJson = string.IsNullOrEmpty(equipVisualsJson) ? "{}" : equipVisualsJson;
+        
+        if ((modelCode == "frm" || modelCode == "frf" || modelCode == "kem" || modelCode == "kef") && Face > 0)
+        {
+            int swapped = 0;
+            ApplyLuclinSkinToNode(_characterModel, modelCode, Face, ref swapped);
+        }
+
+        ApplyArmorTextures(_characterModel, modelCode, safeVisualsJson);
+        
         // Re-apply weapons if we have visual data
         if (!string.IsNullOrEmpty(equipVisualsJson))
         {
-            // Determine model code for armor textures
-            string modelCode = _characterModel.Name.ToString().Replace("equip_", "");
-            ApplyArmorTextures(_characterModel, modelCode, equipVisualsJson);
             AttachWeapons(_characterModel, equipVisualsJson);
         }
     }

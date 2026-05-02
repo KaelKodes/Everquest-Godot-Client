@@ -273,6 +273,31 @@ public partial class MainUI
 	private void OnMetaClicked(Variant meta)
 	{
 		string keyword = meta.ToString();
+		if (keyword.StartsWith("{") && keyword.EndsWith("}"))
+		{
+			try
+			{
+				using var doc = JsonDocument.Parse(keyword);
+				var root = doc.RootElement;
+				string type = root.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : "";
+				int id = root.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : 0;
+				
+				if (type == "item" && id > 0)
+				{
+					_client.SendRaw($"{{\"type\": \"ITEM_INSPECT\", \"itemId\": {id}}}");
+				}
+				else if (type == "spell" && id > 0)
+				{
+					_client.SendRaw($"{{\"type\": \"SPELL_INSPECT\", \"spellId\": {id}}}");
+				}
+			}
+			catch (Exception ex)
+			{
+				GD.PrintErr($"[UI] Failed to parse meta JSON: {ex.Message}");
+			}
+			return;
+		}
+
 		GD.Print($"[UI] Meta clicked: {keyword}");
 		_client.SendRaw($"{{\"type\": \"SAY\", \"text\": \"{keyword}\"}}");
 	}

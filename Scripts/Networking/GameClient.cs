@@ -11,6 +11,7 @@ public partial class GameClient : Node
     [Signal] public delegate void CharacterStatusReceivedEventHandler(Variant data);
     [Signal] public delegate void SpellbookUpdatedEventHandler(Variant data);
     [Signal] public delegate void SpellbookFullReceivedEventHandler(Variant data);
+    [Signal] public delegate void SpellLoadoutsReceivedEventHandler(Variant data);
     [Signal] public delegate void SpellDetailsReceivedEventHandler(Variant data);
     [Signal] public delegate void CombatLogReceivedEventHandler(Variant data);
     [Signal] public delegate void BuffsUpdatedEventHandler(Variant data);
@@ -164,6 +165,9 @@ public partial class GameClient : Node
                 case "SPELLBOOK_FULL":
                     LastSpellbookFullPayload = message;
                     EmitSignal(SignalName.SpellbookFullReceived, message);
+                    break;
+                case "SPELL_LOADOUTS":
+                    EmitSignal(SignalName.SpellLoadoutsReceived, message);
                     break;
                 case "ZONE_STATE":
                     LastZoneStatePayload = message;

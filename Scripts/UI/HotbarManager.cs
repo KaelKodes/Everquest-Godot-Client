@@ -37,6 +37,8 @@ public partial class HotbarManager : Control
 	// Drag state for hotbutton placement
 	private bool _isDragging = false;
 	private Hotbar.HotbuttonData _dragData;
+	public bool IsDragging => _isDragging;
+	public Hotbar.HotbuttonData DragData => _dragData;
 	private Label _dragLabel;
 
 	// ── Initialization ──────────────────────────────────────────────
@@ -324,6 +326,13 @@ public partial class HotbarManager : Control
 			GD.Print("[HOTBAR] Drag cancelled — not dropped on a hotbar slot.");
 		}
 
+		_isDragging = false;
+		_dragData = null;
+		_dragLabel.Visible = false;
+	}
+
+	public void CancelDrag()
+	{
 		_isDragging = false;
 		_dragData = null;
 		_dragLabel.Visible = false;

@@ -813,6 +813,9 @@ public partial class WorldManager : Node3D
                 velocity.Y = 30.0f; // Jump force
                 PlayFootstep("jmp");
                 
+                var client = GetNodeOrNull<GameClient>("/root/GameClient");
+                if (client != null) client.SendRaw("{\"type\": \"JUMP\"}");
+                
                 // Jumping cancels crouch/sneak/hide
                 if (_isCrouching)
                 {

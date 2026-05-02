@@ -150,6 +150,129 @@ public partial class MainUI
 		popup.Popup();
 	}
 
+	private void ShowSpellbarContextMenu(Control anchor)
+	{
+		var popup = new PopupMenu();
+		popup.Name = "SpellbarContext";
+		popup.AddThemeFontSizeOverride("font_size", 12);
+		
+		popup.AddItem("Save Loadout", 0);
+		popup.AddItem("Load Loadout", 1);
+		popup.AddItem("Clear Spells", 2);
+
+		popup.IdPressed += (id) =>
+		{
+			if (id == 0) // Save
+			{
+				ShowSaveLoadoutDialog();
+			}
+			else if (id == 1) // Load
+			{
+				ShowLoadLoadoutContextMenu(anchor);
+			}
+			else if (id == 2) // Clear
+			{
+				_client.SendRaw("{\"type\": \"CLEAR_SPELLS\"}");
+			}
+			popup.QueueFree();
+		};
+
+		popup.PopupHide += () => popup.QueueFree();
+		AddChild(popup);
+		popup.Position = new Vector2I((int)GetViewport().GetMousePosition().X, (int)GetViewport().GetMousePosition().Y);
+		popup.Popup();
+	}
+
+	private void ShowSaveLoadoutDialog()
+	{
+		var dialog = new AcceptDialog();
+		dialog.Title = "Save Spell Loadout";
+		dialog.DialogText = "Enter a name for this loadout:";
+		
+		var input = new LineEdit();
+		input.CustomMinimumSize = new Vector2I(200, 30);
+		dialog.AddChild(input);
+		// Move to proper VBox container inside dialog
+		dialog.RegisterTextEnter(input);
+
+		dialog.Confirmed += () => {
+			string name = input.Text.Trim();
+			if (!string.IsNullOrEmpty(name))
+			{
+				_client.SendRaw($"{{\"type\": \"SAVE_SPELL_LOADOUT\", \"name\": \"{name}\"}}");
+			}
+			dialog.QueueFree();
+		};
+		
+		dialog.Canceled += () => dialog.QueueFree();
+		
+		AddChild(dialog);
+		dialog.PopupCentered();
+	}
+
+	private void ShowLoadLoadoutContextMenu(Control anchor)
+	{
+		if (_spellLoadouts.Count == 0)
+		{
+			Log("SYSTEM", "You have no saved spell loadouts.");
+			return;
+		}
+
+		var popup = new PopupMenu();
+		popup.Name = "LoadLoadoutContext";
+		popup.AddThemeFontSizeOverride("font_size", 12);
+		
+		for (int i = 0; i < _spellLoadouts.Count; i++)
+		{
+			popup.AddItem(_spellLoadouts[i], i);
+		}
+
+		popup.IdPressed += (id) =>
+		{
+			if (id >= 0 && id < _spellLoadouts.Count)
+			{
+				string loadoutName = _spellLoadouts[(int)id];
+				ShowLoadoutActionDialog(loadoutName);
+			}
+			popup.QueueFree();
+		};
+
+		popup.PopupHide += () => popup.QueueFree();
+		AddChild(popup);
+		popup.Position = new Vector2I((int)GetViewport().GetMousePosition().X, (int)GetViewport().GetMousePosition().Y);
+		popup.Popup();
+	}
+
+	private void ShowLoadoutActionDialog(string loadoutName)
+	{
+		var dialog = new ConfirmationDialog();
+		dialog.Title = $"Loadout: {loadoutName}";
+		dialog.DialogText = $"What would you like to do with '{loadoutName}'?";
+		
+		// The confirmation dialog has "OK" and "Cancel" by default. 
+		// We can change "OK" to "Load", add a "Delete" button.
+		dialog.OkButtonText = "Load";
+		var deleteBtn = dialog.AddButton("Delete", true, "delete");
+		
+		dialog.Confirmed += () => {
+			_client.SendRaw($"{{\"type\": \"LOAD_SPELL_LOADOUT\", \"name\": \"{loadoutName}\"}}");
+			dialog.QueueFree();
+		};
+		
+		dialog.CustomAction += (action) => {
+			if (action == "delete")
+			{
+				_client.SendRaw($"{{\"type\": \"DELETE_SPELL_LOADOUT\", \"name\": \"{loadoutName}\"}}");
+				dialog.QueueFree();
+			}
+		};
+		
+		dialog.Canceled += () => dialog.QueueFree();
+		
+		AddChild(dialog);
+		dialog.PopupCentered();
+	}
+
 	private void MemorizeSpellToSlot(int slotIndex, KnownSpell sp)
 	{
 		_client.SendRaw($"{{\"type\": \"MEMORIZE_SPELL\", \"spellKey\": \"{sp.SpellKey}\", \"slot\": {slotIndex}}}");
@@ -324,6 +447,26 @@ public partial class MainUI
 		if (!IsInstanceValid(this)) return;
 		string json = (string)data;
 		_spellbookUI?.LoadFromPayload(json);
+	}
+
+	private void OnSpellLoadoutsReceived(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			string json = (string)data;
+			using var doc = JsonDocument.Parse(json);
+			var root = doc.RootElement;
+			if (root.TryGetProperty("loadouts", out var loadoutsArray))
+			{
+				_spellLoadouts.Clear();
+				foreach (var l in loadoutsArray.EnumerateArray())
+				{
+					_spellLoadouts.Add(l.GetString());
+				}
+			}
+		}
+		catch (Exception ex) { GD.PrintErr($"[UI] SpellLoadouts Error: {ex.Message}"); }
 	}
 
 	/// <summary>Called when the player left-clicks a spell in the spellbook UI.</summary>

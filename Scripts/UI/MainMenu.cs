@@ -105,7 +105,7 @@ public partial class MainMenu : Control
     // Networking
     private bool _waitingForLogin = false;
 
-    // Race data — 13 playable EQ races (Vah Shir & Froglok disabled: no animation support yet)
+    // Race data — 14 playable EQ races (Vah Shir disabled: no animation support yet)
     private static readonly string[] RaceNames = {
         "Human", "Barbarian", "Erudite", "Wood Elf", "High Elf",
         "Dark Elf", "Half Elf", "Dwarf", "Troll", "Ogre",
@@ -1840,15 +1840,25 @@ public partial class MainMenu : Control
         if (!RaceModelCodes.ContainsKey(raceId)) return;
         string modelCode = RaceModelCodes[raceId][_selectedGender == 0 ? 0 : 1];
 
-        string modelPath;
+        string modelPath = $"res://Data/Characters/{modelCode}.glb";
+
         if (_selectedFace > 0)
         {
-            string facePath = $"res://Data/Characters/{modelCode}_face{_selectedFace}.glb";
-            modelPath = ResourceLoader.Exists(facePath) ? facePath : $"res://Data/Characters/{modelCode}.glb";
+            if (modelCode != "frm" && modelCode != "frf" && modelCode != "kem" && modelCode != "kef")
+            {
+                string facePath = $"res://Data/Characters/{modelCode}_face{_selectedFace}.glb";
+                if (ResourceLoader.Exists(facePath))
+                {
+                    modelPath = facePath;
+                }
+            }
         }
-        else
+
+        string mergedPath = $"res://Data/Characters/{modelCode}_merged.glb";
+        bool useMergedAnims = false;
+        if (ResourceLoader.Exists(mergedPath))
         {
-            modelPath = $"res://Data/Characters/{modelCode}.glb";
+            useMergedAnims = true;
         }
 
         if (!ResourceLoader.Exists(modelPath))
@@ -1868,6 +1878,59 @@ public partial class MainMenu : Control
 
             Node scene = gltfDoc.GenerateScene(gltfState);
             if (scene == null) return;
+
+            if (useMergedAnims)
+            {
+                var mergedDoc = new GltfDocument();
+                var mergedState = new GltfState();
+                using var mergedFile = FileAccess.Open(mergedPath, FileAccess.ModeFlags.Read);
+                byte[] mergedBytes = mergedFile.GetBuffer((long)mergedFile.GetLength());
+                if (mergedDoc.AppendFromBuffer(mergedBytes, "", mergedState) == Error.Ok)
+                {
+                    Node mergedScene = mergedDoc.GenerateScene(mergedState);
+                    AnimationPlayer mergedAnim = FindPreviewAnimationPlayer(mergedScene);
+                    if (mergedAnim != null)
+                    {
+                        mergedAnim.Owner = null;
+                        mergedAnim.GetParent().RemoveChild(mergedAnim);
+                        scene.AddChild(mergedAnim);
+                        mergedAnim.Owner = scene;
+
+                        // Fix broken track paths from the merged GLB
+                        Skeleton3D skeleton = FindSkeleton(scene);
+                        if (skeleton != null)
+                        {
+                            mergedAnim.RootNode = new NodePath("..");
+                            string skeletonPath = scene.GetPathTo(skeleton);
+                            foreach (var animName in mergedAnim.GetAnimationList())
+                            {
+                                var anim = mergedAnim.GetAnimation(animName);
+                                for (int i = 0; i < anim.GetTrackCount(); i++)
+                                {
+                                    string oldPath = anim.TrackGetPath(i).ToString();
+                                    string subPath = oldPath.Contains(':') ? oldPath.Substring(oldPath.IndexOf(':')) : "";
+                                    subPath = subPath.Replace("Clone of ", "");
+                                    
+                                    string newPath = "";
+                                    if (oldPath.Contains("Skeleton3D"))
+                                    {
+                                        newPath = skeletonPath + subPath;
+                                    }
+                                    else
+                                    {
+                                        newPath = "." + subPath;
+                                    }
+                                    anim.TrackSetPath(i, newPath);
+                                    if (animName == "p01" && i < 5) GD.Print($"[DEBUG] Track {i} Old: {oldPath} -> New: {newPath}");
+                                }
+                            }
+                        }
+
+                        GD.Print($"[MENU] Extracted AnimationPlayer from {mergedPath} and attached to {modelPath}");
+                    }
+                    mergedScene.QueueFree();
+                }
+            }
 
             _previewModel = new Node3D();
             _previewModel.AddChild(scene);
@@ -1890,6 +1953,13 @@ public partial class MainMenu : Control
                 _previewLookAtY = 3.5f;
                 _previewZoom = 24.0f;
             }
+            else if (raceId == 130)
+            {
+                yRotation = 0f; // 0 degrees
+                _previewCamHeight = 5.0f;
+                _previewLookAtY = 3.5f;
+                _previewZoom = 28.0f;
+            }
 
             _previewModel.Scale = Vector3.One * scale;
             _previewModel.RotationDegrees = new Vector3(0, Mathf.RadToDeg(yRotation), 0);
@@ -1897,27 +1967,40 @@ public partial class MainMenu : Control
             var animPlayer = FindPreviewAnimationPlayer(scene);
             if (animPlayer != null)
             {
+                GD.Print($"[MENU] Found AnimationPlayer for {modelCode}");
                 string idleAnim = null;
+                var animList = animPlayer.GetAnimationList();
+                GD.Print($"[MENU] Animation list: {(animList.Length > 0 ? string.Join(", ", animList) : "EMPTY")}");
+                
                 if (animPlayer.HasAnimation("p01"))
                     idleAnim = "p01";
                 else
                 {
-                    foreach (var animName in animPlayer.GetAnimationList())
+                    foreach (var animName in animList)
                     {
-                        if (animName.StartsWith("p"))
+                        if (animName.StartsWith("p") && animName != "pos")
                         {
                             idleAnim = animName;
                             break;
                         }
                     }
-                    if (idleAnim == null && animPlayer.GetAnimationList().Length > 0)
-                        idleAnim = animPlayer.GetAnimationList()[0];
+                    if (idleAnim == null && animList.Length > 0)
+                        idleAnim = animList[0];
                 }
                 if (idleAnim != null)
                 {
                     animPlayer.Play(idleAnim);
                     GD.Print($"[MENU] Preview playing animation: {idleAnim}");
                 }
+                else
+                {
+                    GD.Print($"[MENU] Could not determine idleAnim for {modelCode}");
+                }
+            }
+            else
+            {
+                GD.Print($"[MENU] No AnimationPlayer found in scene for {modelCode}!");
+                PrintSceneTree(scene, "");
             }
 
             GD.Print($"[MENU] Preview loaded: {modelPath}");
@@ -1926,11 +2009,35 @@ public partial class MainMenu : Control
             {
                 ApplyArmorTextures(scene, modelCode, _selectedArmorMaterial);
             }
+            if (_selectedFace > 0)
+            {
+                ApplyFaceTexture(scene, modelCode, _selectedFace);
+            }
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[MENU] Preview load error: {ex.Message}");
         }
+    }
+
+    private static void PrintSceneTree(Node node, string indent)
+    {
+        GD.Print($"{indent}- {node.Name} ({node.GetType().Name})");
+        foreach (var child in node.GetChildren())
+        {
+            PrintSceneTree(child, indent + "  ");
+        }
+    }
+
+    private static Skeleton3D FindSkeleton(Node node)
+    {
+        if (node is Skeleton3D skel) return skel;
+        foreach (var child in node.GetChildren())
+        {
+            var result = FindSkeleton(child);
+            if (result != null) return result;
+        }
+        return null;
     }
 
     private static AnimationPlayer FindPreviewAnimationPlayer(Node root)
@@ -1999,6 +2106,178 @@ public partial class MainMenu : Control
         foreach (var child in node.GetChildren())
         {
             ApplyArmorToNode(child, raceCode, matStr, ref swapped);
+        }
+    }
+
+    private void ApplyFaceTexture(Node modelRoot, string raceCode, int face)
+    {
+        int swapped = 0;
+        GD.Print($"[FACE-SWAP] ApplyFaceTexture called for raceCode: {raceCode}, face: {face}");
+        
+        if (raceCode == "frm" || raceCode == "frf" || raceCode == "kem" || raceCode == "kef")
+        {
+            GD.Print($"[FACE-SWAP] Routing to ApplyLuclinSkinToNode");
+            ApplyLuclinSkinToNode(modelRoot, raceCode, face, ref swapped);
+        }
+        else
+        {
+            ApplyFaceToNode(modelRoot, raceCode, face, ref swapped);
+        }
+        GD.Print($"[FACE-SWAP] Completed. Swapped {swapped} textures.");
+    }
+
+    private void ApplyLuclinSkinToNode(Node node, string raceCode, int face, ref int swapped)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            int surfaceCount = meshInst.Mesh != null ? meshInst.Mesh.GetSurfaceCount() : 0;
+            int overrideCount = meshInst.GetSurfaceOverrideMaterialCount();
+            GD.Print($"[LUCLIN-SKIN] Found MeshInstance: {node.Name}. SurfaceCount: {surfaceCount}, OverrideCount: {overrideCount}");
+            
+            for (int i = 0; i < surfaceCount; i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat == null)
+                {
+                    GD.Print($"[LUCLIN-SKIN] Surface {i} on {node.Name} has null ActiveMaterial");
+                    continue;
+                }
+                
+                if (mat is not StandardMaterial3D stdMat)
+                {
+                    GD.Print($"[LUCLIN-SKIN] Surface {i} on {node.Name} material is not StandardMaterial3D, it is {mat.GetType().Name}");
+                    continue;
+                }
+
+                string matName = stdMat.ResourceName;
+                if (string.IsNullOrEmpty(matName))
+                {
+                    if (stdMat.AlbedoTexture != null)
+                    {
+                        matName = System.IO.Path.GetFileNameWithoutExtension(stdMat.AlbedoTexture.ResourcePath);
+                        if (matName.StartsWith($"{raceCode}_"))
+                        {
+                            matName = matName.Substring(raceCode.Length + 1);
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(matName))
+                {
+                    GD.Print($"[LUCLIN-SKIN] Surface {i} on {node.Name} has empty ResourceName and no AlbedoTexture!");
+                    continue;
+                }
+
+                if (matName.StartsWith("d_"))
+                {
+                    matName = matName.Substring(2);
+                }
+
+                if ((raceCode == "kem" || raceCode == "kef") && matName.EndsWith("0001"))
+                {
+                    // Vah Shir merged GLB uses cloth armor (0001) as default materials.
+                    // We must map these back to skin materials (sk01) to show proper naked tiger stripes!
+                    matName = matName.Substring(0, matName.Length - 4) + "sk01";
+                }
+
+                string texPath;
+                if (raceCode == "kem" || raceCode == "kef")
+                {
+                    texPath = $"res://Data/Characters/{raceCode}_face{face}_{matName}.png";
+                }
+                else
+                {
+                    texPath = $"res://Data/Characters/{raceCode}_{face:D2}_{matName}.png";
+                }
+                
+                if (!ResourceLoader.Exists(texPath))
+                {
+                    if (raceCode == "kem" || raceCode == "kef")
+                    {
+                        string fallbackMat = matName;
+                        if (fallbackMat.EndsWith("sk01") || fallbackMat.EndsWith("sk02") || fallbackMat.EndsWith("sk03") || fallbackMat.EndsWith("sk04") || fallbackMat.EndsWith("sk05"))
+                        {
+                            fallbackMat = fallbackMat.Substring(0, fallbackMat.Length - 4) + "0001 (Base Color) image";
+                            string fallbackPath = $"res://Data/Characters/{raceCode}_face{face}_{fallbackMat}.png";
+                            if (ResourceLoader.Exists(fallbackPath))
+                            {
+                                texPath = fallbackPath;
+                            }
+                        }
+                    }
+                }
+
+                if (!ResourceLoader.Exists(texPath))
+                {
+                    GD.Print($"[LUCLIN-SKIN] TexPath not found: {texPath}");
+                    continue;
+                }
+
+                var faceTex = GD.Load<Texture2D>(texPath);
+                if (faceTex == null)
+                {
+                    GD.Print($"[LUCLIN-SKIN] Failed to load Texture2D from: {texPath}");
+                    continue;
+                }
+
+                var newMat = (StandardMaterial3D)stdMat.Duplicate();
+                newMat.AlbedoTexture = faceTex;
+                meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                swapped++;
+                GD.Print($"[FROG-SKIN] Successfully swapped {matName} to {texPath}");
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            ApplyLuclinSkinToNode(child, raceCode, face, ref swapped);
+        }
+    }
+
+    private void ApplyFaceToNode(Node node, string raceCode, int face, ref int swapped)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                var mat = meshInst.GetActiveMaterial(i);
+                if (mat is not StandardMaterial3D stdMat) continue;
+
+                string matName = stdMat.ResourceName;
+                if (string.IsNullOrEmpty(matName)) continue;
+
+                string partPrefix = $"{raceCode}he";
+                int idx = matName.IndexOf(partPrefix, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) continue;
+
+                string afterPart = matName.Substring(idx + partPrefix.Length);
+                string digits = "";
+                foreach (char c in afterPart) { if (char.IsDigit(c)) digits += c; }
+                if (digits.Length < 2) continue;
+                string piece = digits.Substring(digits.Length - 2);
+
+                int pieceNum = int.Parse(piece);
+                pieceNum += face * 10;
+                string targetPiece = pieceNum.ToString("D2");
+
+                string texFile = $"{raceCode}he00{targetPiece}.png";
+                string texPath = $"res://Data/Characters/Textures/{texFile}";
+
+                if (!ResourceLoader.Exists(texPath)) continue;
+
+                var faceTex = GD.Load<Texture2D>(texPath);
+                if (faceTex == null) continue;
+
+                var newMat = (StandardMaterial3D)stdMat.Duplicate();
+                newMat.AlbedoTexture = faceTex;
+                meshInst.SetSurfaceOverrideMaterial(i, newMat);
+                swapped++;
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            ApplyFaceToNode(child, raceCode, face, ref swapped);
         }
     }
 

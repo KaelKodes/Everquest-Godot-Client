@@ -5,6 +5,17 @@ using System.Collections.Generic;
 
 public partial class MainUI
 {
+	private Dictionary<int, BagWindow> _openBags = new Dictionary<int, BagWindow>();
+
+	public void CloseBag(int slotId)
+	{
+		if (_openBags.TryGetValue(slotId, out var win)) {
+			if (IsInstanceValid(win)) {
+				win.QueueFree();
+			}
+			_openBags.Remove(slotId);
+		}
+	}
 	private void OnInventoryUpdated(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -33,6 +44,32 @@ public partial class MainUI
 				kvp.Value.Text = disp;
 				kvp.Value.Icon = null;
 				kvp.Value.TooltipText = kvp.Key;
+			}
+
+			foreach (var kvp in _openBags) {
+				if (IsInstanceValid(kvp.Value)) {
+					foreach (var btn in kvp.Value.Slots) {
+						btn.Text = "";
+						btn.Icon = null;
+						btn.TooltipText = "Empty";
+						_slotItemData.Remove(btn);
+					}
+				}
+			}
+
+			if (_bankWindow != null && IsInstanceValid(_bankWindow)) {
+				foreach (var btn in _bankWindow.BankSlots) {
+					btn.Text = "";
+					btn.Icon = null;
+					btn.TooltipText = "Empty";
+					_slotItemData.Remove(btn);
+				}
+				foreach (var btn in _bankWindow.SharedBankSlots) {
+					btn.Text = "";
+					btn.Icon = null;
+					btn.TooltipText = "Empty";
+					_slotItemData.Remove(btn);
+				}
 			}
 
 			// Reset all 8 general inventory slots
@@ -78,24 +115,107 @@ public partial class MainUI
 						slotBtn.TooltipText = $"{name}\n{statText}";
 						_slotItemData[slotBtn] = item.Clone();
 					}
+				} else if (slotId >= 251 && slotId <= 330) {
+					int bagIdx = (slotId - 251) / 10;
+					int parentSlotId = 22 + bagIdx;
+					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
+						int internalIdx = slotId - (251 + (bagIdx * 10));
+						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
+							var btn = win.Slots[internalIdx];
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
+							string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
+							btn.TooltipText = $"{name}\n{statText}{sellText}";
+							_slotItemData[btn] = item.Clone();
+						}
+					}
+				} else if (slotId >= 2531 && slotId <= 2770) {
+					int bagIdx = (slotId - 2531) / 10;
+					int parentSlotId = 2000 + bagIdx;
+					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
+						int internalIdx = slotId - (2531 + (bagIdx * 10));
+						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
+							var btn = win.Slots[internalIdx];
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							btn.TooltipText = $"{name}\n{statText}";
+							_slotItemData[btn] = item.Clone();
+						}
+					}
+				} else if (slotId >= 2511 && slotId <= 2590) {
+					int bagIdx = (slotId - 2511) / 10;
+					int parentSlotId = 2500 + bagIdx;
+					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
+						int internalIdx = slotId - (2511 + (bagIdx * 10));
+						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
+							var btn = win.Slots[internalIdx];
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							btn.TooltipText = $"{name}\n{statText}";
+							_slotItemData[btn] = item.Clone();
+						}
+					}
+				} else if (slotId >= 2000 && slotId <= 2023) {
+					if (_bankWindow != null && IsInstanceValid(_bankWindow)) {
+						int idx = slotId - 2000;
+						if (idx >= 0 && idx < 24) {
+							var btn = _bankWindow.BankSlots[idx];
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							btn.TooltipText = $"{name}\n{statText}";
+							_slotItemData[btn] = item.Clone();
+						}
+					}
+				} else if (slotId >= 2500 && slotId <= 2507) {
+					if (_bankWindow != null && IsInstanceValid(_bankWindow)) {
+						int idx = slotId - 2500;
+						if (idx >= 0 && idx < 8) {
+							var btn = _bankWindow.SharedBankSlots[idx];
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							btn.TooltipText = $"{name}\n{statText}";
+							_slotItemData[btn] = item.Clone();
+						}
+					}
 				} else {
 					int idx = slotId - 22;
-					if (idx < 0 || idx >= 8) continue;
-
-					var btn = _invSlots[idx];
-					if (btn == null) continue;
-					
-					btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
-					if (iconTex != null) {
-						btn.Icon = iconTex;
-						btn.ExpandIcon = true;
-						btn.IconAlignment = HorizontalAlignment.Center;
+					if (idx >= 0 && idx < 8) {
+						var btn = _invSlots[idx];
+						if (btn != null) {
+							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+							if (iconTex != null) {
+								btn.Icon = iconTex;
+								btn.ExpandIcon = true;
+								btn.IconAlignment = HorizontalAlignment.Center;
+							}
+							
+							int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
+							string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
+							btn.TooltipText = $"{name}\n{statText}{sellText}";
+							_slotItemData[btn] = item.Clone();
+						}
 					}
-					
-					int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
-					string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
-					btn.TooltipText = $"{name}\n{statText}{sellText}";
-					_slotItemData[btn] = item.Clone();
 				}
 			}
 		}
@@ -239,7 +359,7 @@ public partial class MainUI
 	}
 
 	// ─── Slot Input Handling (all slots use this) ───────────────────
-	private void HandleSlotInput(InputEvent inputEvent, Button btn, int slotId)
+	public void HandleSlotInput(InputEvent inputEvent, Button btn, int slotId)
 	{
 		if (inputEvent is InputEventMouseButton mb) {
 			if (mb.ButtonIndex == MouseButton.Left && mb.Pressed) {
@@ -283,7 +403,23 @@ public partial class MainUI
 					_rightClickItemData = itemData;
 				} else if (!mb.Pressed) {
 					if (_rightClickTimer >= 0 && _rightClickTimer < 1.0) {
-						// Short right-click — TODO: clicky/bag action
+						// Short right-click — open bag
+						if (_rightClickItemData.HasValue && _rightClickItemData.Value.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1) {
+							// Open bag window if it's a container
+							int bagslots = _rightClickItemData.Value.TryGetProperty("bagslots", out var bsProp) ? bsProp.GetInt32() : 8;
+							string bagName = _rightClickItemData.Value.TryGetProperty("itemName", out var nProp) ? nProp.GetString() : "Bag";
+							if (!_openBags.ContainsKey(slotId)) {
+								var bagWin = new BagWindow();
+								AddChild(bagWin);
+								bagWin.Init(slotId, bagslots, bagName);
+								_openBags[slotId] = bagWin;
+								
+								// Force inventory refresh so it populates immediately
+								_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
+							} else {
+								CloseBag(slotId);
+							}
+						}
 					}
 					_rightClickTimer = -1;
 					_rightClickTarget = null;
@@ -592,7 +728,7 @@ public partial class MainUI
 
 		AddRow("HP", $"{_currentHp}/{_maxHp}");
 		AddRow("MP", $"{_currentMana}/{_maxMana}");
-		AddRow("EN", "0/0");
+		AddRow("EN", $"{(int)_currentEndurance}/100");
 		AddRow("AC", $"{_ac}");
 		AddRow("Mitigation", $"{_mitigationAC}");
 		AddRow("Avoidance", $"{_avoidanceAC}");
@@ -665,7 +801,7 @@ public partial class MainUI
 
 		AddRow(L, "HP", $"{_currentHp}/{_maxHp}");
 		AddRow(L, "Mana", $"{_currentMana}/{_maxMana}");
-		AddRow(L, "Endurance", "0/0");
+		AddRow(L, "Endurance", $"{(int)_currentEndurance}/100");
 		AddRow(L, "Armor Class", $"{_ac}");
 		AddRow(L, "Attack", "0");
 		AddRow(L, "Damage", $"{_statDmg}");
@@ -821,6 +957,19 @@ public partial class MainUI
 		else if (source.TryGetProperty("maxMana", out var mm2)) { maxMana = mm2.GetDouble(); hasMana = true; }
 
 		if (source.TryGetProperty("copper", out var cpProp)) { _copper = cpProp.GetInt32(); }
+
+		double fatigue = 0;
+		if (source.TryGetProperty("fatigue", out var fProp)) { fatigue = fProp.GetDouble(); }
+		if (_enduranceBar != null)
+		{
+			_enduranceBar.MaxValue = 100;
+			double val = Math.Max(0, 100 - fatigue);
+			_enduranceBar.Value = val;
+			_currentEndurance = val;
+			if (_enduranceLabel != null) {
+				_enduranceLabel.Text = $"END: {(int)val}/100";
+			}
+		}
 
 		if (hasHp && maxHp > 0)
 		{

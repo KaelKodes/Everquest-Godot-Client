@@ -1,8 +1,8 @@
-# 🌑 Faydark MUD: Shadows of Norrath (Client)
+# 🌑 Everquest.Godt (Client)
 
 *The world of Norrath has grown dark. The ancient forests of the Faydark are no longer safe, and the shadows have a life of their own. Steel your nerves, traveler.*
 
-**Faydark MUD** is an immersive, atmospheric reimagining of the classic EverQuest experience, built on the Godot engine. This is not just a trip down memory lane; it is a descent into a world where the night is long and the dangers are real.
+**EQ.gd** is an immersive, atmospheric reimagining of the classic EverQuest experience, built on the Godot engine. This is not just a trip down memory lane; it is a descent into a world where the night is long and the dangers are real.
 
 ### 📜 The Traveler's Code (Warnings)
 - **Bring Your Own Steel:** This project **requires a legal EverQuest installation** (preferably RoF2). The engine dynamically extracts models, zones, and secrets directly from your own files at runtime.

@@ -121,10 +121,6 @@ public partial class MainUI
 		popup.AddItem("Scribe (Replace)", 0);
 		popup.AddItem("Forget", 1);
 
-		popup.AddSeparator();
-		popup.AddItem("Move Window", 2);
-		popup.AddItem("Resize Window", 3);
-
 		popup.IdPressed += (id) =>
 		{
 			if (id == 0)
@@ -144,21 +140,6 @@ public partial class MainUI
 				_spellSlotLabels[slotIndex].Text = $"Gem {slotIndex + 1}";
 				_spellSlotLabels[slotIndex].AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.5f, 0.5f));
 				_client.SendRaw($"{{\"type\": \"FORGET_SPELL\", \"slot\": {slotIndex}}}");
-			}
-			else if (id == 2 || id == 3)
-			{
-				// Find parent window
-				Node current = anchorBtn;
-				while (current != null)
-				{
-					if (current is ResponsiveIconWindow riw)
-					{
-						if (id == 2) riw.StartMove();
-						else riw.StartResize();
-						break;
-					}
-					current = current.GetParent();
-				}
 			}
 			popup.QueueFree();
 		};

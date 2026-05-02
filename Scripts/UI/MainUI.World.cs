@@ -283,10 +283,8 @@ public partial class MainUI
 
 			if (!root.TryGetProperty("buffs", out var buffs)) return;
 
-			// Clear existing buff icons
-			foreach (var existing in _activeBuffs)
-				existing.IconNode.QueueFree();
 			_activeBuffs.Clear();
+			_activeSongBuffs.Clear();
 
 			foreach (var buff in buffs.EnumerateArray())
 			{
@@ -297,109 +295,23 @@ public partial class MainUI
 				int memIcon = buff.TryGetProperty("memIcon", out var memProp) ? memProp.GetInt32() : 0;
 				bool isSong = buff.TryGetProperty("isSong", out var songProp) ? songProp.GetBoolean() : false;
 
-				// Instantiate icon from scene
-				var icon = _buffIconScene.Instantiate<Panel>();
-				
-				if (isSong && beneficial && _songBar != null)
-				{
-					_songBar.AddChild(icon);
-					if (_songBarWindow != null && _songBarWindow.HasMethod("RequestUpdate"))
-						_songBarWindow.Call("RequestUpdate");
-				}
-				else if (_buffBar != null)
-				{
-					_buffBar.AddChild(icon);
-					if (_buffBarWindow != null && _buffBarWindow.HasMethod("RequestUpdate"))
-						_buffBarWindow.Call("RequestUpdate");
-				}
-
-				// Apply spell icon
-				var iconRect = icon.GetNodeOrNull<TextureRect>("Icon");
-				var label = icon.GetNode<Label>("Label");
-				if (iconRect != null && memIcon > 0)
-				{
-					var iconMgr = IconManager.Instance;
-					if (iconMgr != null)
-					{
-						var tex = iconMgr.GetSpellGem(memIcon);
-						if (tex != null)
-						{
-							iconRect.Texture = tex;
-							label.Text = ""; // Hide text if we have an icon
-						}
-						else
-						{
-							// Fallback to text
-							label.Text = name.Length > 5 ? name[..5] : name;
-						}
-					}
-				}
-				else
-				{
-					label.Text = name.Length > 5 ? name[..5] : name;
-				}
-				
-				label.TooltipText = name; // Full name on hover
-
-				// Create the buff object first to capture in the closure
 				var buffObj = new ActiveBuff
 				{
 					Name = name,
 					DurationMax = maxDuration,
 					DurationRemaining = duration,
-					IconNode = icon
+					IconNode = null,
+					IsBeneficial = beneficial,
+					MemIcon = memIcon
 				};
 
-				icon.GuiInput += (ev) =>
-				{
-					if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Right)
-					{
-						icon.AcceptEvent();
-						_contextMenuTargetBuff = buffObj;
-						_buffContextMenu.Clear();
-						_buffContextMenu.AddItem("Details", 0);
-						// Only allow removal of beneficial buffs
-						if (beneficial)
-						{
-							_buffContextMenu.AddItem("Remove", 1);
-						}
-						_buffContextMenu.AddSeparator();
-						_buffContextMenu.AddItem("Move Window", 2);
-						_buffContextMenu.AddItem("Resize Window", 3);
-						
-						var mousePos = GetGlobalMousePosition();
-						_buffContextMenu.Position = new Vector2I((int)mousePos.X, (int)mousePos.Y);
-						_buffContextMenu.Popup();
-					}
-				};
-
-				// Color code: beneficial = blue border, harmful = red border
-				if (!beneficial)
-				{
-					var style = new StyleBoxFlat();
-					style.BgColor = new Color(0.15f, 0.08f, 0.08f, 0.9f);
-					style.BorderWidthLeft = 1;
-					style.BorderWidthTop = 1;
-					style.BorderWidthRight = 1;
-					style.BorderWidthBottom = 1;
-					style.BorderColor = new Color(1f, 0.3f, 0.3f, 1f);
-					style.CornerRadiusTopLeft = 2;
-					style.CornerRadiusTopRight = 2;
-					style.CornerRadiusBottomRight = 2;
-					style.CornerRadiusBottomLeft = 2;
-					icon.AddThemeStyleboxOverride("panel", style);
-					label.AddThemeColorOverride("font_color", new Color(1f, 0.7f, 0.7f, 1f));
-				}
-
-				// Set initial duration bar
-				var durationBar = icon.GetNode<ProgressBar>("Duration");
-				if (maxDuration > 0)
-					durationBar.Value = (duration / maxDuration) * 100.0;
+				if (isSong && beneficial)
+					_activeSongBuffs.Add(buffObj);
 				else
-					durationBar.Value = 100.0;
-
-				_activeBuffs.Add(buffObj);
+					_activeBuffs.Add(buffObj);
 			}
+
+			RefreshBuffDisplay();
 
 			GD.Print($"[UI] Buffs updated: {_activeBuffs.Count} active.");
 		}
@@ -884,6 +796,160 @@ public partial class MainUI
 		}
 		return string.Join(" ", parts);
 	}
+
+		public void RefreshBuffDisplay()
+		{
+			RenderBuffsToContainer(_buffBar, _activeBuffs);
+			RenderBuffsToContainer(_songBar, _activeSongBuffs);
+			
+			// Show windows only when they have content
+			if (_buffBarWindow != null)
+			{
+				// Ensure transparent background before first show
+				if (!_buffBarWindow.HasMeta("StyleApplied"))
+				{
+					var ts = new StyleBoxFlat();
+					ts.BgColor = new Color(0, 0, 0, 0);
+					_buffBarWindow.AddThemeStyleboxOverride("embedded_border", ts);
+					_buffBarWindow.AddThemeStyleboxOverride("embedded_unfocused_border", ts);
+					_buffBarWindow.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+					_buffBarWindow.SetMeta("StyleApplied", true);
+				}
+				_buffBarWindow.Visible = _activeBuffs.Count > 0;
+			}
+			if (_songBarWindow != null)
+			{
+				if (!_songBarWindow.HasMeta("StyleApplied"))
+				{
+					var ts = new StyleBoxFlat();
+					ts.BgColor = new Color(0, 0, 0, 0);
+					_songBarWindow.AddThemeStyleboxOverride("embedded_border", ts);
+					_songBarWindow.AddThemeStyleboxOverride("embedded_unfocused_border", ts);
+					_songBarWindow.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+					_songBarWindow.SetMeta("StyleApplied", true);
+				}
+				_songBarWindow.Visible = _activeSongBuffs.Count > 0;
+			}
+		}
+
+		private void RenderBuffsToContainer(Container container, List<ActiveBuff> buffs)
+		{
+			if (container == null) return;
+			var slots = container.GetChildren();
+			
+			for (int i = 0; i < slots.Count; i++)
+			{
+				if (slots[i] is Panel slot)
+				{
+					var iconRect = slot.GetNodeOrNull<TextureRect>("Icon");
+					var label = slot.GetNodeOrNull<Label>("Label");
+					var durationBar = slot.GetNodeOrNull<ProgressBar>("Duration");
+					
+					if (i < buffs.Count)
+					{
+						var buff = buffs[i];
+						buff.IconNode = slot;
+						slot.SetMeta("ActiveBuffIndex", i);
+						slot.SetMeta("IsSong", container == _songBar);
+						
+						slot.TooltipText = buff.Name;
+						
+						if (iconRect != null && buff.MemIcon > 0)
+						{
+							var iconMgr = IconManager.Instance;
+							if (iconMgr != null)
+							{
+								var tex = iconMgr.GetSpellGem(buff.MemIcon);
+								if (tex != null)
+								{
+									iconRect.Texture = tex;
+									label.Text = "";
+									iconRect.Visible = true;
+								}
+								else
+								{
+									label.Text = buff.Name.Length > 5 ? buff.Name[..5] : buff.Name;
+									iconRect.Visible = false;
+								}
+							}
+						}
+						else
+						{
+							if (iconRect != null) iconRect.Visible = false;
+							if (label != null) label.Text = buff.Name.Length > 5 ? buff.Name[..5] : buff.Name;
+						}
+						
+						if (durationBar != null)
+						{
+							durationBar.Visible = true;
+							durationBar.MaxValue = buff.DurationMax;
+							durationBar.Value = buff.DurationRemaining;
+						}
+						
+						if (!buff.IsBeneficial)
+						{
+							var style = new StyleBoxFlat();
+							style.BgColor = new Color(0.15f, 0.08f, 0.08f, 0.9f);
+							style.BorderWidthLeft = 1;
+							style.BorderWidthTop = 1;
+							style.BorderWidthRight = 1;
+							style.BorderWidthBottom = 1;
+							style.BorderColor = new Color(1f, 0.3f, 0.3f, 1f);
+							slot.AddThemeStyleboxOverride("panel", style);
+						}
+						else
+						{
+							slot.RemoveThemeStyleboxOverride("panel");
+						}
+						
+						if (!slot.HasMeta("HasGuiInput"))
+						{
+							slot.GuiInput += (ev) => OnSlotGuiInput(ev, slot);
+							slot.SetMeta("HasGuiInput", true);
+						}
+					}
+					else
+					{
+						slot.SetMeta("ActiveBuffIndex", -1);
+						slot.TooltipText = "";
+						slot.RemoveThemeStyleboxOverride("panel");
+						if (iconRect != null) { iconRect.Texture = null; iconRect.Visible = false; }
+						if (label != null) label.Text = "";
+						if (durationBar != null) durationBar.Visible = false;
+					}
+				}
+			}
+		}
+
+		private void OnSlotGuiInput(InputEvent ev, Panel slot)
+		{
+			if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Right)
+			{
+				int index = slot.GetMeta("ActiveBuffIndex").AsInt32();
+				if (index == -1) return;
+				
+				bool isSong = slot.GetMeta("IsSong").AsBool();
+				var buffList = isSong ? _activeSongBuffs : _activeBuffs;
+				
+				if (index >= buffList.Count) return;
+				
+				var buff = buffList[index];
+				
+				slot.AcceptEvent();
+				_contextMenuTargetBuff = buff;
+				_buffContextMenu.Clear();
+				_buffContextMenu.AddItem("Details", 0);
+				
+				if (buff.IsBeneficial)
+				{
+					_buffContextMenu.AddItem("Remove", 1);
+				}
+				
+				var mousePos = GetGlobalMousePosition();
+				_buffContextMenu.Position = new Vector2I((int)mousePos.X, (int)mousePos.Y);
+				_buffContextMenu.Popup();
+			}
+		}
 
 }
 

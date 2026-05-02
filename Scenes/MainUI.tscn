@@ -1,5 +1,6 @@
 [gd_scene format=3 uid="uid://bt4k8k8u8k8u8"]
 
+[ext_resource type="Script" uid="uid://byl1r36x2t7r1" path="res://Scripts/UI/ResponsiveIconWindow.cs" id="1_res_window"]
 [ext_resource type="Script" uid="uid://b6gnwgkrkgk35" path="res://Scripts/UI/MainUI.cs" id="1_x0y0p"]
 [ext_resource type="PackedScene" path="res://Scenes/World3D.tscn" id="3_world"]
 [ext_resource type="Script" uid="uid://cody276iur5gx" path="res://Scripts/UI/DraggablePanel.cs" id="4_drag"]
@@ -721,33 +722,39 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "[1]"
 
-[node name="BuffBar" type="HBoxContainer" parent="." unique_id=8636168]
+[node name="BuffWindow" type="Window" parent="." unique_id=8636168]
 unique_name_in_owner = true
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -947.0
-offset_top = 58.315
-offset_right = -685.0
-offset_bottom = 98.31501
-grow_horizontal = 2
-theme_override_constants/separation = 10
-alignment = 1
+oversampling_override = 1.0
+title = "Buffs"
+position = Vector2i(100, 100)
+size = Vector2i(220, 60)
+script = ExtResource("1_res_window")
 
-[node name="SongBar" type="HBoxContainer" parent="." unique_id=961309098]
+[node name="BuffBar" type="GridContainer" parent="BuffWindow" unique_id=1337445798]
 unique_name_in_owner = true
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -947.0
-offset_top = 113.24
-offset_right = -685.0
-offset_bottom = 153.24002
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
-theme_override_constants/separation = 10
-alignment = 1
+grow_vertical = 2
+columns = 5
+
+[node name="SongWindow" type="Window" parent="." unique_id=961309098]
+unique_name_in_owner = true
+oversampling_override = 1.0
+title = "Songs"
+position = Vector2i(100, 200)
+size = Vector2i(220, 60)
+script = ExtResource("1_res_window")
+
+[node name="SongBar" type="GridContainer" parent="SongWindow" unique_id=1499908869]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+columns = 5
 
 [node name="LevelLabel" type="Label" parent="." unique_id=1410997920]
 unique_name_in_owner = true

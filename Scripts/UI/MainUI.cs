@@ -87,6 +87,7 @@ public partial class MainUI : Control
 
 	// Scenes
 	private PackedScene _buffIconScene = GD.Load<PackedScene>("res://Scenes/BuffIcon.tscn");
+	public PackedScene BuffIconScene => _buffIconScene;
 	private PackedScene _inventoryItemScene = GD.Load<PackedScene>("res://Scenes/UI/InventoryItem.tscn");
 	private PackedScene _inventoryWindowScene = GD.Load<PackedScene>("res://Scenes/UI/InventoryWindow.tscn");
 	private PackedScene _merchantWindowScene = GD.Load<PackedScene>("res://Scenes/UI/MerchantWindow.tscn");
@@ -292,14 +293,17 @@ public partial class MainUI : Control
 	private AudioPlayerWindow _audioPlayerWindow;
 
 	// Buff tracking for duration ticking
-	private class ActiveBuff
+	public class ActiveBuff
 	{
 		public string Name;
 		public float DurationMax;
 		public float DurationRemaining;
 		public Panel IconNode;
+		public bool IsBeneficial;
+		public int MemIcon;
 	}
 	private List<ActiveBuff> _activeBuffs = new List<ActiveBuff>();
+	private List<ActiveBuff> _activeSongBuffs = new List<ActiveBuff>();
 	private List<ActiveBuff> _activeTargetBuffs = new List<ActiveBuff>();
 
 	private PopupMenu _buffContextMenu;
@@ -362,6 +366,7 @@ public partial class MainUI : Control
 		_buffContextMenu.Name = "BuffContextMenu";
 		_buffContextMenu.IdPressed += OnBuffContextMenuItemPressed;
 		AddChild(_buffContextMenu);
+		_buffContextMenu.Hide();
 
 		// Wire up chat input
 		_chatWindow = GetNode<Control>("ChatWindow");
@@ -532,13 +537,11 @@ public partial class MainUI : Control
 		if (_campBtn != null) _campBtn.Pressed += OnCampPressed;
 		
 		_actionBar = GetNodeOrNull<VBoxContainer>("%SpellBar") ?? GetNodeOrNull<VBoxContainer>("SpellBarWindow/SpellBar");
-		_buffBarWindow = GetNodeOrNull<Window>("%BuffBar");
-		if (_buffBarWindow != null) _buffBar = _buffBarWindow.GetChildOrNull<Container>(0);
-		else _buffBar = GetNodeOrNull<Container>("%BuffBar"); // fallback if user hasn't changed it yet
+		_buffBarWindow = GetNodeOrNull<Window>("%BuffWindow");
+		_buffBar = GetNodeOrNull<Container>("%BuffBar");
 
-		_songBarWindow = GetNodeOrNull<Window>("%SongBar");
-		if (_songBarWindow != null) _songBar = _songBarWindow.GetChildOrNull<Container>(0);
-		else _songBar = GetNodeOrNull<Container>("%SongBar"); // fallback if user hasn't changed it yet
+		_songBarWindow = GetNodeOrNull<Window>("%SongWindow");
+		_songBar = GetNodeOrNull<Container>("%SongBar");
 		_combatLog = GetNode<RichTextLabel>("%CombatLog");
 		_combatLog.BbcodeEnabled = true;
 		_combatLog.MetaClicked += OnMetaClicked;
@@ -1461,21 +1464,25 @@ public partial class MainUI : Control
 		}
 
 		// Tick buff durations
-		for (int i = _activeBuffs.Count - 1; i >= 0; i--)
+		var allBuffs = new List<ActiveBuff>(_activeBuffs);
+		allBuffs.AddRange(_activeSongBuffs);
+		
+		foreach (var buff in allBuffs)
 		{
-			var buff = _activeBuffs[i];
 			buff.DurationRemaining -= dt;
+			if (buff.DurationRemaining < 0) buff.DurationRemaining = 0;
 
-			if (buff.DurationRemaining <= 0)
+			if (buff.IconNode != null && GodotObject.IsInstanceValid(buff.IconNode))
 			{
-				buff.IconNode.QueueFree();
-				_activeBuffs.RemoveAt(i);
-				continue;
+				var durationBar = buff.IconNode.GetNodeOrNull<ProgressBar>("Duration");
+				if (durationBar != null)
+				{
+					if (buff.DurationMax > 0)
+						durationBar.Value = (buff.DurationRemaining / buff.DurationMax) * 100.0;
+					else
+						durationBar.Value = 100.0;
+				}
 			}
-
-			var durationBar = buff.IconNode.GetNode<ProgressBar>("Duration");
-			if (buff.DurationMax > 0)
-				durationBar.Value = (buff.DurationRemaining / buff.DurationMax) * 100.0;
 		}
 
 		// Tick local ability cooldowns
@@ -2450,21 +2457,6 @@ public partial class MainUI : Control
 		else if (id == 1) // Remove
 		{
 			_client.SendRaw($"{{\"type\": \"REMOVE_BUFF\", \"name\": \"{_contextMenuTargetBuff.Name}\"}}");
-		}
-		else if (id == 2 || id == 3) // Move or Resize Window
-		{
-			// Find the parent ResponsiveIconWindow of the buff
-			Node current = _contextMenuTargetBuff.IconNode;
-			while (current != null)
-			{
-				if (current is ResponsiveIconWindow riw)
-				{
-					if (id == 2) riw.StartMove();
-					else riw.StartResize();
-					break;
-				}
-				current = current.GetParent();
-			}
 		}
 
 		_contextMenuTargetBuff = null;

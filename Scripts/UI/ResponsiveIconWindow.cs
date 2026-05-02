@@ -19,14 +19,13 @@ public partial class ResponsiveIconWindow : Window
         _snapTimer.Timeout += DoSnap;
         AddChild(_snapTimer);
 
-        // Make the window content area fully transparent (both focused and unfocused states)
+        // Fully transparent window
+        Transparent = true;
+        TransparentBg = true;
         var transparentStyle = new StyleBoxFlat();
         transparentStyle.BgColor = new Color(0, 0, 0, 0);
         AddThemeStyleboxOverride("embedded_border", transparentStyle);
         AddThemeStyleboxOverride("embedded_unfocused_border", transparentStyle);
-        
-        var emptyStyle = new StyleBoxEmpty();
-        AddThemeStyleboxOverride("panel", emptyStyle);
 
         SizeChanged += OnSizeChanged;
         CallDeferred(MethodName.DoSnap);

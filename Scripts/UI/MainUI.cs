@@ -165,6 +165,7 @@ public partial class MainUI : Control
 	public static MainUI Instance { get; private set; }
 	private bool _autoFight = false;
 	private bool _isSitting = false;
+	private string _lastPlayerEquipVisuals = "";
 	private bool _isSelfTargeted = false;
 	private Spellbook _spellbookUI;
 	private string _pendingMemorizeSpellKey = null; // Set when player clicks a spell in the book
@@ -361,12 +362,7 @@ public partial class MainUI : Control
 		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.MessageReceived += OnGenericMessage;
 
-		// Create Buff Context Menu
-		_buffContextMenu = new PopupMenu();
-		_buffContextMenu.Name = "BuffContextMenu";
-		_buffContextMenu.IdPressed += OnBuffContextMenuItemPressed;
-		AddChild(_buffContextMenu);
-		_buffContextMenu.Hide();
+		// Buff Context Menu created lazily on first right-click (see EnsureBuffContextMenu)
 
 		// Wire up chat input
 		_chatWindow = GetNode<Control>("ChatWindow");
@@ -2444,6 +2440,16 @@ public partial class MainUI : Control
 
 
 
+
+	private void EnsureBuffContextMenu()
+	{
+		if (_buffContextMenu != null) return;
+		_buffContextMenu = new PopupMenu();
+		_buffContextMenu.Name = "BuffContextMenu";
+		_buffContextMenu.IdPressed += OnBuffContextMenuItemPressed;
+		AddChild(_buffContextMenu);
+		_buffContextMenu.Hide();
+	}
 
 	private void OnBuffContextMenuItemPressed(long id)
 	{

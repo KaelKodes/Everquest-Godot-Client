@@ -417,8 +417,11 @@ public partial class MainUI
 				}
 
 				// Trigger sit/stand animation on player model
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.SetPlayerSitting(_isSitting);
+				if (wasSitting != _isSitting)
+				{
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) wm.SetPlayerSitting(_isSitting);
+				}
 			}
 
 			// Auto-fight state (use autoFight flag, not inCombat)
@@ -736,8 +739,12 @@ public partial class MainUI
 			if (character.TryGetProperty("equipVisuals", out var equipVisProp))
 			{
 				string equipVis = equipVisProp.ToString();
-				var wmEquip = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wmEquip != null) wmEquip.UpdatePlayerEquipVisuals(equipVis);
+				if (_lastPlayerEquipVisuals != equipVis)
+				{
+					_lastPlayerEquipVisuals = equipVis;
+					var wmEquip = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wmEquip != null) wmEquip.UpdatePlayerEquipVisuals(equipVis);
+				}
 			}
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Status Error: {ex.Message}"); }
@@ -804,32 +811,9 @@ public partial class MainUI
 			
 			// Show windows only when they have content
 			if (_buffBarWindow != null)
-			{
-				// Ensure transparent background before first show
-				if (!_buffBarWindow.HasMeta("StyleApplied"))
-				{
-					var ts = new StyleBoxFlat();
-					ts.BgColor = new Color(0, 0, 0, 0);
-					_buffBarWindow.AddThemeStyleboxOverride("embedded_border", ts);
-					_buffBarWindow.AddThemeStyleboxOverride("embedded_unfocused_border", ts);
-					_buffBarWindow.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
-					_buffBarWindow.SetMeta("StyleApplied", true);
-				}
 				_buffBarWindow.Visible = _activeBuffs.Count > 0;
-			}
 			if (_songBarWindow != null)
-			{
-				if (!_songBarWindow.HasMeta("StyleApplied"))
-				{
-					var ts = new StyleBoxFlat();
-					ts.BgColor = new Color(0, 0, 0, 0);
-					_songBarWindow.AddThemeStyleboxOverride("embedded_border", ts);
-					_songBarWindow.AddThemeStyleboxOverride("embedded_unfocused_border", ts);
-					_songBarWindow.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
-					_songBarWindow.SetMeta("StyleApplied", true);
-				}
 				_songBarWindow.Visible = _activeSongBuffs.Count > 0;
-			}
 		}
 
 		private void RenderBuffsToContainer(Container container, List<ActiveBuff> buffs)
@@ -936,6 +920,7 @@ public partial class MainUI
 				var buff = buffList[index];
 				
 				slot.AcceptEvent();
+				EnsureBuffContextMenu();
 				_contextMenuTargetBuff = buff;
 				_buffContextMenu.Clear();
 				_buffContextMenu.AddItem("Details", 0);

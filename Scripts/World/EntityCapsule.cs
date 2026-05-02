@@ -942,26 +942,32 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         float baseMultiplier = 1.5f;
         if (isPlayable) baseMultiplier = 1.5f;
         
-        // For non-player mobs, use their DB size normalized against the human default of 6
-        // Tone down the extremity of the DB sizes drastically.
-        // We use a square root dampening curve for large mobs, and clamp the overall multiplier.
+        // For non-player mobs, use their DB size normalized against the human default of 6.
+        // We use a logarithmic dampening curve to prevent extreme sizes while preserving
+        // relative differences. A size=60 shark won't be 10x bigger, just noticeably larger.
         float sizeMultiplier = 1.0f;
         if (type != "player")
         {
-            float rawMultiplier = size / 6.0f;
-            if (rawMultiplier > 1.0f)
+            float rawRatio = size / 6.0f;  // 6 = human default
+            
+            if (rawRatio > 1.0f)
             {
-                // Soft-cap large sizes (e.g., size 60 -> raw 10 -> sqrt(10) = 3.1)
-                sizeMultiplier = Mathf.Sqrt(rawMultiplier);
+                // Log dampening for large mobs: log2(ratio) + 1
+                // size 12 (2x) -> 1 + log2(2)*0.3 = 1.3
+                // size 30 (5x) -> 1 + log2(5)*0.3 = 1.7
+                // size 60 (10x) -> 1 + log2(10)*0.3 = 2.0
+                sizeMultiplier = 1.0f + Mathf.Log(rawRatio) / Mathf.Log(2) * 0.3f;
             }
-            else if (rawMultiplier < 1.0f && rawMultiplier > 0f)
+            else if (rawRatio < 1.0f && rawRatio > 0f)
             {
-                // Soft-floor small sizes (e.g., size 1 -> raw 0.16 -> sqrt(0.16) = 0.4)
-                sizeMultiplier = Mathf.Sqrt(rawMultiplier);
+                // Mirror for small mobs
+                // size 3 (0.5x) -> 1 - log2(2)*0.2 = 0.8
+                // size 1 (0.16x) -> clamped to 0.6
+                sizeMultiplier = 1.0f + Mathf.Log(rawRatio) / Mathf.Log(2) * 0.2f;
             }
             
-            // Hard clamp to prevent completely game-breaking sizes
-            sizeMultiplier = Mathf.Clamp(sizeMultiplier, 0.4f, 3.5f);
+            // Hard clamp to prevent game-breaking sizes
+            sizeMultiplier = Mathf.Clamp(sizeMultiplier, 0.6f, 2.0f);
         }
         
         float raceScale = GetRaceScale(race) * baseMultiplier * sizeMultiplier;

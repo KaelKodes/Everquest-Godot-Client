@@ -379,7 +379,6 @@ text = "[center]Location Unknown[/center]"
 scroll_active = false
 
 [node name="ChatWindow" type="PanelContainer" parent="." unique_id=1731372643]
-visible = false
 layout_mode = 0
 offset_left = 285.0
 offset_top = 801.0

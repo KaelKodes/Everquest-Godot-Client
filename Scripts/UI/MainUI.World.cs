@@ -294,15 +294,80 @@ public partial class MainUI
 				float duration = buff.TryGetProperty("duration", out var durProp) ? (float)durProp.GetDouble() : 0f;
 				float maxDuration = buff.TryGetProperty("maxDuration", out var maxDurProp) ? (float)maxDurProp.GetDouble() : duration;
 				bool beneficial = buff.TryGetProperty("beneficial", out var benProp) ? benProp.GetBoolean() : true;
+				int memIcon = buff.TryGetProperty("memIcon", out var memProp) ? memProp.GetInt32() : 0;
+				bool isSong = buff.TryGetProperty("isSong", out var songProp) ? songProp.GetBoolean() : false;
 
 				// Instantiate icon from scene
 				var icon = _buffIconScene.Instantiate<Panel>();
-				_buffBar.AddChild(icon);
+				
+				if (isSong && beneficial && _songBar != null)
+				{
+					_songBar.AddChild(icon);
+					if (_songBarWindow != null && _songBarWindow.HasMethod("RequestUpdate"))
+						_songBarWindow.Call("RequestUpdate");
+				}
+				else if (_buffBar != null)
+				{
+					_buffBar.AddChild(icon);
+					if (_buffBarWindow != null && _buffBarWindow.HasMethod("RequestUpdate"))
+						_buffBarWindow.Call("RequestUpdate");
+				}
 
-				// Set label text (abbreviate long names)
+				// Apply spell icon
+				var iconRect = icon.GetNodeOrNull<TextureRect>("Icon");
 				var label = icon.GetNode<Label>("Label");
-				label.Text = name.Length > 5 ? name[..5] : name;
+				if (iconRect != null && memIcon > 0)
+				{
+					var iconMgr = IconManager.Instance;
+					if (iconMgr != null)
+					{
+						var tex = iconMgr.GetSpellGem(memIcon);
+						if (tex != null)
+						{
+							iconRect.Texture = tex;
+							label.Text = ""; // Hide text if we have an icon
+						}
+						else
+						{
+							// Fallback to text
+							label.Text = name.Length > 5 ? name[..5] : name;
+						}
+					}
+				}
+				else
+				{
+					label.Text = name.Length > 5 ? name[..5] : name;
+				}
+				
 				label.TooltipText = name; // Full name on hover
+
+				// Create the buff object first to capture in the closure
+				var buffObj = new ActiveBuff
+				{
+					Name = name,
+					DurationMax = maxDuration,
+					DurationRemaining = duration,
+					IconNode = icon
+				};
+
+				icon.GuiInput += (ev) =>
+				{
+					if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Right)
+					{
+						icon.AcceptEvent();
+						_contextMenuTargetBuff = buffObj;
+						_buffContextMenu.Clear();
+						_buffContextMenu.AddItem("Details", 0);
+						// Only allow removal of beneficial buffs
+						if (beneficial)
+						{
+							_buffContextMenu.AddItem("Remove", 1);
+						}
+						var mousePos = GetGlobalMousePosition();
+						_buffContextMenu.Position = new Vector2I((int)mousePos.X, (int)mousePos.Y);
+						_buffContextMenu.Popup();
+					}
+				};
 
 				// Color code: beneficial = blue border, harmful = red border
 				if (!beneficial)
@@ -329,13 +394,7 @@ public partial class MainUI
 				else
 					durationBar.Value = 100.0;
 
-				_activeBuffs.Add(new ActiveBuff
-				{
-					Name = name,
-					DurationMax = maxDuration,
-					DurationRemaining = duration,
-					IconNode = icon
-				});
+				_activeBuffs.Add(buffObj);
 			}
 
 			GD.Print($"[UI] Buffs updated: {_activeBuffs.Count} active.");

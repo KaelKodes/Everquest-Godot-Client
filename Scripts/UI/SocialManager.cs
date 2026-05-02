@@ -66,6 +66,7 @@ public partial class SocialManager : Node
 	public Func<string> GetCurrentTargetGenderObjective;   // → "Him"/"Her"/"It"
 	public Func<string> GetCurrentTargetGenderPossessive;  // → "His"/"Her"/"Its"
 	public Func<string> GetPetName;                    // → pet name or ""
+	public Func<int, string> GetDoAbilityName;         // → ability name or ""
 
 	public override void _Ready()
 	{
@@ -227,6 +228,33 @@ public partial class SocialManager : Node
 				break;
 			case "/camp":
 				_client.SendRaw("{\"type\": \"CAMP\"}");
+				break;
+
+			case "/doability":
+				if (int.TryParse(args.Trim(), out int abilNum) && GetDoAbilityName != null)
+				{
+					string abil = GetDoAbilityName(abilNum);
+					if (!string.IsNullOrEmpty(abil))
+						_client.SendRaw($"{{\"type\": \"ABILITY\", \"ability\": \"{abil.ToLower()}\"}}");
+				}
+				break;
+			case "/autoinventory":
+			case "/autoinv":
+				_client.SendRaw("{\"type\": \"AUTO_INVENTORY\"}");
+				break;
+			case "/target":
+				if (!string.IsNullOrEmpty(args))
+					_client.SendRaw($"{{\"type\": \"TARGET_NAME\", \"name\": \"{EscapeJson(args)}\"}}");
+				break;
+			case "/corpse":
+				_client.SendRaw("{\"type\": \"CORPSE_DRAG\"}");
+				break;
+			case "/pet":
+				string petCmd = args.ToLower().Trim();
+				if (petCmd == "attack" || petCmd == "back" || petCmd == "follow")
+				{
+					_client.SendRaw($"{{\"type\": \"PET_COMMAND\", \"command\": \"{petCmd}\"}}");
+				}
 				break;
 
 			// Ability commands

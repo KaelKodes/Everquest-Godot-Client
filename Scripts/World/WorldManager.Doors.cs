@@ -25,8 +25,7 @@ public partial class WorldManager : Node3D
             string modelName = element.GetProperty("name").GetString();
             int opentype = element.TryGetProperty("opentype", out var otp) ? otp.GetInt32() : 0;
             
-            // Skip invisible teleporter triggers (usually opentype >= 54 with names like POKTELE)
-            if (opentype >= 54 && (string.IsNullOrEmpty(modelName) || modelName.StartsWith("POKTELE") || modelName.StartsWith("TELE"))) continue;
+            if (string.IsNullOrEmpty(modelName)) continue;
             
             int localDoorId = element.TryGetProperty("doorid", out var ldid) ? ldid.GetInt32() : 0;
             int triggerDoor = element.TryGetProperty("triggerdoor", out var td) ? td.GetInt32() : 0;
@@ -46,6 +45,12 @@ public partial class WorldManager : Node3D
             }
 
             var doorMeshNode = scene.Instantiate<Node3D>();
+            
+            // Invisible barrier doors (opentype >= 54) must have collision but no visible mesh
+            if (opentype >= 54)
+            {
+                doorMeshNode.Visible = false;
+            }
             
             // Create our interactive DoorEntity wrapper
             var doorEntity = new DoorEntity();

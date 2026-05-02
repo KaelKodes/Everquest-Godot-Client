@@ -5,8 +5,30 @@ using System.Collections.Generic;
 
 public partial class MainUI
 {
-	private string[] _assignedAbilities = new string[8];
-	private string[] _assignedSkills = new string[8];
+	private string[] _assignedAbilities = new string[80];
+	private string[] _assignedSkills = new string[80];
+	private int[] _actionPages = new int[3]; // 0=Socials, 1=Abilities, 2=Skills
+	
+	private string _actionCursorType = null; // "social", "ability", "skill"
+	private int _actionCursorSourceIdx = -1;
+	private string _actionCursorData = null;
+	private Label _actionCursorLabel;
+	private bool _autoRanged = false;
+
+	private Label GetActionCursorLabel()
+	{
+		if (_actionCursorLabel == null)
+		{
+			_actionCursorLabel = new Label();
+			_actionCursorLabel.Visible = false;
+			_actionCursorLabel.ZIndex = 600;
+			_actionCursorLabel.MouseFilter = MouseFilterEnum.Ignore;
+			_actionCursorLabel.AddThemeColorOverride("font_color", new Color(1f, 0.9f, 0.5f));
+			_actionCursorLabel.AddThemeFontSizeOverride("font_size", 11);
+			AddChild(_actionCursorLabel);
+		}
+		return _actionCursorLabel;
+	}
 
 	private void OnAbilityPressed(int index)
 	{
@@ -180,10 +202,10 @@ public partial class MainUI
 		return char.ToUpper(s[0]) + s.Substring(1).ToLower();
 	}
 
-	private void ChangeSocialPage(int delta)
+	private void ChangeActionPage(int delta)
 	{
-		_socialPage = (_socialPage + delta + SocialManager.PAGES) % SocialManager.PAGES;
-		if (_socialPageLabel != null) _socialPageLabel.Text = (_socialPage + 1).ToString();
+		_actionPages[_actionCurrentTab] = (_actionPages[_actionCurrentTab] + delta + 10) % 10;
+		if (_socialPageLabel != null) _socialPageLabel.Text = (_actionPages[_actionCurrentTab] + 1).ToString();
 	}
 
 	private void SwitchActionTab(int tabIndex, Button[] tabBtns, GridContainer grid)
@@ -191,9 +213,10 @@ public partial class MainUI
 		_actionCurrentTab = tabIndex;
 		StyleActionTabs(tabBtns, tabIndex);
 		
-		// Show/hide social page nav and shift grid accordingly
-		if (_socialNavRow != null) _socialNavRow.Visible = (tabIndex == 0);
-		if (grid != null) grid.OffsetTop = (tabIndex == 0) ? 80 : 60;
+		// Show nav row for all tabs and maintain grid offset
+		if (_socialNavRow != null) _socialNavRow.Visible = true;
+		if (_socialPageLabel != null) _socialPageLabel.Text = (_actionPages[tabIndex] + 1).ToString();
+		if (grid != null) grid.OffsetTop = 80;
 		
 		if (grid == null) return;
 		
@@ -207,7 +230,7 @@ public partial class MainUI
 			{
 				case 0: // Socials
 				{
-					int socialIdx = _socialPage * 8 + i;
+					int socialIdx = _actionPages[0] * 8 + i;
 					if (_hotbarManager != null)
 					{
 						var sm = _hotbarManager.GetSocialManager();
@@ -222,16 +245,19 @@ public partial class MainUI
 					break;
 				}
 				case 1: // Abilities
-					if (i == 0) btn.Text = _autoFight ? "Stop" : "Attack";
+					if (_actionPages[1] == 0 && i == 0) btn.Text = _autoFight ? "Stop" : "Attack";
+					else if (_actionPages[1] == 0 && i == 1) btn.Text = _autoRanged ? "Stop Ranged" : "Ranged";
 					else
 					{
-						string assigned = _assignedAbilities[i];
+						int idx = _actionPages[1] * 8 + i;
+						string assigned = _assignedAbilities[idx];
 						btn.Text = string.IsNullOrEmpty(assigned) ? $"{i + 1}" : ShortenName(assigned);
 					}
 					break;
 				case 2: // Skills
 				{
-					string assigned = _assignedSkills[i];
+					int idx = _actionPages[2] * 8 + i;
+					string assigned = _assignedSkills[idx];
 					btn.Text = string.IsNullOrEmpty(assigned) ? $"{i + 1}" : ShortenName(assigned);
 					break;
 				}
@@ -275,11 +301,25 @@ public partial class MainUI
 	{
 		if (ev is not InputEventMouseButton mb || !mb.Pressed) return;
 
+		// Handle active action cursor drops/cancels
+		if (_actionCursorType != null)
+		{
+			if (mb.ButtonIndex == MouseButton.Left)
+			{
+				HandleActionCursorDrop(btnIdx);
+			}
+			else if (mb.ButtonIndex == MouseButton.Right)
+			{
+				ClearActionCursor();
+			}
+			return; // Consumed
+		}
+
 		switch (_actionCurrentTab)
 		{
 			case 0: // Socials
 			{
-				int socialIdx = _socialPage * 8 + btnIdx;
+				int socialIdx = _actionPages[0] * 8 + btnIdx;
 				if (mb.ButtonIndex == MouseButton.Left)
 				{
 					if (_hotbarManager != null)
@@ -307,13 +347,17 @@ public partial class MainUI
 						GetViewport().SetInputAsHandled();
 						return;
 					}
-					// Social right click not implemented here yet
+					else
+					{
+						ShowSocialContextMenu(socialIdx, btn);
+					}
 				}
 				break;
 			}
 			case 1: // Abilities
 			{
-				if (btnIdx == 0)
+				int globalIdx = _actionPages[1] * 8 + btnIdx;
+				if (_actionPages[1] == 0 && btnIdx == 0)
 				{
 					if (mb.ButtonIndex == MouseButton.Right)
 					{
@@ -326,13 +370,34 @@ public partial class MainUI
 					}
 					else if (mb.ButtonIndex == MouseButton.Left)
 					{
-						OnAutoFightPressed();
+						OnAbilityPressed(0);
+						SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
+					}
+				}
+				else if (_actionPages[1] == 0 && btnIdx == 1)
+				{
+					if (mb.ButtonIndex == MouseButton.Right)
+					{
+						if (mb.CtrlPressed)
+						{
+							_hotbarManager?.StartAbilityDrag("Ranged");
+							GetViewport().SetInputAsHandled();
+							return;
+						}
+					}
+					else if (mb.ButtonIndex == MouseButton.Left)
+					{
+						_autoRanged = !_autoRanged;
+						if (_autoRanged)
+							_client.SendRaw("{\"type\": \"START_RANGED\"}");
+						else
+							_client.SendRaw("{\"type\": \"STOP_RANGED\"}");
 						SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
 					}
 				}
 				else
 				{
-					string assigned = _assignedAbilities[btnIdx];
+					string assigned = _assignedAbilities[globalIdx];
 					if (mb.ButtonIndex == MouseButton.Right)
 					{
 						if (mb.CtrlPressed && !string.IsNullOrEmpty(assigned))
@@ -341,7 +406,7 @@ public partial class MainUI
 							GetViewport().SetInputAsHandled();
 							return;
 						}
-						ShowActionContextMenu(btnIdx, _assignedAbilities, "ability", btn);
+						ShowActionContextMenu(globalIdx, _assignedAbilities, "ability", btn);
 					}
 					else if (mb.ButtonIndex == MouseButton.Left && !string.IsNullOrEmpty(assigned))
 					{
@@ -353,7 +418,8 @@ public partial class MainUI
 			}
 			case 2: // Skills
 			{
-				string assigned = _assignedSkills[btnIdx];
+				int globalIdx = _actionPages[2] * 8 + btnIdx;
+				string assigned = _assignedSkills[globalIdx];
 				if (mb.ButtonIndex == MouseButton.Right)
 				{
 					if (mb.CtrlPressed && !string.IsNullOrEmpty(assigned))
@@ -362,7 +428,7 @@ public partial class MainUI
 						GetViewport().SetInputAsHandled();
 						return;
 					}
-					ShowActionContextMenu(btnIdx, _assignedSkills, "skill", btn);
+					ShowActionContextMenu(globalIdx, _assignedSkills, "skill", btn);
 				}
 				else if (mb.ButtonIndex == MouseButton.Left && !string.IsNullOrEmpty(assigned))
 				{
@@ -385,7 +451,95 @@ public partial class MainUI
 		}
 	}
 
-	private void ShowActionContextMenu(int slotIndex, string[] assignments, string tabType, Button anchorBtn)
+		private EditSocialDialog _editSocialDialog;
+
+	private EditSocialDialog GetEditSocialDialog()
+	{
+		if (_editSocialDialog == null)
+		{
+			_editSocialDialog = new EditSocialDialog();
+			_editSocialDialog.Visible = false;
+			_editSocialDialog.ZIndex = 650;
+			_editSocialDialog.SocialAccepted += OnSocialEdited;
+			AddChild(_editSocialDialog);
+		}
+		return _editSocialDialog;
+	}
+
+	private void OnSocialEdited(int socialIndex, string name, int color, string line0, string line1, string line2, string line3, string line4)
+	{
+		if (_hotbarManager == null) return;
+		var sm = _hotbarManager.GetSocialManager();
+		if (sm == null || socialIndex < 0 || socialIndex >= sm.Socials.Length) return;
+
+		var social = sm.Socials[socialIndex];
+		social.Name = name;
+		social.Color = color;
+		social.Lines[0] = line0;
+		social.Lines[1] = line1;
+		social.Lines[2] = line2;
+		social.Lines[3] = line3;
+		social.Lines[4] = line4;
+
+		SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
+	}
+
+	private void ShowSocialContextMenu(int socialIdx, Button anchorBtn)
+	{
+		if (_hotbarManager == null) return;
+		var sm = _hotbarManager.GetSocialManager();
+		if (sm == null || socialIdx >= sm.Socials.Length) return;
+
+		var social = sm.Socials[socialIdx];
+		var popup = new PopupMenu();
+		popup.Name = "SocialContext";
+		popup.AddThemeFontSizeOverride("font_size", 12);
+
+		if (!social.IsEmpty)
+		{
+			popup.AddItem("Copy", 2);
+			popup.AddItem("Edit", 0);
+			popup.AddItem("Clear", 1);
+		}
+		else
+		{
+			popup.AddItem("Edit", 0);
+		}
+
+		popup.IdPressed += (id) =>
+		{
+			if (id == 2) // Copy
+			{
+				_actionCursorType = "social";
+				_actionCursorSourceIdx = socialIdx;
+				_actionCursorData = socialIdx.ToString();
+				var lbl = GetActionCursorLabel();
+				lbl.Text = $"[Copy] {social.Name}";
+				lbl.Modulate = SocialManager.EQColors[Math.Clamp(social.Color, 0, 19)];
+				lbl.Visible = true;
+			}
+			else if (id == 0) // Edit
+			{
+				var dialog = GetEditSocialDialog();
+				dialog.OpenForSocial(socialIdx, social);
+			}
+			else if (id == 1) // Clear
+			{
+				sm.Socials[socialIdx] = new SocialManager.Social { Color = 0, Name = "", Lines = new string[5] };
+				SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
+			}
+			popup.QueueFree();
+		};
+
+		popup.PopupHide += () => popup.QueueFree();
+
+		AddChild(popup);
+		var mousePos = GetGlobalMousePosition();
+		popup.Position = new Vector2I((int)mousePos.X, (int)mousePos.Y);
+		popup.Popup();
+	}
+
+private void ShowActionContextMenu(int slotIndex, string[] assignments, string tabType, Button anchorBtn)
 	{
 		var popup = new PopupMenu();
 		popup.Name = "SlotContext";
@@ -400,13 +554,23 @@ public partial class MainUI
 		}
 		else
 		{
+			popup.AddItem("Copy", 4);
 			popup.AddItem("Clear", 2);
 			popup.AddItem("Set", 3);
 		}
 
 		popup.IdPressed += (id) =>
 		{
-			if (id == 2) // Clear
+			if (id == 4) // Copy
+			{
+				_actionCursorType = tabType;
+				_actionCursorSourceIdx = slotIndex;
+				_actionCursorData = assignments[slotIndex];
+				var lbl = GetActionCursorLabel();
+				lbl.Text = $"[Copy] {assignments[slotIndex]}";
+				lbl.Visible = true;
+			}
+			else if (id == 2) // Clear
 			{
 				assignments[slotIndex] = "";
 				SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid);
@@ -476,4 +640,73 @@ public partial class MainUI
 		popup.Popup();
 	}
 
+	private void HandleActionCursorDrop(int btnIdx)
+	{
+		if (_actionCursorType == null) return;
+
+		if (_actionCurrentTab == 0 && _actionCursorType == "social")
+		{
+			int destIdx = _actionPages[0] * 8 + btnIdx;
+			if (_hotbarManager != null)
+			{
+				var sm = _hotbarManager.GetSocialManager();
+				if (sm != null)
+				{
+					// Swap
+					var temp = sm.Socials[destIdx];
+					sm.Socials[destIdx] = sm.Socials[_actionCursorSourceIdx];
+					sm.Socials[_actionCursorSourceIdx] = temp;
+					SwitchActionTab(0, _actionTabButtons, _actionGrid);
+				}
+			}
+		}
+		else if (_actionCurrentTab == 1 && _actionCursorType == "ability")
+		{
+			if (_actionPages[1] == 0 && btnIdx == 0)
+			{
+				Log("SYSTEM", "Cannot overwrite the Attack button.");
+			}
+			else if (_actionPages[1] == 0 && btnIdx == 1)
+			{
+				Log("SYSTEM", "Cannot overwrite the Ranged button.");
+			}
+			else
+			{
+				int destIdx = _actionPages[1] * 8 + btnIdx;
+				// Swap
+				string temp = _assignedAbilities[destIdx];
+				_assignedAbilities[destIdx] = _assignedAbilities[_actionCursorSourceIdx];
+				_assignedAbilities[_actionCursorSourceIdx] = temp;
+				SwitchActionTab(1, _actionTabButtons, _actionGrid);
+			}
+		}
+		else if (_actionCurrentTab == 2 && _actionCursorType == "skill")
+		{
+			int destIdx = _actionPages[2] * 8 + btnIdx;
+			// Swap
+			string temp = _assignedSkills[destIdx];
+			_assignedSkills[destIdx] = _assignedSkills[_actionCursorSourceIdx];
+			_assignedSkills[_actionCursorSourceIdx] = temp;
+			SwitchActionTab(2, _actionTabButtons, _actionGrid);
+		}
+		else
+		{
+			Log("SYSTEM", "You cannot place that type of action here.");
+			return; // Don't clear cursor if they clicked wrong tab
+		}
+
+		ClearActionCursor();
+	}
+
+	private void ClearActionCursor()
+	{
+		_actionCursorType = null;
+		_actionCursorSourceIdx = -1;
+		_actionCursorData = null;
+		if (_actionCursorLabel != null)
+		{
+			_actionCursorLabel.Visible = false;
+			_actionCursorLabel.Modulate = Colors.White;
+		}
+	}
 }

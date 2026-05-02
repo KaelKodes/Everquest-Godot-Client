@@ -33,7 +33,7 @@ public partial class WorldManager : Node3D
             GD.PrintErr($"[WORLD] ProcessMobMove parsing error: {ex.Message}");
         }
     }
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f)
+    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f, float size = 6f)
     {
         if (_activeEntities.ContainsKey(id)) return;
 
@@ -46,7 +46,7 @@ public partial class WorldManager : Node3D
         _activeEntities[id] = instance;
 
         try {
-            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson);
+            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson, size);
             // Apply current vision effects
             if (_currentVisionStyle == "infravision")
                 instance.SetInfravision(true);
@@ -98,6 +98,7 @@ public partial class WorldManager : Node3D
             // Live entities are perfectly mapped to Godot's space (-X=West, -Z=North), 
             // which exactly matches Godot's Yaw behavior (0=-Z, 90=-X).
             // No reflection or offsets are needed!
+            float size = ent.TryGetProperty("size", out var sizeProp) ? (float)sizeProp.GetDouble() : 6f;
             float godotYaw = (rawHeading / 512f) * 360f;
 
             incomingIds.Add(id);
@@ -106,7 +107,7 @@ public partial class WorldManager : Node3D
             {
                 // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw);
+                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw, size);
             }
             else
             {
@@ -180,7 +181,12 @@ public partial class WorldManager : Node3D
                 _currentTarget = null;
 
             if (GodotObject.IsInstanceValid(entity))
+            {
+                entity.SetProcess(false);
+                entity.SetPhysicsProcess(false);
+                // Also recursively disable collision shapes if any, but queue_free is usually fine
                 entity.QueueFree();
+            }
             _activeEntities.Remove(id);
         }
     }
@@ -197,12 +203,7 @@ public partial class WorldManager : Node3D
     }
     public void SetCombatTarget(string targetId)
     {
-        // First disconnect everyone from chasing the player
-        foreach (var kvp in _activeEntities)
-        {
-            if (kvp.Value is EntityCapsule ec && ec.ChaseTarget == _playerCapsule)
-                ec.ChaseTarget = null;
-        }
+        // Server is authoritative for movement; no client-side ChaseTarget overrides.
 
         _playerInCombat = !string.IsNullOrEmpty(targetId);
         if (string.IsNullOrEmpty(targetId)) return;
@@ -239,7 +240,6 @@ public partial class WorldManager : Node3D
 
         if (activeEc != null)
         {
-            activeEc.ChaseTarget = _playerCapsule;
             if (_currentTarget != activeEc)
             {
                 SetTarget(activeEc);

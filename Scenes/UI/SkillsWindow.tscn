@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://c6j2k4l7m8n9p"]
 
-[ext_resource type="Script" uid="uid://cody276iur5gx" path="res://Scripts/UI/DraggablePanel.cs" id="1_draggable"]
+[ext_resource type="Script" uid="uid://7tmdf5h6cfk8" path="res://Scripts/UI/SkillsWindow.cs" id="1_skills"]
 
 [sub_resource type="StyleBoxFlat" id="sb_skills_window"]
 bg_color = Color(0.0705882, 0.0666667, 0.054902, 0.968627)
@@ -26,7 +26,7 @@ custom_minimum_size = Vector2(300, 400)
 offset_right = 300.0
 offset_bottom = 400.0
 theme_override_styles/panel = SubResource("sb_skills_window")
-script = ExtResource("1_draggable")
+script = ExtResource("1_skills")
 
 [node name="VBox" type="VBoxContainer" parent="."]
 layout_mode = 2

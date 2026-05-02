@@ -474,8 +474,9 @@ public partial class WorldManager : Node3D
             {
                 for (int i = 0; i < arrayMesh.GetSurfaceCount(); i++)
                 {
-                    var mat = arrayMesh.SurfaceGetMaterial(i);
-                    bool isLiquid = mat != null && IsLiquidMaterial(mat.ResourceName, animData);
+                    // Use GetActiveMaterial to catch overrides from the GLTF importer
+                    var mat = meshInst.GetActiveMaterial(i);
+                    bool isLiquid = mat != null && IsLiquidMaterial(mat, animData);
                     
                     if (!isLiquid) hasSolid = true;
                     
@@ -564,17 +565,26 @@ public partial class WorldManager : Node3D
         }
     }
 
-    private bool IsLiquidMaterial(string matName, Dictionary<string, (string[] frames, float delay)> animData = null)
+    private bool IsLiquidMaterial(Material material, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
-        if (string.IsNullOrEmpty(matName)) return false;
+        if (material == null) return false;
         
-        string lower = matName.ToLower();
+        // 1. Check material name (resource name)
+        string matName = material.ResourceName;
+        if (!string.IsNullOrEmpty(matName))
+        {
+            if (IsLiquidName(matName.ToLower())) return true;
+        }
+
+        // 2. Check texture path (often more reliable for GLTF imports)
+        if (material is StandardMaterial3D stdMat && stdMat.AlbedoTexture != null)
+        {
+            string texPath = stdMat.AlbedoTexture.ResourcePath.ToLower();
+            if (IsLiquidName(texPath)) return true;
+        }
         
-        // Check base name
-        if (IsLiquidName(lower)) return true;
-        
-        // Check animated frames
-        if (animData != null && animData.TryGetValue(matName, out var anim))
+        // 3. Check animated frames
+        if (!string.IsNullOrEmpty(matName) && animData != null && animData.TryGetValue(matName, out var anim))
         {
             foreach (var frame in anim.frames)
             {
@@ -590,9 +600,12 @@ public partial class WorldManager : Node3D
         // Many variations of water and lava
         return name.Contains("water") || name.Contains("wawa") || name.Contains("fwater") || 
                name.Contains("swater") || name.Contains("lava") || name.Contains("slime") ||
+               name.Contains("liquid") || name.Contains("pool") || name.Contains("p_water") ||
                name == "ow1" || name == "w1" || name == "fw1" || name == "sw1" || 
-               name.StartsWith("falls") || name == "t50_w1" || name == "d_ow1";
+               name.StartsWith("falls") || name == "t50_w1" || name == "d_ow1" ||
+               name.Contains("pok_water") || name.Contains("pok_pool");
     }
+
 
     private void FixZoneMaterials(Node node, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
@@ -608,7 +621,7 @@ public partial class WorldManager : Node3D
                     mat.Metallic = 0.0f;
                     mat.MetallicSpecular = 0.0f;
                     
-                    if (IsLiquidMaterial(mat.ResourceName, animData))
+                    if (IsLiquidMaterial(mat, animData))
                     {
                         mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
                         mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
@@ -652,7 +665,7 @@ public partial class WorldManager : Node3D
                     newMat.Metallic = 0.0f;
                     newMat.MetallicSpecular = 0.0f;
                     
-                    if (IsLiquidMaterial(newMat.ResourceName, animData))
+                    if (IsLiquidMaterial(newMat, animData))
                     {
                         newMat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
                         newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;

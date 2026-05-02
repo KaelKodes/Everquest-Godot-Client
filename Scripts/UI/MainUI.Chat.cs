@@ -33,7 +33,19 @@ public partial class MainUI
 				string src = evt.GetProperty("source").GetString();
 				string tgt = evt.GetProperty("target").GetString();
 				int dmg = evt.GetProperty("damage").GetInt32();
-				string text = evt.TryGetProperty("text", out var tProp) ? tProp.GetString() : "slash"; // fallback to slash
+				string text = "slash";
+				if (evt.TryGetProperty("text", out var tProp) && tProp.ValueKind != JsonValueKind.Null)
+				{
+					string val = tProp.GetString();
+					if (!string.IsNullOrEmpty(val)) text = val;
+				}
+				
+				string typeStr = "slash";
+				if (evt.TryGetProperty("type", out var typeProp) && typeProp.ValueKind != JsonValueKind.Null)
+				{
+					string val = typeProp.GetString();
+					if (!string.IsNullOrEmpty(val)) typeStr = val;
+				}
 
 				if (src == "You")
 					Log("HIT", $"You hit {tgt} for {dmg} points of damage.");
@@ -43,9 +55,13 @@ public partial class MainUI
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null) 
 				{
-					wm.TriggerEntityAction(tgt, "hit");
-					string attackType = text.ToLower().Replace("!", ""); // e.g. "Kick!" -> "kick"
-					wm.TriggerEntityAction(src, $"attack:{attackType}");
+					bool isHeavy = dmg >= 25 || text.Contains("Bash") || text.Contains("Kick") || text.Contains("Backstab") || text.Contains("Crush") || text.Contains("Critical");
+					string hitAction = isHeavy ? "hit_heavy" : "hit";
+					wm.TriggerEntityAction(tgt, hitAction);
+					
+					// Player attack animations are client-timer-driven; only trigger NPC swings here
+					if (src != "You")
+						wm.TriggerCombatAnimation(src, typeStr, true);
 				}
 				// Weapon impact sound
 				UISoundPlayer.Instance?.PlayWeaponImpact(text);
@@ -55,7 +71,19 @@ public partial class MainUI
 			{
 				string src = evt.GetProperty("source").GetString();
 				string tgt = evt.GetProperty("target").GetString();
-				string text = evt.TryGetProperty("text", out var tProp) ? tProp.GetString() : "slash";
+				string text = "slash";
+				if (evt.TryGetProperty("text", out var tProp) && tProp.ValueKind != JsonValueKind.Null)
+				{
+					string val = tProp.GetString();
+					if (!string.IsNullOrEmpty(val)) text = val;
+				}
+
+				string typeStr = "slash";
+				if (evt.TryGetProperty("type", out var typeProp) && typeProp.ValueKind != JsonValueKind.Null)
+				{
+					string val = typeProp.GetString();
+					if (!string.IsNullOrEmpty(val)) typeStr = val;
+				}
 
 				if (src == "You")
 					Log("MISS", $"You try to hit {tgt}, but miss!");
@@ -66,8 +94,9 @@ public partial class MainUI
 				if (wm != null) 
 				{
 					wm.TriggerEntityAction(tgt, "miss");
-					string attackType = text.ToLower().Replace("!", "");
-					wm.TriggerEntityAction(src, $"attack:{attackType}");
+					// Player attack animations are client-timer-driven; only trigger NPC swings here
+					if (src != "You")
+						wm.TriggerCombatAnimation(src, typeStr, false);
 				}
 				break;
 			}
@@ -80,7 +109,11 @@ public partial class MainUI
 				Log("SPELL", $"{src} hit {tgt} for {dmg} points of non-melee damage. ({spell})");
 				
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.TriggerEntityAction(tgt, "hit");
+				if (wm != null) 
+				{
+					string hitAction = dmg >= 25 ? "hit_heavy" : "hit";
+					wm.TriggerEntityAction(tgt, hitAction);
+				}
 				// Spell impact — use a generic blunt sound for magical force
 				UISoundPlayer.Instance?.PlayWeaponImpact("crush");
 				break;

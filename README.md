@@ -1,25 +1,21 @@
-# Everquest: Godot Client
+# 🌑 Faydark MUD: Shadows of Norrath (Client)
 
-Everquest: Godot is a fan-made client and server project. 
+*The world of Norrath has grown dark. The ancient forests of the Faydark are no longer safe, and the shadows have a life of their own. Steel your nerves, traveler.*
 
-**It requires players to have purchased Everquest and to bring their own installation**, preferably the *RoF2 (Rain of Fear 2)* client, though Live installations should also work. The game engine dynamically extracts the necessary models, zones, and assets directly from your legal Everquest installation at runtime.
+**Faydark MUD** is an immersive, atmospheric reimagining of the classic EverQuest experience, built on the Godot engine. This is not just a trip down memory lane; it is a descent into a world where the night is long and the dangers are real.
 
-This project has **zero monetization**. If you would like to support the project, please head over to [Everquest.com](https://www.everquest.com) and buy the latest expansion to support the developers of the original game.
+### 📜 The Traveler's Code (Warnings)
+- **Bring Your Own Steel:** This project **requires a legal EverQuest installation** (preferably RoF2). The engine dynamically extracts models, zones, and secrets directly from your own files at runtime.
+- **Zero Coinage:** This is a fan project with **zero monetization**. If you wish to support Norrath, please head to [EverQuest.com](https://www.everquest.com) and support the original developers.
+- **WIP:** We are currently in **Phase 1**. Expect bugs, ghosts in the machine, and shifting sands.
 
-## Project Vision
+### 🕯️ Immersive Features
+- **The Living Dark:** A completely overhauled lighting and vision system. Infravision and Ultravision aren't just toggles—they are survival tools in a world that respects the darkness.
+- **Shadow & Silence:** A reworked Hide and Sneak system that emphasizes position and atmosphere.
+- **Secrets of the Earth:** A new Mining tradeskill for those brave enough to plumb the depths.
+- **Elemental Fury:** Real-time weather systems that affect the world and your survival.
+- **Expanded Destinies:** New Class/Race combinations and a deep, faction-based world.
+- **Gothic Immersion:** A UI and atmosphere designed to make every encounter feel heavy and meaningful.
 
-The aim of this client is to bring back the classic feel of Everquest while enforcing and enhancing some of its missed opportunities for immersion that are only achievable with modern game engines. 
-
-Features aim to include:
-
-- Updated Hide and Sneak
-- Mining Tradeskill
-- Vision Update
-- Lighting Update
-- Class/Race combo Update
-- Faction based PvP (optional)
-- Updated Trap System
-- Updated Instances
-- New Quests
-- Chat System Rework
-- Real Weather
+---
+*Safe travels, and keep your torch lit.*

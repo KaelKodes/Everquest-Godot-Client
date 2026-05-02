@@ -23,7 +23,10 @@ public partial class MainUI : Control
 	
 	// Action & Buff Containers
 	private VBoxContainer _actionBar;
-	private HBoxContainer _buffBar;
+	private Window _buffBarWindow;
+	private Container _buffBar;
+	private Window _songBarWindow;
+	private Container _songBar;
 	private RichTextLabel _combatLog;
 	private Texture2D _spellGemTexture;
 	private Button[] _spellSlotButtons = new Button[8];
@@ -42,7 +45,7 @@ public partial class MainUI : Control
 	private RichTextLabel _detailedStatsText;// detailed stats panel (left)
 	private RichTextLabel _detailedStatsRight;// detailed stats panel (right)
 	private Label[] _currencyLabels = new Label[4]; // pp, gp, sp, cp
-	private Control _skillsWindow;
+	private SkillsWindow _skillsWindow;
 	private VBoxContainer _skillsListContainer;
 	private readonly Dictionary<string, Button> _equipSlots = new();
 
@@ -63,6 +66,7 @@ public partial class MainUI : Control
 	private Label _targetNameLabel;
 	private ProgressBar _targetHpBar;
 	private Label _targetHpLabel;
+	private Control _targetBuffBar;
 	
 	// Extended Target Frame
 	private Window _targetListWindow;
@@ -171,7 +175,6 @@ public partial class MainUI : Control
 	private GridContainer _actionGrid;
 	private int _actionCurrentTab = 1; // 0=Socials, 1=Abilities, 2=Skills
 	private Window _actionBarWindow;
-	private int _socialPage = 0;
 	private HBoxContainer _socialNavRow;
 	private Label _socialPageLabel;
 	
@@ -278,6 +281,12 @@ public partial class MainUI : Control
 	// Options state
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
+	private float _cameraFov = 75f;
+	private int _antiAliasing = 0; // 0=Off, 1=2x, 2=4x, 3=8x
+	private bool _vSync = true;
+	private bool _fullscreen = false;
+	private int _maxFps = 0; // 0 = unlimited
+	
 	private Panel _optionsPanel;
 	private CopyLayoutWindow _copyLayoutWindow;
 	private AudioPlayerWindow _audioPlayerWindow;
@@ -291,6 +300,10 @@ public partial class MainUI : Control
 		public Panel IconNode;
 	}
 	private List<ActiveBuff> _activeBuffs = new List<ActiveBuff>();
+	private List<ActiveBuff> _activeTargetBuffs = new List<ActiveBuff>();
+
+	private PopupMenu _buffContextMenu;
+	private ActiveBuff _contextMenuTargetBuff;
 
 	private int _copper = 0;
 
@@ -343,6 +356,12 @@ public partial class MainUI : Control
 		_client.CampComplete += OnCampComplete;
 		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.MessageReceived += OnGenericMessage;
+
+		// Create Buff Context Menu
+		_buffContextMenu = new PopupMenu();
+		_buffContextMenu.Name = "BuffContextMenu";
+		_buffContextMenu.IdPressed += OnBuffContextMenuItemPressed;
+		AddChild(_buffContextMenu);
 
 		// Wire up chat input
 		_chatWindow = GetNode<Control>("ChatWindow");
@@ -439,7 +458,7 @@ public partial class MainUI : Control
 		};
 		
 		// Skills Window
-		_skillsWindow = _skillsWindowScene.Instantiate<Control>();
+		_skillsWindow = _skillsWindowScene.Instantiate<SkillsWindow>();
 		AddChild(_skillsWindow);
 		_skillsWindow.Hide();
 		_skillsListContainer = _skillsWindow.GetNode<VBoxContainer>("VBox/Scroll/SkillList");
@@ -513,7 +532,13 @@ public partial class MainUI : Control
 		if (_campBtn != null) _campBtn.Pressed += OnCampPressed;
 		
 		_actionBar = GetNodeOrNull<VBoxContainer>("%SpellBar") ?? GetNodeOrNull<VBoxContainer>("SpellBarWindow/SpellBar");
-		_buffBar = GetNode<HBoxContainer>("%BuffBar");
+		_buffBarWindow = GetNodeOrNull<Window>("%BuffBar");
+		if (_buffBarWindow != null) _buffBar = _buffBarWindow.GetChildOrNull<Container>(0);
+		else _buffBar = GetNodeOrNull<Container>("%BuffBar"); // fallback if user hasn't changed it yet
+
+		_songBarWindow = GetNodeOrNull<Window>("%SongBar");
+		if (_songBarWindow != null) _songBar = _songBarWindow.GetChildOrNull<Container>(0);
+		else _songBar = GetNodeOrNull<Container>("%SongBar"); // fallback if user hasn't changed it yet
 		_combatLog = GetNode<RichTextLabel>("%CombatLog");
 		_combatLog.BbcodeEnabled = true;
 		_combatLog.MetaClicked += OnMetaClicked;
@@ -523,6 +548,7 @@ public partial class MainUI : Control
 		_targetNameLabel = GetNode<Label>("%TargetName");
 		_targetHpBar = GetNode<ProgressBar>("%TargetHPBar");
 		_targetHpLabel = GetNode<Label>("%TargetHPLabel");
+		_targetBuffBar = GetNode<Control>("%TargetBuffBar");
 
 		// Extended Target List
 		_targetListWindow = GetNodeOrNull<Window>("%TargetListWindow") ?? GetNodeOrNull<Window>("TargetListWindow");
@@ -996,7 +1022,7 @@ public partial class MainUI : Control
 			prevSocialBtn.Text = "<";
 			prevSocialBtn.CustomMinimumSize = new Vector2(24, 20);
 			prevSocialBtn.AddThemeFontSizeOverride("font_size", 11);
-			prevSocialBtn.Pressed += () => { ChangeSocialPage(-1); SwitchActionTab(0, _actionTabButtons, _actionGrid); };
+			prevSocialBtn.Pressed += () => { ChangeActionPage(-1); SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid); };
 			_socialNavRow.AddChild(prevSocialBtn);
 			
 			_socialPageLabel = new Label();
@@ -1011,7 +1037,7 @@ public partial class MainUI : Control
 			nextSocialBtn.Text = ">";
 			nextSocialBtn.CustomMinimumSize = new Vector2(24, 20);
 			nextSocialBtn.AddThemeFontSizeOverride("font_size", 11);
-			nextSocialBtn.Pressed += () => { ChangeSocialPage(1); SwitchActionTab(0, _actionTabButtons, _actionGrid); };
+			nextSocialBtn.Pressed += () => { ChangeActionPage(1); SwitchActionTab(_actionCurrentTab, _actionTabButtons, _actionGrid); };
 			_socialNavRow.AddChild(nextSocialBtn);
 			
 			// Wire Pressed handlers on grid buttons
@@ -1113,6 +1139,30 @@ public partial class MainUI : Control
 		};
 		_hotbarManager.ToggleAutoAttack = OnAutoFightPressed;
 
+		var sm = _hotbarManager.GetSocialManager();
+		if (sm != null)
+		{
+			sm.GetDoAbilityName = (slot) => {
+				// Slots 1-6 map to Abilities tab (_assignedSkills 0-5)
+				if (slot >= 1 && slot <= 6)
+				{
+					return _assignedSkills[slot - 1];
+				}
+				// Slots 7-10 map to Combat tab (_assignedAbilities 1-4)
+				else if (slot >= 7 && slot <= 10)
+				{
+					return _assignedAbilities[slot - 6];
+				}
+				return "";
+			};
+			
+			// Macro target substitution fallbacks (can be updated when server syncs more entity info)
+			sm.GetCurrentTargetGenderSubjective = () => "It";
+			sm.GetCurrentTargetGenderObjective = () => "It";
+			sm.GetCurrentTargetGenderPossessive = () => "Its";
+			sm.GetCurrentTargetRace = () => "Unknown";
+			sm.GetPetName = () => ""; 
+		}
 		// Wire ActionPanel ability/skill activation signals
 		// ActionPanel is now a persistent node handled by ActionPanel.cs
 
@@ -1460,6 +1510,9 @@ public partial class MainUI : Control
 		if (_cursorIcon != null && _cursorIcon.Visible) {
 			_cursorIcon.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
 		}
+		if (_actionCursorLabel != null && _actionCursorLabel.Visible) {
+			_actionCursorLabel.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
+		}
 
 		// ── Right-click hold timer for item detail popup ──
 		if (_rightClickTimer >= 0) {
@@ -1550,8 +1603,17 @@ public partial class MainUI : Control
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 					if (wm != null) 
 					{
+						int animType = root.TryGetProperty("animType", out var at) ? at.GetInt32() : 44;
+						int castType = animType switch
+						{
+							42 => 1, // Heal/Regen -> Cast 1
+							43 => 2, // Buff/Enchant -> Cast 2
+							44 => 3, // Nuke/Summon -> Cast 3
+							_ => 1   // Default
+						};
+						
 						wm.SetPlayerCasting(true);
-						wm.TriggerEntityAction("You", "cast");
+						wm.TriggerEntityAction("You", $"cast:{castType}");
 					}
 					break;
 				}
@@ -1650,6 +1712,16 @@ public partial class MainUI : Control
 					}
 					break;
 				}
+				case "SKILLS_UPDATE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("skills", out var skillsProp) && _skillsWindow != null)
+					{
+						_skillsWindow.UpdateSkills(skillsProp, _charLevel);
+					}
+					break;
+				}
 			}
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Cast event error: {ex.Message}"); }
@@ -1706,8 +1778,8 @@ public partial class MainUI : Control
 	private void BuildOptionsPanel()
 	{
 		_optionsPanel = new Panel();
-		_optionsPanel.CustomMinimumSize = new Vector2(240, 160);
-		_optionsPanel.Size = new Vector2(240, 160);
+		_optionsPanel.CustomMinimumSize = new Vector2(280, 380);
+		_optionsPanel.Size = new Vector2(280, 380);
 
 		// Center on screen
 		var screenSize = GetViewport().GetVisibleRect().Size;
@@ -1781,6 +1853,119 @@ public partial class MainUI : Control
 		};
 		vbox.AddChild(shadowCheck);
 
+		// Separator
+		vbox.AddChild(new HSeparator());
+
+		// Fullscreen Checkbox
+		var fullCheck = new CheckBox();
+		fullCheck.Text = "Fullscreen Mode";
+		fullCheck.ButtonPressed = _fullscreen;
+		fullCheck.AddThemeFontSizeOverride("font_size", 12);
+		fullCheck.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		fullCheck.Toggled += (toggled) =>
+		{
+			_fullscreen = toggled;
+			DisplayServer.WindowSetMode(_fullscreen ? DisplayServer.WindowMode.ExclusiveFullscreen : DisplayServer.WindowMode.Windowed);
+		};
+		vbox.AddChild(fullCheck);
+
+		// V-Sync Checkbox
+		var vsyncCheck = new CheckBox();
+		vsyncCheck.Text = "Vertical Sync";
+		vsyncCheck.ButtonPressed = _vSync;
+		vsyncCheck.AddThemeFontSizeOverride("font_size", 12);
+		vsyncCheck.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		vsyncCheck.Toggled += (toggled) =>
+		{
+			_vSync = toggled;
+			DisplayServer.WindowSetVsyncMode(_vSync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
+		};
+		vbox.AddChild(vsyncCheck);
+
+		// FPS Limit Dropdown
+		var fpsBox = new HBoxContainer();
+		var fpsLabel = new Label { Text = "FPS Limit:", CustomMinimumSize = new Vector2(100, 0) };
+		fpsLabel.AddThemeFontSizeOverride("font_size", 12);
+		fpsLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		var fpsOpt = new OptionButton();
+		fpsOpt.AddItem("Unlimited", 0);
+		fpsOpt.AddItem("60 FPS", 1);
+		fpsOpt.AddItem("120 FPS", 2);
+		fpsOpt.AddItem("144 FPS", 3);
+		
+		int fpsSelectedIdx = _maxFps switch { 60 => 1, 120 => 2, 144 => 3, _ => 0 };
+		fpsOpt.Selected = fpsSelectedIdx;
+		fpsOpt.ItemSelected += (idx) =>
+		{
+			_maxFps = (int)idx switch {
+				1 => 60,
+				2 => 120,
+				3 => 144,
+				_ => 0
+			};
+			Engine.MaxFps = _maxFps;
+		};
+		fpsBox.AddChild(fpsLabel);
+		fpsBox.AddChild(fpsOpt);
+		vbox.AddChild(fpsBox);
+
+		// MSAA Dropdown
+		var msaaBox = new HBoxContainer();
+		var msaaLabel = new Label { Text = "Anti-Aliasing:", CustomMinimumSize = new Vector2(100, 0) };
+		msaaLabel.AddThemeFontSizeOverride("font_size", 12);
+		msaaLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		var msaaOpt = new OptionButton();
+		msaaOpt.AddItem("Off", 0);
+		msaaOpt.AddItem("2x MSAA", 1);
+		msaaOpt.AddItem("4x MSAA", 2);
+		msaaOpt.AddItem("8x MSAA", 3);
+		msaaOpt.Selected = _antiAliasing;
+		msaaOpt.ItemSelected += (idx) =>
+		{
+			_antiAliasing = (int)idx;
+			GetViewport().Msaa3D = _antiAliasing switch {
+				1 => Viewport.Msaa.Msaa2X,
+				2 => Viewport.Msaa.Msaa4X,
+				3 => Viewport.Msaa.Msaa8X,
+				_ => Viewport.Msaa.Disabled
+			};
+		};
+		msaaBox.AddChild(msaaLabel);
+		msaaBox.AddChild(msaaOpt);
+		vbox.AddChild(msaaBox);
+
+		// Field of View Slider
+		var fovBox = new VBoxContainer();
+		var fovLabelBox = new HBoxContainer();
+		var fovLabel = new Label { Text = "Field of View" };
+		fovLabel.AddThemeFontSizeOverride("font_size", 12);
+		fovLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.7f));
+		var fovValue = new Label { Text = $"{_cameraFov:F0}°" };
+		fovValue.AddThemeFontSizeOverride("font_size", 12);
+		fovValue.AddThemeColorOverride("font_color", Colors.White);
+		fovValue.SizeFlagsHorizontal = Control.SizeFlags.Expand | Control.SizeFlags.ShrinkEnd;
+		fovLabelBox.AddChild(fovLabel);
+		fovLabelBox.AddChild(fovValue);
+		fovBox.AddChild(fovLabelBox);
+		
+		var fovSlider = new HSlider();
+		fovSlider.MinValue = 60;
+		fovSlider.MaxValue = 110;
+		fovSlider.Value = _cameraFov;
+		fovSlider.Step = 1;
+		fovSlider.ValueChanged += (val) =>
+		{
+			_cameraFov = (float)val;
+			fovValue.Text = $"{_cameraFov:F0}°";
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null) wm.SetCameraFOV(_cameraFov);
+		};
+		fovBox.AddChild(fovSlider);
+		vbox.AddChild(fovBox);
+
+		// Separator
+		vbox.AddChild(new HSeparator());
+
 		// Copy Loadout Button
 		var copyBtn = new Button();
 		copyBtn.Text = "Copy Loadout";
@@ -1829,6 +2014,27 @@ public partial class MainUI : Control
 
 	public void ReloadUILayout()
 	{
+		var video = UILayoutManager.GetSection("Video");
+		if (video.TryGetValue("FOV", out Variant fov)) _cameraFov = fov.AsSingle();
+		if (video.TryGetValue("MSAA", out Variant msaa)) _antiAliasing = msaa.AsInt32();
+		if (video.TryGetValue("VSync", out Variant vsync)) _vSync = vsync.AsBool();
+		if (video.TryGetValue("Fullscreen", out Variant full)) _fullscreen = full.AsBool();
+		if (video.TryGetValue("MaxFPS", out Variant maxFps)) _maxFps = maxFps.AsInt32();
+		
+		// Apply immediately
+		var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+		if (wm != null) wm.SetCameraFOV(_cameraFov);
+		
+		GetViewport().Msaa3D = _antiAliasing switch {
+			1 => Viewport.Msaa.Msaa2X,
+			2 => Viewport.Msaa.Msaa4X,
+			3 => Viewport.Msaa.Msaa8X,
+			_ => Viewport.Msaa.Disabled
+		};
+		DisplayServer.WindowSetMode(_fullscreen ? DisplayServer.WindowMode.ExclusiveFullscreen : DisplayServer.WindowMode.Windowed);
+		DisplayServer.WindowSetVsyncMode(_vSync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
+		Engine.MaxFps = _maxFps;
+
 		var windows = UILayoutManager.GetSection("Windows");
 		if (_targetWindow != null) ApplyWindowPos(_targetWindow, "TargetWindow", windows);
 		if (_targetListWindow != null) ApplyWindowPos(_targetListWindow, "TargetListWindow", windows);
@@ -1903,6 +2109,15 @@ public partial class MainUI : Control
 		if (_merchantWindow != null) StoreWindowPos(_merchantWindow, "MerchantWindow", windows);
 		
 		UILayoutManager.SetSection("Windows", windows);
+		
+		var video = UILayoutManager.GetSection("Video");
+		video["FOV"] = _cameraFov;
+		video["MSAA"] = _antiAliasing;
+		video["VSync"] = _vSync;
+		video["Fullscreen"] = _fullscreen;
+		video["MaxFPS"] = _maxFps;
+		UILayoutManager.SetSection("Video", video);
+
 		if (!string.IsNullOrEmpty(GameState.CharacterName))
 			UILayoutManager.SaveLayout(GameState.CharacterName);
 	}
@@ -2223,4 +2438,20 @@ public partial class MainUI : Control
 
 
 
+	private void OnBuffContextMenuItemPressed(long id)
+	{
+		if (_contextMenuTargetBuff == null) return;
+
+		if (id == 0) // Details
+		{
+			// Request spell details by name
+			_client.SendRaw($"{{\"type\": \"SPELL_INSPECT\", \"spellName\": \"{_contextMenuTargetBuff.Name}\"}}");
+		}
+		else if (id == 1) // Remove
+		{
+			_client.SendRaw($"{{\"type\": \"REMOVE_BUFF\", \"name\": \"{_contextMenuTargetBuff.Name}\"}}");
+		}
+
+		_contextMenuTargetBuff = null;
+	}
 }

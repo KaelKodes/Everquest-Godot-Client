@@ -24,6 +24,13 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public string EntityType { get; private set; } = "enemy";
     public int Gender { get; private set; } = 0; // 0=Male, 1=Female, 2=Neutral
     
+    // Performance Caches
+    private Area3D _clickArea;
+    private CollisionShape3D _clickShape;
+    private float _boneRecalcTimer = 0f;
+    private float _targetLabelY = 6.8f;
+    private float _targetClickY = 3.1f;
+    
     // Swimming State
     public bool IsInWater { get; private set; } = false;
     public void SetInWater(bool inWater)
@@ -67,16 +74,22 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
         // Separate Area3D for mouse click targeting — covers the visible model
         if (GetNodeOrNull<Area3D>("ClickArea") == null) {
-            var clickArea = new Area3D { Name = "ClickArea" };
-            clickArea.InputRayPickable = true;
-            var clickCol = new CollisionShape3D {
+            _clickArea = new Area3D { Name = "ClickArea" };
+            _clickArea.InputRayPickable = true;
+            _clickShape = new CollisionShape3D {
                 Name = "ClickShape",
                 Shape = new CapsuleShape3D { Radius = 1.5f, Height = 6.2f },
                 Position = new Vector3(0, 3.1f, 0) // Centered at 3.1 so bottom is at 0
             };
-            clickArea.AddChild(clickCol);
-            clickArea.InputEvent += OnInputEvent;
-            AddChild(clickArea);
+            _clickArea.AddChild(_clickShape);
+            _clickArea.InputEvent += OnInputEvent;
+            AddChild(_clickArea);
+        } else {
+            _clickArea = GetNodeOrNull<Area3D>("ClickArea");
+            if (_clickArea != null) {
+                _clickShape = _clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
+                _clickArea.InputEvent += OnInputEvent;
+            }
         }
 
         if (_nameLabel == null) {
@@ -227,12 +240,29 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
         // Set loop mode: death/social/cast anims play once, movement loops
         var anim = _animPlayer.GetAnimation(resolved);
-        if (resolved.StartsWith("d") || resolved.StartsWith("s") || resolved.StartsWith("t") || resolved == "p02" || resolved == "p05")
+        bool isCombatOrEmote = resolved.StartsWith("d") || resolved.StartsWith("s") || resolved.StartsWith("t") || resolved.StartsWith("c") || resolved == "p02" || resolved == "p05";
+        
+        if (isCombatOrEmote)
             anim.LoopMode = Animation.LoopModeEnum.None;
         else
             anim.LoopMode = Animation.LoopModeEnum.Linear;
+        bool isImportantTrace = IsPlayerControlled || (ChaseTarget is EntityCapsule ec && ec.IsPlayerControlled);
+        if (isImportantTrace)
+        {
+            GD.Print($"[ANIM_TRACE] {EntityName} playing '{resolved}' (req: {animName}) at speed {_animPlayer.SpeedScale:F2}");
+        }
 
-        _animPlayer.Play(resolved, 0.2); // 0.2s cross-fade
+        if (isCombatOrEmote)
+        {
+            // EQ combat/hit animations are snappy. Don't crossfade, and force restart from frame 0
+            _animPlayer.Stop(false);
+            _animPlayer.Play(resolved);
+        }
+        else
+        {
+            _animPlayer.Play(resolved, 0.2); // 0.2s cross-fade for movement
+        }
+        
         _currentAnim = animName; // Track the *requested* name so we don't re-resolve every frame
     }
 
@@ -243,36 +273,56 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private string _queuedEmote = null;
     private double _airborneTime = 0;
 
+    // --- Auto-attack animation loop (client-driven, matches server combat tick) ---
+    private bool _isAutoAttacking = false;
+    private double _autoAttackTimer = 0;
+    private float _autoAttackDelay = 3.0f; // effective delay in seconds: (dly/10)/hasteMod
+    private string _autoAttackType = "1h_slashing"; // weapon skill name for animation selection
+
+    private float _lastRotationY = 0f;
+
     // Called by WorldManager to update player animation based on movement
     public void UpdateAnimationFromVelocity(Vector3 velocity, bool isOnFloor = true, bool inCombat = false, bool isSprinting = false, bool isCrouching = false)
     {
         if (_animPlayer == null || _isDead || IsQueuedForDeletion()) return;
 
-        // If playing a timed emote/cast, let it finish
+        // Calculate turning state before exiting for emote timers, so we track it accurately
+        float angleDiff = Mathf.Abs(Mathf.AngleDifference(_lastRotationY, Rotation.Y));
+        bool isTurning = angleDiff > 0.005f;
+        _lastRotationY = Rotation.Y;
+
+        // If playing a timed emote/cast/attack, let it finish
         if (_emoteTimer > 0) return;
+
+        // Reset speed scale so combat speed modifiers don't leak into movement
+        _animPlayer.SpeedScale = 1.0f;
 
         // If sitting, stay seated until movement breaks it
         float horizSpeed = new Vector2(velocity.X, velocity.Z).Length();
         if (_isSitting && horizSpeed < 0.5f && isOnFloor) return;
         if (_isSitting && horizSpeed > 0.5f) _isSitting = false;
 
-        // Priority: water > jump/fall > run/walk > combat > idle
+        // Priority: water > jump/fall > run/walk > idle
         if (IsInWater)
         {
             if (horizSpeed > 0.5f || Mathf.Abs(velocity.Y) > 0.5f)
             {
-                PlayAnimation("s02"); // swimming forwards
+                PlayAnimation("c10"); // swimming forwards (Swimming 1)
                 _animPlayer.SpeedScale = Mathf.Clamp(new Vector3(velocity.X, velocity.Y, velocity.Z).Length() / 6.0f, 0.5f, 2.0f);
             }
             else
             {
-                PlayAnimation("s01"); // treading water
+                PlayAnimation("l09"); // treading water (Swimming Stationary)
                 _animPlayer.SpeedScale = 1.0f;
             }
         }
         else if (!isOnFloor)
         {
             _airborneTime += 0.016; // ~1 frame at 60fps
+            
+            // Grace period: don't switch to jump anims for tiny terrain bumps
+            if (_airborneTime < 0.1) return; // Keep playing whatever ground anim was active
+            
             if (_airborneTime > 1.0 && velocity.Y < -5f)
             {
                 PlayAnimation("l05"); // falling
@@ -303,10 +353,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 {
                     if (_animPlayer.HasAnimation("l08"))
                     {
-                        var anim = _animPlayer.GetAnimation("l08");
-                        anim.LoopMode = Animation.LoopModeEnum.None;
+                        var crouchAnim = _animPlayer.GetAnimation("l08");
+                        crouchAnim.LoopMode = Animation.LoopModeEnum.None;
                         _animPlayer.Play("l08");
-                        _animPlayer.Seek(anim.Length, true);
+                        _animPlayer.Seek(crouchAnim.Length, true);
                         _animPlayer.Pause();
                         _currentAnim = "l08_hold";
                     }
@@ -317,17 +367,17 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 if (isSprinting)
                 {
                     PlayAnimation("l02"); // running
-                    _animPlayer.SpeedScale = Mathf.Clamp(horizSpeed / 30.0f, 0.8f, 1.5f);
+                    _animPlayer.SpeedScale = 1.0f;
                 }
                 else
                 {
                     PlayAnimation("l01"); // walking
-                    _animPlayer.SpeedScale = Mathf.Clamp(horizSpeed / 5.0f, 0.5f, 2.0f);
+                    _animPlayer.SpeedScale = 1.0f;
                 }
             }
-            else if (inCombat)
+            else if (isTurning)
             {
-                PlayAnimation("c05"); // 1h slash (default melee)
+                PlayAnimation("p03"); // shuffle rotate
                 _animPlayer.SpeedScale = 1.0f;
             }
             else
@@ -350,11 +400,34 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public void PlayDamage(bool heavy = false)
     {
         if (_isDead) return;
-        // Quick flinch — play damage then resume (don't change _currentAnim tracking)
-        if (_animPlayer != null && _animPlayer.HasAnimation(heavy ? "d02" : "d01"))
+        
+        // If we are actively swinging a weapon, don't let flinch interrupt it visually.
+        // This prevents the player's attack from being hidden when the server and client
+        // perfectly synchronize their combat rounds.
+        if (_currentAnim.StartsWith("c") && _emoteTimer > 0)
         {
-            _animPlayer.Play(heavy ? "d02" : "d01", 0.1);
-            _currentAnim = heavy ? "d02" : "d01";
+            PlayVoice("hit");
+            return;
+        }
+
+        _emoteTimer = 0;
+        _currentAnim = ""; // Force re-evaluation so the flinch anim plays immediately
+        if (_animPlayer != null)
+            _animPlayer.SpeedScale = 1.0f;
+
+        if (_animPlayer != null)
+        {
+            string flinchAnim = (heavy && _animPlayer.HasAnimation("d02")) ? "d02" : "d01";
+            if (_animPlayer.HasAnimation(flinchAnim))
+            {
+                _animPlayer.Play(flinchAnim, 0.1);
+                _currentAnim = flinchAnim;
+                _emoteTimer = _animPlayer.GetAnimation(flinchAnim).Length;
+            }
+            else
+            {
+                _emoteTimer = 0.5; // Fallback
+            }
         }
         PlayVoice("hit");
     }
@@ -396,9 +469,6 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             "disappointed" => "s02",
             "wave" => "s03",
             "rude" => "s04",
-            "kick" => "t07",      // flying kick
-            "tigerstrike" => "t08",
-            "dragonpunch" => "t09",
             _ => null
         };
         // If no named match, try using the emote string as a raw animation code
@@ -423,29 +493,89 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         PlayVoice("spl"); // Use spell voice/shout if exists
     }
 
-    public void PlayAttack(string attackType = "slash")
+    public void PlayAttack(string attackType = "slash", bool isHit = true)
     {
         if (_isDead) return;
         
         string animCode;
         switch (attackType.ToLower())
         {
-            case "kick": animCode = "t07"; break;
-            case "bash": animCode = "t10"; break; // Bash/Shield Bash
+            case "kick":
+            case "kick!": animCode = "c01"; break; // Kick
             case "pierce":
-            case "backstab": animCode = "c04"; break; // Pierce
-            case "2h": animCode = "c06"; break; // 2H Slash
-            case "blunt": animCode = "c07"; break; // 2H Blunt
-            case "h2h": animCode = "c03"; break; // Hand to hand
-            case "slash":
-            default: animCode = "c05"; break; // 1H Slash / Default Melee
+            case "piercing":
+            case "backstab":
+            case "backstab!": animCode = "c02"; break; // 1H Pierce
+            case "2h_slashing":
+            case "2h": animCode = "c03"; break; // 2H Slash
+            case "2h_blunt":
+            case "blunt": animCode = "c04"; break; // 2H Blunt
+            case "1h_slashing":
+            case "slash": animCode = "c05"; break; // 1H Slash
+            case "offhand": animCode = "c06"; break; // 1H Slash Offhand
+            case "bash":
+            case "bash!": animCode = "c07"; break; // Bash
+            case "hand_to_hand":
+            case "h2h": animCode = "c08"; break; // Hand to Hand Primary
+            case "archery":
+            case "bow": animCode = "c09"; break; // Archery
+            case "round_kick":
+            case "round kick": animCode = "c11"; break; // Roundhouse kick
+            case "flying_kick":
+            case "flying kick": animCode = "t07"; break; // Flying kick
+            case "tiger_strike":
+            case "tiger strike": animCode = "t08"; break; // Tiger strike
+            case "dragon_punch":
+            case "dragon punch": animCode = "t09"; break; // Dragon punch
+            default: animCode = "c05"; break; // Default to 1H Slash
         }
 
-        // Just quick attack animation
+        // Play at native 1.0x speed. The previous 0.5x hack was artificially slowing it down.
+        if (_animPlayer != null)
+            _animPlayer.SpeedScale = 1.0f;
+
+        GD.Print($"[AUTOATK] PlayAnimation({animCode}) called. SpeedScale={_animPlayer?.SpeedScale}");
         PlayAnimation(animCode);
+        
+        if (_animPlayer != null)
+        {
+            if (_animPlayer.HasAnimation(animCode))
+            {
+                // Actual playback time = reported length / speedScale
+                _emoteTimer = _animPlayer.GetAnimation(animCode).Length / _animPlayer.SpeedScale;
+                GD.Print($"[AUTOATK] emoteTimer set to {_emoteTimer:F3} (Length was {_animPlayer.GetAnimation(animCode).Length:F3})");
+            }
+        }
         
         // Attack sound (grunt)
         PlayVoice("atk");
+    }
+
+    // --- Auto-attack loop control (called by WorldManager) ---
+
+    /// <summary>
+    /// Start the client-side auto-attack animation loop.
+    /// delaySec = effective weapon delay in seconds: (dly/10)/hasteMod
+    /// weaponType = weapon skill name (e.g. "1h_slashing", "piercing")
+    /// </summary>
+    public void StartAutoAttack(float delaySec, string weaponType)
+    {
+        _autoAttackDelay = Mathf.Max(0.5f, delaySec); // Floor at 0.5s to prevent spam
+        _autoAttackType = weaponType ?? "1h_slashing";
+        // Only reset the timer when first starting — don't interrupt mid-swing
+        // on subsequent STATUS updates (which fire every server tick)
+        if (!_isAutoAttacking)
+        {
+            _isAutoAttacking = true;
+            _autoAttackTimer = 0; // First swing fires immediately
+        }
+    }
+
+    /// <summary>Stop the auto-attack animation loop.</summary>
+    public void StopAutoAttack()
+    {
+        _isAutoAttacking = false;
+        _autoAttackTimer = 0;
     }
 
     public void PlayInstrument(bool stringed = true)
@@ -518,6 +648,22 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             {
                 _emoteTimer = 0;
                 _currentAnim = ""; // force re-evaluation
+                if (_animPlayer != null) _animPlayer.SpeedScale = 1.0f; // reset combat speed scaling
+            }
+        }
+
+        // Auto-attack animation loop (player only)
+        // Fires the full attack animation on a timer matching the server's combat tick.
+        if (_isAutoAttacking && IsPlayerControlled && !_isDead)
+        {
+            _autoAttackTimer -= delta;
+            if (_autoAttackTimer <= 0)
+            {
+                if (_emoteTimer <= 0)
+                {
+                    PlayAttack(_autoAttackType, true);
+                    _autoAttackTimer = _autoAttackDelay; // Next swing after full delay
+                }
             }
         }
 
@@ -537,43 +683,45 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         // but their active animations lift them 15+ units into the sky.
         if (_characterModel != null && _nameLabel != null)
         {
-            var skeleton = _cachedSkeleton;
-            if (skeleton != null && skeleton.GetBoneCount() > 0)
+            _boneRecalcTimer += (float)delta;
+            if (_boneRecalcTimer >= 0.2f) // Throttle expensive bone recalculations to 5 times per sec
             {
-                float maxY = -1000f;
-                float minY = 1000f;
-                for (int i = 0; i < skeleton.GetBoneCount(); i++)
+                _boneRecalcTimer = 0f;
+                var skeleton = _cachedSkeleton;
+                if (skeleton != null && skeleton.GetBoneCount() > 0)
                 {
-                    var pose = skeleton.GetBoneGlobalPose(i);
-                    if (pose.Origin.Y > maxY) maxY = pose.Origin.Y;
-                    if (pose.Origin.Y < minY) minY = pose.Origin.Y;
-                }
-
-                // Add margin for actual mesh volume around the bone
-                maxY += 1.0f;
-                minY -= 1.0f;
-
-                float finalScale = _characterModel.Scale.Y;
-                float baseHeight = _characterModel.Position.Y;
-
-                float visualTopY = baseHeight + (maxY * finalScale);
-                float visualCenterY = baseHeight + (((maxY + minY) / 2f) * finalScale);
-
-                // Smoothly track the visual top
-                float currentLabelY = _nameLabel.Position.Y;
-                float targetLabelY = Mathf.Max(6.8f, visualTopY + 0.6f);
-                _nameLabel.Position = new Vector3(0, Mathf.Lerp(currentLabelY, targetLabelY, 5f * (float)delta), 0);
-
-                // Smoothly track the visual center for the click capsule
-                var clickArea = GetNodeOrNull<Area3D>("ClickArea");
-                if (clickArea != null) {
-                    var clickShape = clickArea.GetNodeOrNull<CollisionShape3D>("ClickShape");
-                    if (clickShape != null) {
-                        float currentClickY = clickShape.Position.Y;
-                        float targetClickY = Mathf.Max(3.1f, visualCenterY);
-                        clickShape.Position = new Vector3(0, Mathf.Lerp(currentClickY, targetClickY, 5f * (float)delta), 0);
+                    float maxY = -1000f;
+                    float minY = 1000f;
+                    for (int i = 0; i < skeleton.GetBoneCount(); i++)
+                    {
+                        var pose = skeleton.GetBoneGlobalPose(i);
+                        if (pose.Origin.Y > maxY) maxY = pose.Origin.Y;
+                        if (pose.Origin.Y < minY) minY = pose.Origin.Y;
                     }
+
+                    // Add margin for actual mesh volume around the bone
+                    maxY += 1.0f;
+                    minY -= 1.0f;
+
+                    float finalScale = _characterModel.Scale.Y;
+                    float baseHeight = _characterModel.Position.Y;
+
+                    float visualTopY = baseHeight + (maxY * finalScale);
+                    float visualCenterY = baseHeight + (((maxY + minY) / 2f) * finalScale);
+                    
+                    _targetLabelY = Mathf.Max(6.8f, visualTopY + 0.6f);
+                    _targetClickY = Mathf.Max(3.1f, visualCenterY);
                 }
+            }
+
+            // Smoothly interpolate label and click capsule every frame (using cached targets)
+            float currentLabelY = _nameLabel.Position.Y;
+            _nameLabel.Position = new Vector3(0, Mathf.Lerp(currentLabelY, _targetLabelY, 5f * (float)delta), 0);
+
+            if (_clickShape != null)
+            {
+                float currentClickY = _clickShape.Position.Y;
+                _clickShape.Position = new Vector3(0, Mathf.Lerp(currentClickY, _targetClickY, 5f * (float)delta), 0);
             }
         }
 
@@ -699,7 +847,9 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         {
             velocity.X = 0;
             velocity.Z = 0;
-            PlayAnimation("c05"); // 1h slash attack in melee range
+            if (_emoteTimer <= 0) {
+                PlayAnimation("p01"); // idle in melee range
+            }
         }
 
         Velocity = velocity;
@@ -776,7 +926,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public float EyeHeight { get; private set; } = 5.8f;
     public float OverheadHeight { get; private set; } = 7.0f;
 
-    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "")
+    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float size = 6f)
     {
         // Setup nodes if Setup is called before _Ready
         if (_nameLabel == null || _mesh == null) _Ready();
@@ -786,14 +936,35 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         Gender = gender;
         _nameLabel.Text = name;
         
-        // Playable races: 1-12, 128 (Iksar), 130 (Vah Shir), 330 (Froglok)
+        // Apply classic EQ color coding
         bool isPlayable = (race >= 1 && race <= 12) || race == 128 || race == 130 || race == 330;
         
         float baseMultiplier = 1.5f;
         if (isPlayable) baseMultiplier = 1.5f;
-        if (race == 34) baseMultiplier = 1.0f; // Bats are naturally large in Lantern exports
         
-        float raceScale = GetRaceScale(race) * baseMultiplier;
+        // For non-player mobs, use their DB size normalized against the human default of 6
+        // Tone down the extremity of the DB sizes drastically.
+        // We use a square root dampening curve for large mobs, and clamp the overall multiplier.
+        float sizeMultiplier = 1.0f;
+        if (type != "player")
+        {
+            float rawMultiplier = size / 6.0f;
+            if (rawMultiplier > 1.0f)
+            {
+                // Soft-cap large sizes (e.g., size 60 -> raw 10 -> sqrt(10) = 3.1)
+                sizeMultiplier = Mathf.Sqrt(rawMultiplier);
+            }
+            else if (rawMultiplier < 1.0f && rawMultiplier > 0f)
+            {
+                // Soft-floor small sizes (e.g., size 1 -> raw 0.16 -> sqrt(0.16) = 0.4)
+                sizeMultiplier = Mathf.Sqrt(rawMultiplier);
+            }
+            
+            // Hard clamp to prevent completely game-breaking sizes
+            sizeMultiplier = Mathf.Clamp(sizeMultiplier, 0.4f, 3.5f);
+        }
+        
+        float raceScale = GetRaceScale(race) * baseMultiplier * sizeMultiplier;
         EyeHeight = 5.8f * raceScale;
         OverheadHeight = 7.0f * raceScale;
 

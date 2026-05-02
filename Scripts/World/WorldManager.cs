@@ -43,6 +43,7 @@ public partial class WorldManager : Node3D
     [Signal] public delegate void HideToggledEventHandler(bool isHiding);
     [Signal] public delegate void SyncProgressEventHandler(int current, int total);
     private Vector3 _lastSentPos = Vector3.Zero;
+    private double _posSyncTimer = 0.0;
     private Node3D _boundariesContainer;
     private bool _isAutoRunning = false;
     public void SetAutoRun(bool val) => _isAutoRunning = val;
@@ -180,6 +181,8 @@ public partial class WorldManager : Node3D
         UpdateCamera();
     }
 
+    public float SpeedModifier { get; set; } = 1.0f;
+
     public void UpdateEnvironmentTime(int hour, int dawn, int dusk, string moonPhase = "Full", bool initialLoad = false)
     {
         _targetWorldHour = hour;
@@ -211,9 +214,17 @@ public partial class WorldManager : Node3D
         var entity = GetEntityByName(name);
         if (entity != null)
         {
-            if (action == "hit") entity.PlayDamage();
+            if (action == "hit") entity.PlayDamage(false);
+            else if (action == "hit_heavy") entity.PlayDamage(true);
             else if (action == "miss") entity.PlaySfx("aam_hit.wav"); // Placeholder for miss/whoosh sound
-            else if (action == "cast") entity.PlayCast();
+            else if (action == "cast") entity.PlayCast(1);
+            else if (action.StartsWith("cast:"))
+            {
+                if (int.TryParse(action.Split(':')[1], out int castType))
+                    entity.PlayCast(castType);
+                else
+                    entity.PlayCast(1);
+            }
             else if (action == "die") entity.PlayDeath();
             else if (action == "fizzle") entity.PlaySfx("fizzle.wav");
             else if (action.StartsWith("attack:"))
@@ -505,8 +516,10 @@ public partial class WorldManager : Node3D
         }
 
         var velocity = _playerCapsule.Velocity;
-        float speed = 15.0f;
-        if (_isCrouching) speed = 8.0f;
+        float baseSpeed = 10.0f * SpeedModifier;
+        if (_isCrouching) baseSpeed = 5.0f * SpeedModifier;
+
+        float speed = baseSpeed;
 
         // Apply Swimming speed multiplier
         if (_playerCapsule.IsInWater)
@@ -515,7 +528,7 @@ public partial class WorldManager : Node3D
         }
         else if (Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning)
         {
-            speed = 25.0f;
+            speed = baseSpeed * 1.67f; // Sprint multiplier
         }
 
         bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);
@@ -659,7 +672,7 @@ public partial class WorldManager : Node3D
                 if (_swimTimer >= 3.0)
                 {
                     _swimTimer = 0;
-                    GetNode<MainUI>("/root/MainScene/UI")?.GetClient()?.SendRaw("{\"type\": \"SWIM_TICK\"}");
+                    MainUI.Instance?.GetClient()?.SendRaw("{\"type\": \"SWIM_TICK\"}");
                 }
             }
             else
@@ -712,11 +725,16 @@ public partial class WorldManager : Node3D
         // ── Footstep Sounds ──
         UpdateFootstepSounds(_playerCapsule.Velocity, _playerCapsule.IsOnFloor(), isSprinting, delta);
 
-        // Sync position to server if moved > 0.1 units
-        if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f)
+        // Sync position to server if moved > 0.1 units, throttled to 1 update per second
+        _posSyncTimer += delta;
+        if (_posSyncTimer >= 1.0)
         {
-            _lastSentPos = _playerCapsule.GlobalPosition;
-            EmitSignal(SignalName.PlayerMoved, _lastSentPos.X, _lastSentPos.Y, _lastSentPos.Z);
+            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f)
+            {
+                _lastSentPos = _playerCapsule.GlobalPosition;
+                EmitSignal(SignalName.PlayerMoved, _lastSentPos.X, _lastSentPos.Y, _lastSentPos.Z);
+            }
+            _posSyncTimer = 0.0;
         }
 
         // --- Debug Admin Tools ---
@@ -999,6 +1017,15 @@ public partial class WorldManager : Node3D
 
     /// <summary>Show or hide the player's overhead name label.</summary>
 
+    /// <summary>Set the 3D camera Field of View.</summary>
+    public void SetCameraFOV(float fov)
+    {
+        if (_camera != null)
+        {
+            _camera.Fov = fov;
+        }
+    }
+
     /// <summary>Toggle dynamic shadows for object-attached lights (torches, braziers).</summary>
     public void SetDynamicShadows(bool enabled)
     {
@@ -1098,6 +1125,48 @@ public partial class WorldManager : Node3D
 
 
     /// <summary>Play a named animation on the player capsule (for emotes like wave s03).</summary>
+
+    public void TriggerCombatAnimation(string sourceName, string type, bool isHit)
+    {
+        // Player attack animations are now driven by the client-side auto-attack timer
+        // (StartPlayerAutoAttack/StopPlayerAutoAttack). Only NPC swings are event-driven.
+        if (sourceName != "You")
+        {
+            // _activeEntities uses numeric network IDs as keys, but sourceName is the string name (e.g. "a fire beetle").
+            // We must find the capsule by checking its display name.
+            foreach (var node in _activeEntities.Values)
+            {
+                if (node is EntityCapsule mobCapsule && mobCapsule.EntityName == sourceName)
+                {
+                    // Found the mob that is attacking
+                    mobCapsule.PlayAttack(type, isHit);
+                    break; // Only trigger one animation if multiple share a name
+                }
+            }
+        }
+    }
+
+    // --- Player Auto-Attack Animation Loop ---
+
+    /// <summary>
+    /// Start the client-side auto-attack animation loop on the player capsule.
+    /// Called by MainUI when autoFight becomes true.
+    /// </summary>
+    public void StartPlayerAutoAttack(float delaySec, string weaponType)
+    {
+        if (_playerCapsule != null)
+            _playerCapsule.StartAutoAttack(delaySec, weaponType);
+    }
+
+    /// <summary>
+    /// Stop the client-side auto-attack animation loop on the player capsule.
+    /// Called by MainUI when autoFight becomes false.
+    /// </summary>
+    public void StopPlayerAutoAttack()
+    {
+        if (_playerCapsule != null)
+            _playerCapsule.StopAutoAttack();
+    }
 
     // ── Footstep Sound System ───────────────────────────────────
 

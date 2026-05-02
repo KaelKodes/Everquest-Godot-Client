@@ -43,7 +43,7 @@ public partial class WorldManager : Node3D
         if (newState == "idle") return;
 
         // Cadence: run = faster steps, walk = slower
-        _footstepCadence = newState == "run" ? 0.32 : 0.50;
+        _footstepCadence = newState == "run" ? 0.58 : 0.55;
 
         _footstepTimer -= delta;
         if (_footstepTimer <= 0)

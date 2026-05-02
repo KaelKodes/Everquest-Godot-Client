@@ -39,6 +39,7 @@ public partial class GameClient : Node
     [Signal] public delegate void ChatReceivedEventHandler(Variant data);
     [Signal] public delegate void CampCompleteEventHandler();
     [Signal] public delegate void DoorStateChangedEventHandler(Variant data);
+    [Signal] public delegate void SpellAnimationReceivedEventHandler(Variant data);
 
     public static GameClient Instance { get; private set; }
     
@@ -232,6 +233,9 @@ public partial class GameClient : Node
                     break;
                 case "SPELL_DETAILS":
                     EmitSignal(SignalName.SpellDetailsReceived, message);
+                    break;
+                case "SPELL_ANIMATION":
+                    EmitSignal(SignalName.SpellAnimationReceived, message);
                     break;
                 case "TELEPORT":
                 {

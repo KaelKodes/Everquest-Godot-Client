@@ -16,6 +16,13 @@ public partial class ZoneMusicPlayer : Node
     private string _currentTrackName = "";
     private float _masterVolume = 0.8f; // 0..1
     private float _sfxVolume = 0.8f;    // 0..1 — controls entity/ambient SFX
+    private AudioStreamPlayer _ambiencePlayer;
+    private AudioStreamPlayer _ambienceFadeOutPlayer;
+    private string _currentAmbience = "";
+    private float _ambienceVolume = 0.8f;
+    private bool _ambienceMuted = false;
+    private float _ambienceFadeTimer = 0;
+    private bool _isAmbienceFading = false;
     private float _fadeTimer = 0;
     private float _fadeDuration = 2.0f; // seconds to crossfade
     private bool _isFading = false;
@@ -40,23 +47,50 @@ public partial class ZoneMusicPlayer : Node
         _fadeOutPlayer.Name = "MusicFadeOut";
         _fadeOutPlayer.Bus = "Music";
         AddChild(_fadeOutPlayer);
+
+        _ambiencePlayer = new AudioStreamPlayer();
+        _ambiencePlayer.Name = "AmbienceCurrent";
+        _ambiencePlayer.Bus = "SFX";
+        _ambiencePlayer.VolumeDb = LinearToDb(_ambienceVolume);
+        AddChild(_ambiencePlayer);
+
+        _ambienceFadeOutPlayer = new AudioStreamPlayer();
+        _ambienceFadeOutPlayer.Name = "AmbienceFadeOut";
+        _ambienceFadeOutPlayer.Bus = "SFX";
+        AddChild(_ambienceFadeOutPlayer);
     }
 
     public override void _Process(double delta)
     {
-        if (!_isFading) return;
-
-        _fadeTimer += (float)delta;
-        float t = Mathf.Clamp(_fadeTimer / _fadeDuration, 0f, 1f);
-
-        // Fade out old, fade in new
-        _fadeOutPlayer.VolumeDb = LinearToDb(_masterVolume * (1f - t));
-        _currentPlayer.VolumeDb = LinearToDb(_masterVolume * t);
-
-        if (t >= 1f)
+        if (_isFading)
         {
-            _isFading = false;
-            _fadeOutPlayer.Stop();
+            _fadeTimer += (float)delta;
+            float t = Mathf.Clamp(_fadeTimer / _fadeDuration, 0f, 1f);
+
+            // Fade out old, fade in new
+            _fadeOutPlayer.VolumeDb = LinearToDb(_masterVolume * (1f - t));
+            _currentPlayer.VolumeDb = LinearToDb(_masterVolume * t);
+
+            if (t >= 1f)
+            {
+                _isFading = false;
+                _fadeOutPlayer.Stop();
+            }
+        }
+
+        if (_isAmbienceFading)
+        {
+            _ambienceFadeTimer += (float)delta;
+            float tAmb = Mathf.Clamp(_ambienceFadeTimer / _fadeDuration, 0f, 1f);
+
+            _ambienceFadeOutPlayer.VolumeDb = LinearToDb(_ambienceVolume * (1f - tAmb));
+            _ambiencePlayer.VolumeDb = LinearToDb(_ambienceVolume * tAmb);
+
+            if (tAmb >= 1f)
+            {
+                _isAmbienceFading = false;
+                _ambienceFadeOutPlayer.Stop();
+            }
         }
     }
 
@@ -160,7 +194,6 @@ public partial class ZoneMusicPlayer : Node
         EmitSignal(SignalName.MusicChanged, _currentTrackName);
     }
 
-    /// <summary>Stop all music playback.</summary>
     public void StopMusic()
     {
         _isFading = false;
@@ -169,6 +202,68 @@ public partial class ZoneMusicPlayer : Node
         _currentZone = "";
         _currentTrackName = "";
         EmitSignal(SignalName.MusicChanged, "");
+    }
+
+    public void PlayZoneAmbience(string trackName)
+    {
+        if (trackName == _currentAmbience && _ambiencePlayer.Playing) return;
+
+        string zone = trackName.ToLower();
+        var cache = EQAssetCache.Instance;
+        var config = EQAssetConfig.Instance;
+
+        string musicPath = null;
+        if (config.IsConfigured)
+        {
+            string directMp3 = Path.Combine(config.EQPath, $"{zone}.mp3");
+            if (File.Exists(directMp3)) musicPath = directMp3;
+        }
+
+        if (musicPath == null)
+        {
+            string cacheMp3 = $"{cache.CacheRoot}/music/{zone}.mp3";
+            if (File.Exists(cacheMp3)) musicPath = cacheMp3;
+        }
+
+        if (musicPath == null)
+        {
+            if (_ambiencePlayer.Playing) StopAmbience();
+            _currentAmbience = zone;
+            return;
+        }
+
+        AudioStream stream = LoadMp3(musicPath);
+
+        if (stream == null)
+        {
+            _currentAmbience = zone;
+            return;
+        }
+
+        if (_ambiencePlayer.Playing)
+        {
+            _ambienceFadeOutPlayer.Stream = _ambiencePlayer.Stream;
+            _ambienceFadeOutPlayer.VolumeDb = _ambiencePlayer.VolumeDb;
+            _ambienceFadeOutPlayer.Play(_ambiencePlayer.GetPlaybackPosition());
+            _ambiencePlayer.Stop();
+
+            _isAmbienceFading = true;
+            _ambienceFadeTimer = 0;
+        }
+
+        _ambiencePlayer.Stream = stream;
+        _ambiencePlayer.VolumeDb = _ambienceMuted ? -80f : (_isAmbienceFading ? LinearToDb(0) : LinearToDb(_ambienceVolume));
+        _ambiencePlayer.Play();
+
+        _currentAmbience = zone;
+    }
+
+    public void StopAmbience()
+    {
+        _isAmbienceFading = false;
+        _ambiencePlayer.Stop();
+        _ambienceFadeOutPlayer.Stop();
+        _currentAmbience = "";
     }
 
     /// <summary>Set music volume (0..1).</summary>
@@ -210,6 +305,24 @@ public partial class ZoneMusicPlayer : Node
 
     /// <summary>Is SFX muted?</summary>
     public bool IsSfxMuted => _sfxMuted;
+
+    public void SetAmbienceVolume(float volume)
+    {
+        _ambienceVolume = Mathf.Clamp(volume, 0f, 1f);
+        if (!_isAmbienceFading && _ambiencePlayer != null)
+            _ambiencePlayer.VolumeDb = LinearToDb(_ambienceVolume);
+    }
+
+    public float GetAmbienceVolume() => _ambienceVolume;
+
+    public void SetAmbienceMuted(bool muted)
+    {
+        _ambienceMuted = muted;
+        if (_ambiencePlayer != null)
+            _ambiencePlayer.VolumeDb = muted ? -80f : LinearToDb(_ambienceVolume);
+    }
+
+    public bool IsAmbienceMuted => _ambienceMuted;
 
     // ── Private Audio Loaders ───────────────────────────────────
 

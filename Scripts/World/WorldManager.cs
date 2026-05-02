@@ -16,6 +16,8 @@ public partial class WorldManager : Node3D
     private Node3D _doorsContainer;
     private MaterialAnimator _materialAnimator;
     private string _currentVisionStyle = "normal";
+    private GpuParticles3D _weatherParticles;
+    private string _currentWeatherEffect = "none";
 
     private int _spawnCounter = 0;
     private int _enemyTargetIndex = -1;
@@ -78,7 +80,7 @@ public partial class WorldManager : Node3D
     public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget as Node) ? ((Node)_currentTarget).Name : null;
 
     // Range constants (in world units)
-    public const float MELEE_RANGE = 4f;
+    public const float MELEE_RANGE = 5f;
     public const float BOW_RANGE = 30f;
     public const float SPELL_RANGE_DEFAULT = 20f;
 
@@ -86,7 +88,14 @@ public partial class WorldManager : Node3D
     public float GetDistanceToTarget()
     {
         if (_playerCapsule == null || !GodotObject.IsInstanceValid(_currentTarget as Node)) return -1f;
-        return _playerCapsule.GlobalPosition.DistanceTo(_currentTarget.GlobalPosition);
+        
+        // Ignore Y distance for combat/interaction so flying mobs and tall mobs are hittable
+        Vector3 p1 = _playerCapsule.GlobalPosition;
+        Vector3 p2 = _currentTarget.GlobalPosition;
+        p1.Y = 0;
+        p2.Y = 0;
+        
+        return p1.DistanceTo(p2);
     }
 
     /// <summary>Check if the current target is within the given range.</summary>
@@ -438,6 +447,117 @@ public partial class WorldManager : Node3D
         }
     }
 
+    public void SetWeatherEffect(string effect)
+    {
+        if (_currentWeatherEffect == effect) return;
+        _currentWeatherEffect = effect;
+
+        if (_weatherParticles == null)
+        {
+            _weatherParticles = new GpuParticles3D();
+            _weatherParticles.Name = "WeatherParticles";
+            _weatherParticles.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            _weatherParticles.Emitting = false;
+            
+            // Attach to camera so it follows player view
+            if (_camera != null)
+            {
+                _camera.AddChild(_weatherParticles);
+            }
+            else
+            {
+                AddChild(_weatherParticles);
+            }
+        }
+
+        if (effect == "none" || effect == "overcast" || effect == "fog" || string.IsNullOrEmpty(effect))
+        {
+            _weatherParticles.Emitting = false;
+            return;
+        }
+
+        _weatherParticles.Emitting = true;
+        _weatherParticles.Position = new Vector3(0, 15f, -10f); // Default above
+        _weatherParticles.Amount = 1000;
+        _weatherParticles.Lifetime = 2.0f;
+        _weatherParticles.VisibilityAabb = new Aabb(new Vector3(-40, -40, -40), new Vector3(80, 80, 80));
+
+        var material = new ParticleProcessMaterial();
+        material.EmissionShape = ParticleProcessMaterial.EmissionShapeEnum.Box;
+        material.EmissionBoxExtents = new Vector3(25, 2, 25); // spawn over a wide area above camera
+
+        var drawPass = new QuadMesh();
+        drawPass.Size = new Vector2(0.05f, 0.5f); // Rain drop shape
+        
+        var spatialMat = new StandardMaterial3D();
+        spatialMat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+        spatialMat.AlbedoColor = new Color(0.8f, 0.9f, 1.0f, 0.6f);
+        spatialMat.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
+        spatialMat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+
+        if (effect.Contains("rain"))
+        {
+            material.Direction = new Vector3(0, -1, 0);
+            material.Spread = 2f;
+            material.InitialVelocityMin = 25f;
+            material.InitialVelocityMax = 35f;
+            material.Gravity = new Vector3(0, -9.8f, 0);
+            
+            if (effect == "rain_light") { _weatherParticles.Amount = 500; }
+            else if (effect == "rain_heavy") 
+            { 
+                _weatherParticles.Amount = 3000; 
+                material.InitialVelocityMin = 35f; 
+                material.InitialVelocityMax = 45f; 
+                material.Direction = new Vector3(0.1f, -1f, 0f); 
+            }
+        }
+        else if (effect.Contains("snow") || effect == "blizzard")
+        {
+            drawPass.Size = new Vector2(0.08f, 0.08f); // Snow flake shape
+            spatialMat.AlbedoColor = new Color(1.0f, 1.0f, 1.0f, 0.8f);
+            
+            material.Direction = new Vector3(0, -1, 0);
+            material.Spread = 10f;
+            material.InitialVelocityMin = 3f;
+            material.InitialVelocityMax = 6f;
+            
+            // Add some drift/swirl
+            material.Gravity = new Vector3(1f, -2f, 1f); 
+            
+            if (effect == "snow_light") { _weatherParticles.Amount = 500; _weatherParticles.Lifetime = 3.0f; }
+            else if (effect == "snow") { _weatherParticles.Amount = 2000; _weatherParticles.Lifetime = 3.0f; }
+            else if (effect == "blizzard") 
+            { 
+                _weatherParticles.Amount = 5000; 
+                _weatherParticles.Lifetime = 3.0f;
+                material.InitialVelocityMin = 15f; 
+                material.InitialVelocityMax = 25f; 
+                material.Direction = new Vector3(0.5f, -1f, 0f); 
+                material.Gravity = new Vector3(5f, -5f, 0f);
+            }
+        }
+        else if (effect == "dust")
+        {
+            drawPass.Size = new Vector2(0.2f, 0.2f);
+            spatialMat.AlbedoColor = new Color(0.8f, 0.7f, 0.5f, 0.2f);
+            
+            material.Direction = new Vector3(1, 0, 0); // Blow horizontally
+            material.Spread = 15f;
+            material.InitialVelocityMin = 15f;
+            material.InitialVelocityMax = 25f;
+            material.Gravity = new Vector3(0, 0, 0);
+            
+            _weatherParticles.Amount = 3000;
+            _weatherParticles.Position = new Vector3(-25, 0, -10f); // Spawning from side instead of above
+            material.EmissionBoxExtents = new Vector3(2, 10, 25); 
+        }
+
+        drawPass.Material = spatialMat;
+        _weatherParticles.ProcessMaterial = material;
+        _weatherParticles.DrawPass1 = drawPass;
+    }
+
     public override void _Process(double delta)
     {
         // Celestial bodies should be anchored to the camera to prevent parallax and clipping,
@@ -528,7 +648,7 @@ public partial class WorldManager : Node3D
         }
         else if (Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning)
         {
-            speed = baseSpeed * 1.67f; // Sprint multiplier
+            speed = baseSpeed * 2.15f; // Sprint multiplier
         }
 
         bool rightClickHeld = Input.IsMouseButtonPressed(MouseButton.Right);

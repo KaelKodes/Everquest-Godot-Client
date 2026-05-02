@@ -461,6 +461,18 @@ public partial class WorldManager : Node3D
 
         _musicPlayer.PlayZoneMusic(zoneId);
     }
+
+    public void PlayZoneAmbience(string trackName)
+    {
+        if (_musicPlayer == null)
+        {
+            _musicPlayer = new ZoneMusicPlayer();
+            _musicPlayer.Name = "ZoneMusicPlayer";
+            AddChild(_musicPlayer);
+        }
+
+        _musicPlayer.PlayZoneAmbience(trackName);
+    }
     private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
@@ -683,10 +695,9 @@ public partial class WorldManager : Node3D
                             newMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
                         }
                     }
-                    else
-                    {
-                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                    }
+                    // We purposefully DO NOT disable culling for solid materials anymore!
+                    // Disabling culling on solids caused inward-facing developer textures (like zone lines or "GOTO" walls)
+                    // to become visible from the outside, appearing inside-out. Default Godot culling (Back) hides them properly.
                     
                     // Apply backlight to surface overrides too
                     newMat.BacklightEnabled = true;

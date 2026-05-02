@@ -360,6 +360,7 @@ public partial class MainUI : Control
 		_client.ChatReceived += OnChatReceived;
 		_client.CampComplete += OnCampComplete;
 		_client.DoorStateChanged += OnDoorStateChanged;
+		_client.SpellAnimationReceived += OnSpellAnimationReceived;
 		_client.MessageReceived += OnGenericMessage;
 
 		// Buff Context Menu created lazily on first right-click (see EnsureBuffContextMenu)
@@ -1397,6 +1398,7 @@ public partial class MainUI : Control
 			_client.BankOpened -= OnBankOpened;
 			_client.ChatReceived -= OnChatReceived;
 			_client.CampComplete -= OnCampComplete;
+			_client.SpellAnimationReceived -= OnSpellAnimationReceived;
 			_client.MessageReceived -= OnGenericMessage;
 		}
 		base._ExitTree();
@@ -2063,6 +2065,8 @@ public partial class MainUI : Control
 		var statusWindow = GetNodeOrNull<Window>("StatusWindow");
 		if (statusWindow != null) ApplyWindowPos(statusWindow, "StatusWindow", windows);
 		
+		if (_buffBarWindow != null) ApplyWindowPos(_buffBarWindow, "BuffWindow", windows);
+		if (_songBarWindow != null) ApplyWindowPos(_songBarWindow, "SongWindow", windows);
 		if (_copyLayoutWindow != null) ApplyWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
 		if (_merchantWindow != null) ApplyWindowPos(_merchantWindow, "MerchantWindow", windows);
 	}
@@ -2075,8 +2079,14 @@ public partial class MainUI : Control
 			var d = val.AsGodotDictionary();
 			if (panel is Control c) {
 				c.GlobalPosition = new Vector2(d["x"].AsSingle(), d["y"].AsSingle());
+				if (d.ContainsKey("w") && d.ContainsKey("h")) {
+					c.Size = new Vector2(d["w"].AsSingle(), d["h"].AsSingle());
+				}
 			} else if (panel is Window w) {
 				w.Position = new Vector2I(d["x"].AsInt32(), d["y"].AsInt32());
+				if (d.ContainsKey("w") && d.ContainsKey("h")) {
+					w.Size = new Vector2I(d["w"].AsInt32(), d["h"].AsInt32());
+				}
 			}
 		}
 	}
@@ -2108,6 +2118,8 @@ public partial class MainUI : Control
 		var statusWindow = GetNodeOrNull<Window>("StatusWindow");
 		if (statusWindow != null) StoreWindowPos(statusWindow, "StatusWindow", windows);
 		
+		if (_buffBarWindow != null) StoreWindowPos(_buffBarWindow, "BuffWindow", windows);
+		if (_songBarWindow != null) StoreWindowPos(_songBarWindow, "SongWindow", windows);
 		if (_copyLayoutWindow != null) StoreWindowPos(_copyLayoutWindow, "CopyLayoutWindow", windows);
 		if (_merchantWindow != null) StoreWindowPos(_merchantWindow, "MerchantWindow", windows);
 		
@@ -2136,9 +2148,9 @@ public partial class MainUI : Control
 		if (panel == null) return;
 		
 		if (panel is Control ctrl) {
-			windows[key] = new Godot.Collections.Dictionary { ["x"] = ctrl.GlobalPosition.X, ["y"] = ctrl.GlobalPosition.Y };
+			windows[key] = new Godot.Collections.Dictionary { ["x"] = ctrl.GlobalPosition.X, ["y"] = ctrl.GlobalPosition.Y, ["w"] = ctrl.Size.X, ["h"] = ctrl.Size.Y };
 		} else if (panel is Window win) {
-			windows[key] = new Godot.Collections.Dictionary { ["x"] = win.Position.X, ["y"] = win.Position.Y };
+			windows[key] = new Godot.Collections.Dictionary { ["x"] = win.Position.X, ["y"] = win.Position.Y, ["w"] = win.Size.X, ["h"] = win.Size.Y };
 		}
 	}
 
@@ -2235,6 +2247,13 @@ public partial class MainUI : Control
 						wm.LoadZoneMap(_currentZoneId);
 						wm.PlayZoneMusic(_currentZoneId);
 						
+						string ambienceTrack = _currentZoneId + "am";
+						if (dict.TryGetProperty("ambience", out var ambVariant))
+						{
+							ambienceTrack = ambVariant.GetString();
+						}
+						wm.PlayZoneAmbience(ambienceTrack);
+						
 						_loadingBar.Value = 70;
 						if (_flavorLabel != null) _flavorLabel.Text = "Loading doors...";
 						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
@@ -2289,8 +2308,12 @@ public partial class MainUI : Control
 							drinalPhase = pProp.GetString();
 						}
 						
+						
 						wm.UpdateEnvironmentTime(worldHour, dawn, dusk, drinalPhase, true); // true = initial load
 					
+						string weatherEffect = visionDict.TryGetProperty("weatherRenderEffect", out var wreProp) ? wreProp.GetString() : "none";
+						wm.SetWeatherEffect(weatherEffect);
+
 						// Set indoor/outdoor from server vision data (replaces hardcoded zone list)
 						bool isOutdoor = visionDict.TryGetProperty("isOutdoor", out var ooProp) && ooProp.GetBoolean();
 						wm.SetIndoorZone(!isOutdoor);
@@ -2327,6 +2350,24 @@ public partial class MainUI : Control
 		catch (Exception ex)
 		{
 			GD.PrintErr($"[UI] OnMobMoveReceived error: {ex.Message}");
+		}
+	}
+
+	private void OnSpellAnimationReceived(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			var dict = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
+			var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+			if (wm != null)
+			{
+				wm.SpawnSpellAnimation(dict);
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[UI] OnSpellAnimationReceived error: {ex.Message}");
 		}
 	}
 

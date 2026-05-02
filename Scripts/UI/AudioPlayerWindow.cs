@@ -22,6 +22,10 @@ public partial class AudioPlayerWindow : Panel
     private CheckBox _musicMuteCheck;
     private CheckBox _sfxMuteCheck;
 
+    private HSlider _ambienceSlider;
+    private Label _ambienceVolLabel;
+    private CheckBox _ambienceMuteCheck;
+
     // ── Visualizer ──
     private ColorRect[] _vizBars = new ColorRect[16];
     private float[] _vizValues = new float[16];
@@ -45,6 +49,7 @@ public partial class AudioPlayerWindow : Panel
             OnMusicChanged(_musicPlayer.CurrentTrackName);
             _musicSlider.Value = _musicPlayer.GetVolume() * 100;
             _sfxSlider.Value = _musicPlayer.GetSfxVolume() * 100;
+            _ambienceSlider.Value = _musicPlayer.GetAmbienceVolume() * 100;
         }
     }
 
@@ -72,8 +77,8 @@ public partial class AudioPlayerWindow : Panel
     private void BuildUI()
     {
         // Panel sizing
-        CustomMinimumSize = new Vector2(280, 310);
-        Size = new Vector2(280, 310);
+        CustomMinimumSize = new Vector2(280, 360);
+        Size = new Vector2(280, 360);
 
         // Panel style — dark glass with gold border
         var panelStyle = new StyleBoxFlat();
@@ -183,6 +188,19 @@ public partial class AudioPlayerWindow : Panel
             (muted) =>
             {
                 _musicPlayer?.SetSfxMuted(muted);
+            }
+        ));
+
+        // ── Ambience Volume ──
+        vbox.AddChild(BuildVolumeRow("Ambience", 80, out _ambienceSlider, out _ambienceVolLabel, out _ambienceMuteCheck,
+            (val) =>
+            {
+                _musicPlayer?.SetAmbienceVolume((float)val / 100f);
+                _ambienceVolLabel.Text = $"{val:F0}%";
+            },
+            (muted) =>
+            {
+                _musicPlayer?.SetAmbienceMuted(muted);
             }
         ));
 

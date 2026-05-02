@@ -731,25 +731,55 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         float gravity = 20f;
         var velocity = Velocity;
 
-        // Apply gravity
-        if (!IsOnFloor() && !IsInWater)
-            velocity.Y -= gravity * (float)delta;
-        else if (IsInWater && !IsOnFloor())
-            velocity.Y = 0f; // Neutral buoyancy
-        else
-            velocity.Y = 0;
-
         // Dead NPCs don't move
         if (_isDead)
         {
             velocity.X = 0;
+            velocity.Y = 0;
             velocity.Z = 0;
             Velocity = velocity;
             MoveAndSlide();
             return;
         }
 
-        // No chase target — just stand in place with gravity
+        // Apply Server-Authoritative Y-Position or Gravity Fallback
+        if (ChaseTarget == null && TargetPosition.HasValue)
+        {
+            if (IsInWater)
+            {
+                // Smooth approach to server Y only when swimming
+                float yDist = TargetPosition.Value.Y - GlobalPosition.Y;
+                if (Mathf.Abs(yDist) > 0.1f)
+                    velocity.Y = Mathf.Sign(yDist) * Mathf.Min(Mathf.Abs(yDist) * 5f, 20f);
+                else
+                    velocity.Y = 0;
+            }
+            else if (!IsOnFloor())
+            {
+                velocity.Y -= gravity * (float)delta;
+            }
+        }
+        else if (ChaseTarget is EntityCapsule ct && ct.IsInWater)
+        {
+            // If chasing a swimming target, predict their Y to follow them in 3D space
+            float yDist = ct.GlobalPosition.Y - GlobalPosition.Y;
+            if (Mathf.Abs(yDist) > 0.1f)
+                velocity.Y = Mathf.Sign(yDist) * Mathf.Min(Mathf.Abs(yDist) * 3f, ChaseSpeed);
+            else
+                velocity.Y = 0;
+        }
+        else
+        {
+            // Fallback: normal Godot gravity if we aren't moving to a server point
+            if (!IsOnFloor() && !IsInWater)
+                velocity.Y -= gravity * (float)delta;
+            else if (IsInWater && !IsOnFloor())
+                velocity.Y = 0f; // Neutral buoyancy
+            else
+                velocity.Y = 0;
+        }
+
+        // No chase target — just stand in place or move to TargetPosition
         if (ChaseTarget == null)
         {
             if (TargetYaw.HasValue)
@@ -791,7 +821,11 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 if (targetDist > 0.1f)
                 {
                     Vector2 dir = (target2D - current2D).Normalized();
-                    float moveSpeed = 6.0f; // Walk speed
+                    
+                    // Dynamically scale speed to server tick rate (~5 updates per sec)
+                    // This smooths out stutter-stepping by matching approach speed to arrival distance
+                    float moveSpeed = Mathf.Clamp(targetDist * 5.0f, 2.0f, 25.0f);
+                    
                     velocity.X = dir.X * moveSpeed;
                     velocity.Z = dir.Y * moveSpeed;
 
@@ -937,10 +971,14 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         _nameLabel.Text = name;
         
         // Apply classic EQ color coding
-        bool isPlayable = (race >= 1 && race <= 12) || race == 128 || race == 130 || race == 330;
+        bool isPlayable = (race >= 1 && race <= 12) || race == 128 || race == 130 || race == 330 || race == 67 || race == 71 || race == 74 || race == 78;
         
-        float baseMultiplier = 1.5f;
-        if (isPlayable) baseMultiplier = 1.5f;
+        float baseMultiplier = 1.0f;
+        string lowerName = name.ToLower();
+        if (isPlayable || type == "player" || type == "npc" || lowerName.Contains("guard") || lowerName.Contains("sentinel") || lowerName.Contains("protector")) 
+        {
+            baseMultiplier = 1.5f;
+        }
         
         // For non-player mobs, use their DB size normalized against the human default of 6.
         // We use a logarithmic dampening curve to prevent extreme sizes while preserving
@@ -953,16 +991,11 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             if (rawRatio > 1.0f)
             {
                 // Log dampening for large mobs: log2(ratio) + 1
-                // size 12 (2x) -> 1 + log2(2)*0.3 = 1.3
-                // size 30 (5x) -> 1 + log2(5)*0.3 = 1.7
-                // size 60 (10x) -> 1 + log2(10)*0.3 = 2.0
                 sizeMultiplier = 1.0f + Mathf.Log(rawRatio) / Mathf.Log(2) * 0.3f;
             }
             else if (rawRatio < 1.0f && rawRatio > 0f)
             {
                 // Mirror for small mobs
-                // size 3 (0.5x) -> 1 - log2(2)*0.2 = 0.8
-                // size 1 (0.16x) -> clamped to 0.6
                 sizeMultiplier = 1.0f + Mathf.Log(rawRatio) / Mathf.Log(2) * 0.2f;
             }
             

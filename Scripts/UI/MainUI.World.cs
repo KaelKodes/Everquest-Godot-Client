@@ -397,6 +397,14 @@ public partial class MainUI
 						wmVision.SetVisionStyle(renderStyleProp.GetString());
 					}
 				}
+				if (visionDict.TryGetProperty("weatherRenderEffect", out var wreProp))
+				{
+					var wmVision = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wmVision != null)
+					{
+						wmVision.SetWeatherEffect(wreProp.GetString());
+					}
+				}
 			}
 
 			// Sit/Stand state
@@ -429,6 +437,28 @@ public partial class MainUI
 			{
 				_autoFight = autoFightProp.GetBoolean();
 				if (_autoFightBtn != null) _autoFightBtn.Text = _autoFight ? "Stop Combat" : "Start Combat";
+				
+				var wmAuto = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wmAuto != null)
+				{
+					if (_autoFight)
+					{
+						float delaySec = 3.0f;
+						string wpnType = "1h_slashing";
+						if (character.TryGetProperty("dly", out var dlyProp)) delaySec = Math.Max(0.5f, (float)dlyProp.GetDouble() / 10f);
+						if (character.TryGetProperty("weaponSkill", out var wsProp) && wsProp.ValueKind != JsonValueKind.Null) wpnType = wsProp.GetString();
+						if (character.TryGetProperty("hasteMod", out var hasteProp))
+						{
+							float hasteMod = (float)hasteProp.GetDouble();
+							if (hasteMod > 0) delaySec /= hasteMod;
+						}
+						wmAuto.StartPlayerAutoAttack(delaySec, wpnType);
+					}
+					else
+					{
+						wmAuto.StopPlayerAutoAttack();
+					}
+				}
 			}
 
 			// Target frame

@@ -117,8 +117,27 @@ public partial class WorldManager : Node3D
                     // Only snap rotation if they aren't actively running/chasing
                     if (ec.ChaseTarget == null)
                     {
-                        ec.TargetYaw = godotYaw;
-                        ec.TargetPosition = new Vector3(x, y, z);
+                        Vector3 newPos = new Vector3(x, y, z);
+                        float dist = ec.GlobalPosition.DistanceTo(newPos);
+                        
+                        if (dist > 15.0f)
+                        {
+                            // Teleport/snap if we are way out of sync
+                            ec.GlobalPosition = newPos;
+                            ec.TargetPosition = null;
+                            ec.TargetYaw = godotYaw;
+                        }
+                        else if (dist > 0.5f)
+                        {
+                            // Interpolate if we are somewhat out of sync
+                            ec.TargetYaw = godotYaw;
+                            ec.TargetPosition = newPos;
+                        }
+                        else
+                        {
+                            // We are close enough, don't trigger movement
+                            ec.TargetYaw = godotYaw;
+                        }
                     }
                 }
             }
@@ -244,6 +263,52 @@ public partial class WorldManager : Node3D
             {
                 SetTarget(activeEc);
             }
+        }
+    }
+
+    public void SpawnSpellAnimation(System.Text.Json.JsonElement animDict)
+    {
+        try
+        {
+            string casterId = animDict.TryGetProperty("casterId", out var cProp) ? cProp.GetString() : "";
+            string targetId = animDict.TryGetProperty("targetId", out var tProp) ? tProp.GetString() : "";
+            int spellAnimId = animDict.TryGetProperty("spellAnimId", out var aProp) ? aProp.GetInt32() : -1;
+            bool isAura = animDict.TryGetProperty("isAura", out var rProp) && rProp.GetBoolean();
+
+            if (spellAnimId == -1) return;
+
+            Node3D targetEntity = null;
+            if (_activeEntities.TryGetValue(targetId, out Node3D tgt)) {
+                targetEntity = tgt;
+            } else if (_activeEntities.TryGetValue($"mob_{targetId}", out tgt)) {
+                targetEntity = tgt;
+            } else if (_playerCapsule != null && _playerCapsule.Name == targetId) {
+                targetEntity = _playerCapsule;
+            }
+
+            if (targetEntity == null) return;
+
+            string scenePath = isAura ? "res://Scenes/Archetype_Aura.tscn" : "res://Scenes/Archetype_Burst.tscn";
+            var packedScene = GD.Load<PackedScene>(scenePath);
+            if (packedScene == null)
+            {
+                GD.PrintErr($"[WORLD] Could not load packed scene: {scenePath}");
+                return;
+            }
+
+            var particles = packedScene.Instantiate<EQParticleSystem>();
+            if (particles == null) return;
+            
+            targetEntity.AddChild(particles);
+            
+            // Set position locally so it appears roughly around chest height
+            particles.Position = Vector3.Up * 1.0f;
+            
+            particles.PlayAnim(spellAnimId);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[WORLD] SpawnSpellAnimation error: {ex.Message}");
         }
     }
 }

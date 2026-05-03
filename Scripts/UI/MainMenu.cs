@@ -214,6 +214,26 @@ public partial class MainMenu : Control
         GameClient.Instance.LoginOkReceived += OnLoginOkReceived;
         GameClient.Instance.MessageReceived += OnClientMessageReceived;
 
+        // Check if we're creating a student
+        if (GameState.IsCreatingStudent)
+        {
+            GD.Print("[MENU] Entering Student Creation mode.");
+            _nameInput.Text = GameState.PendingStudentName;
+            _playButton.Text = "Hire Student";
+            
+            // Pre-select race
+            for (int i = 0; i < RaceIds.Length; i++) {
+                if (RaceIds[i] == GameState.PendingStudentRaceId) {
+                    _raceSelect.Select(i);
+                    break;
+                }
+            }
+            _raceSelect.Disabled = true;
+            
+            ShowPanel("create");
+            return;
+        }
+
         // Check if we're returning from camp (already connected + authenticated)
         if (GameClient.Instance.IsSocketConnected && !string.IsNullOrEmpty(GameState.AccountName))
         {
@@ -1194,6 +1214,7 @@ public partial class MainMenu : Control
             _backdropRoot.AddChild(materialAnimator);
 
             var objectPlacer = new ZoneObjectPlacer();
+            objectPlacer.DisableLights = true;
             objectPlacer.ShadowsEnabled = true;
             objectPlacer.Animator = materialAnimator;
             
@@ -1357,8 +1378,24 @@ public partial class MainMenu : Control
             _classSelect.Disabled = _currentClassIds.Length == 0;
             if (_currentClassIds.Length > 0)
             {
-                _classSelect.Selected = 0;
-                OnClassSelected(0);
+                if (GameState.IsCreatingStudent)
+                {
+                    int forcedIdx = 0;
+                    for (int idx = 0; idx < _currentClassIds.Length; idx++) {
+                        if (_currentClassIds[idx] == GameState.PendingStudentClassId) {
+                            forcedIdx = idx;
+                            break;
+                        }
+                    }
+                    _classSelect.Selected = forcedIdx;
+                    _classSelect.Disabled = true;
+                    OnClassSelected(forcedIdx);
+                }
+                else
+                {
+                    _classSelect.Selected = 0;
+                    OnClassSelected(0);
+                }
             }
             else
             {
@@ -1652,14 +1689,24 @@ public partial class MainMenu : Control
             ? _currentDeityIds[_deitySelect.Selected]
             : 396;
 
-        _statusLabel.Text = "Creating character...";
+        _statusLabel.Text = GameState.IsCreatingStudent ? "Hiring student..." : "Creating character...";
         _playButton.Disabled = true;
 
         // Send stat allocations + appearance
         var statsPayload = $"\"stats\": {{\"str\": {_allocStats[0]}, \"sta\": {_allocStats[1]}, \"agi\": {_allocStats[2]}, \"dex\": {_allocStats[3]}, \"wis\": {_allocStats[4]}, \"int\": {_allocStats[5]}, \"cha\": {_allocStats[6]}}}";
-        var json = $"{{\"type\": \"CREATE_CHARACTER\", \"name\": \"{name}\", \"class\": \"{classKey}\", \"race\": \"{race}\", \"deity\": {deity}, \"gender\": {_selectedGender}, \"face\": {_selectedFace}, {statsPayload}}}";
-        GameClient.Instance.SendRaw(json);
-        GD.Print($"[MENU] Sent CREATE_CHARACTER: {name} ({classKey}/{race}) gender={_selectedGender} face={_selectedFace} deity={deity}");
+        
+        if (GameState.IsCreatingStudent)
+        {
+            var json = $"{{\"type\": \"HIRE_STUDENT\", \"name\": \"{name}\", \"raceId\": {RaceIds[raceIdx]}, \"classId\": {classId}, \"level\": {GameState.PendingStudentLevel}, \"deity\": {deity}, \"gender\": {_selectedGender}, \"face\": {_selectedFace}, {statsPayload}}}";
+            GameClient.Instance.SendRaw(json);
+            GD.Print($"[MENU] Sent HIRE_STUDENT: {name} (ClassId={classId}/RaceId={RaceIds[raceIdx]}) gender={_selectedGender} face={_selectedFace} deity={deity}");
+        }
+        else
+        {
+            var json = $"{{\"type\": \"CREATE_CHARACTER\", \"name\": \"{name}\", \"class\": \"{classKey}\", \"race\": \"{race}\", \"deity\": {deity}, \"gender\": {_selectedGender}, \"face\": {_selectedFace}, {statsPayload}}}";
+            GameClient.Instance.SendRaw(json);
+            GD.Print($"[MENU] Sent CREATE_CHARACTER: {name} ({classKey}/{race}) gender={_selectedGender} face={_selectedFace} deity={deity}");
+        }
     }
 
     private int GetDragItem111ClassIconIndex(int classId)
@@ -2000,6 +2047,13 @@ public partial class MainMenu : Control
     {
         if (!IsInstanceValid(this)) return;
         if (type == "WELCOME") GD.Print("[MENU] Server welcomed us.");
+        if (type == "HIRE_STUDENT_SUCCESS")
+        {
+            GD.Print("[MENU] Hire student successful! Transitioning back to game.");
+            GameState.IsCreatingStudent = false;
+            GetTree().CallDeferred("change_scene_to_file", "res://Scenes/MainUI.tscn");
+            return;
+        }
         if (type == "ERROR")
         {
             try

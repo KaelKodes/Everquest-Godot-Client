@@ -650,13 +650,14 @@ public partial class MainUI
 				bool petTaunting = petProp.TryGetProperty("taunting", out var ptProp) && ptProp.GetBoolean();
 				bool isCharmed = petProp.TryGetProperty("isCharmed", out var pcProp) && pcProp.GetBoolean();
 				bool isMercenary = petProp.TryGetProperty("isMercenary", out var imProp) && imProp.GetBoolean();
+				_hasActiveMercenary = isMercenary;
 				string petTarget = petProp.TryGetProperty("target", out var pttProp) && pttProp.ValueKind != JsonValueKind.Null ? pttProp.GetString() : null;
 
 				EnsureCompanionWindow();
 				if (_companionWindow != null)
 				{
 					_companionWindow.Visible = true;
-					string typeTag = isMercenary ? "Mercenary" : (isCharmed ? "Charmed" : "Pet");
+					string typeTag = isMercenary ? "Student" : (isCharmed ? "Charmed" : "Pet");
 					
 					string raceStr = petProp.TryGetProperty("raceStr", out var pRace) ? pRace.GetString() : "Human";
 					string classStr = petProp.TryGetProperty("classStr", out var pClass) ? pClass.GetString() : "Warrior";
@@ -738,6 +739,7 @@ public partial class MainUI
 			}
 			else
 			{
+				_hasActiveMercenary = false;
 				if (_hasPet)
 				{
 					_hasPet = false;
@@ -959,6 +961,30 @@ public partial class MainUI
 				}
 				
 				GD.Print($"[UI] Server requested spawn at {_pendingSpawnX}, {_pendingSpawnZ}. race={raceId} gender={gender} face={face}. Delaying until entities ready...");
+			}
+			else if (_isInitialLoadPending)
+			{
+				// Initial load into scene (e.g. returning from Student Hire Menu) without an explicit teleport
+				_pendingSpawnX = character.TryGetProperty("x", out var xp) ? xp.GetSingle() : 0f;
+				_pendingSpawnZ = character.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
+				_pendingSpawnY = character.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
+
+				// Pass player appearance to WorldManager for correct model
+				int raceId = character.TryGetProperty("raceId", out var ridProp) ? ridProp.GetInt32() : 1;
+				int gender = character.TryGetProperty("gender", out var genProp) ? genProp.GetInt32() : 0;
+				int face = character.TryGetProperty("face", out var faceProp) ? faceProp.GetInt32() : 0;
+				string equipVisuals = character.TryGetProperty("equipVisuals", out var evProp) ? evProp.ToString() : "";
+				var wmApp = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wmApp != null) wmApp.SetPlayerAppearance(raceId, gender, face, equipVisuals);
+				
+				if (_loadingLayer != null) 
+				{
+					_loadingLayer.Show();
+					_flavorLabel.Text = "Re-Constructing Terrain...";
+					_loadingBar.Value = 10;
+				}
+				
+				GD.Print($"[UI] Initial load using existing coordinates at {_pendingSpawnX}, {_pendingSpawnZ}. race={raceId}");
 			}
 
 			// Update equipment visuals on every STATUS (handles equip/unequip without respawn)

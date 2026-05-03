@@ -33,23 +33,63 @@ public partial class GroupWindow : Window
 
 	public void UpdateGroup(JsonElement members, JsonElement roles)
 	{
-		// Clear existing rows
-		foreach (var row in _activeRows) row.QueueFree();
-		_activeRows.Clear();
-		_currentMemberNames.Clear();
-
 		if (members.ValueKind != JsonValueKind.Array) return;
+
+		int i = 0;
+		_currentMemberNames.Clear();
 
 		foreach (var member in members.EnumerateArray())
 		{
-			var row = _memberRowScene.Instantiate<GroupMemberRow>();
-			_memberContainer.AddChild(row);
-			row.UpdateMember(member);
-			_activeRows.Add(row);
-			
 			string mName = member.GetProperty("name").GetString();
 			_currentMemberNames.Add(mName);
+
+			GroupMemberRow row;
+			if (i < _activeRows.Count)
+			{
+				row = _activeRows[i];
+			}
+			else
+			{
+				row = _memberRowScene.Instantiate<GroupMemberRow>();
+				_memberContainer.AddChild(row);
+				_activeRows.Add(row);
+			}
+
+			row.UpdateMember(member);
+			i++;
 		}
+
+		// Remove excess rows
+		while (_activeRows.Count > i)
+		{
+			var excessRow = _activeRows[_activeRows.Count - 1];
+			_activeRows.RemoveAt(_activeRows.Count - 1);
+			_memberContainer.RemoveChild(excessRow);
+			excessRow.QueueFree();
+		}
+
+		// Update Disband button text based on leadership
+		var mainUI = GetTree().Root.FindChild("MainUI", true, false) as MainUI;
+		bool isLeader = false;
+		if (mainUI != null)
+		{
+			string myName = mainUI.GetPlayerName();
+			foreach (var member in members.EnumerateArray())
+			{
+				string mName = member.GetProperty("name").GetString();
+				if (mName == myName)
+				{
+					if (member.TryGetProperty("isLeader", out var leadProp) && leadProp.GetBoolean())
+						isLeader = true;
+					break;
+				}
+			}
+		}
+		
+		if (isLeader)
+			_disbandBtn.Text = "Disband";
+		else
+			_disbandBtn.Text = "Leave";
 
 		UpdateInviteButton();
 	}

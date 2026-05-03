@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
 
 /// <summary>
 /// Reads LanternExtractor's object_instances.txt and places extracted
@@ -15,7 +16,33 @@ public partial class ZoneObjectPlacer : RefCounted
     
     // Graphics Settings
     public bool ShadowsEnabled { get; set; } = true;
+    public bool DisableLights { get; set; } = false;
     public MaterialAnimator Animator { get; set; }
+    
+    private JsonElement _lightConfigs;
+
+    public ZoneObjectPlacer()
+    {
+        ReloadLightConfig();
+    }
+
+    public void ReloadLightConfig()
+    {
+        string path = "Data/object_lights.json";
+        if (File.Exists(path))
+        {
+            try
+            {
+                string json = File.ReadAllText(path);
+                using var doc = JsonDocument.Parse(json);
+                _lightConfigs = doc.RootElement.Clone();
+            }
+            catch (Exception e)
+            {
+                GD.PrintErr($"Failed to load object_lights.json: {e.Message}");
+            }
+        }
+    }
 
     public static Vector3 EQToGodot(float x, float y, float z)
     {
@@ -238,32 +265,53 @@ public partial class ZoneObjectPlacer : RefCounted
     /// <summary>
     /// Adds an OmniLight3D to objects that act as light sources.
     /// </summary>
-    private void AddLightIfSource(Node3D instance, string modelName, Node3D container, float worldX, float worldY, float worldZ)
+    public void AddLightIfSource(Node3D instance, string modelName, Node3D container, float worldX, float worldY, float worldZ)
     {
         string lowerName = modelName.ToLower();
         
-        bool isCampfire = lowerName.Contains("cfi") || lowerName.Contains("campfire");
-        bool isBrazier = lowerName.Contains("bfi") || lowerName.Contains("brazier");
-        bool isTorch = lowerName.Contains("tfi") || lowerName.Contains("torch") || lowerName.Contains("sconce") || lowerName.Contains("wfi");
-        bool isLantern = lowerName.Contains("lfi") || lowerName.Contains("lantern") || lowerName.Contains("lamp");
-        bool isForge = lowerName.Contains("ffi") || lowerName.Contains("forge");
-        bool isCandelabra = lowerName.Contains("candle") || lowerName.Contains("cndl") || lowerName.Contains("candel") || lowerName.Contains("candelabra");
-        bool isChandelier = lowerName.Contains("chandelier") || lowerName.Contains("chndlr") || lowerName.Contains("chand");
-        bool isOtherFire = lowerName.Contains("fire") || lowerName.EndsWith("fi") || lowerName.Contains("fi_act") || lowerName.StartsWith("pfi");
+        string configKey = null;
+        if (lowerName.Contains("cfi") || lowerName.Contains("campfire")) configKey = "campfire";
+        else if (lowerName.Contains("bfi") || lowerName.Contains("brazier")) configKey = "brazier";
+        else if (lowerName.Contains("tfi") || lowerName.Contains("torch") || lowerName.Contains("sconce") || lowerName.Contains("wfi")) configKey = "torch";
+        else if (lowerName.Contains("lfi") || lowerName.Contains("lantern") || lowerName.Contains("lamp") || lowerName.Contains("mistlamp") || lowerName.Contains("ogglantern")) configKey = "lantern";
+        else if (lowerName.Contains("ffi") || lowerName.Contains("forge")) configKey = "forge";
+        else if (lowerName.Contains("candle") || lowerName.Contains("cndl") || lowerName.Contains("candel") || lowerName.Contains("candelabra")) configKey = "candelabra";
+        else if (lowerName.Contains("chandelier") || lowerName.Contains("chndlr") || lowerName.Contains("chand")) configKey = "chandelier";
+        else if (lowerName.Contains("fire") || lowerName.EndsWith("fi") || lowerName.Contains("fi_act") || lowerName.StartsWith("pfi")) configKey = "otherfire";
 
-        if (isCampfire || isBrazier || isTorch || isLantern || isForge || isCandelabra || isChandelier || isOtherFire)
+        if (configKey != null && _lightConfigs.ValueKind != JsonValueKind.Undefined && _lightConfigs.TryGetProperty(configKey, out var config))
         {
-            if (isCampfire || isBrazier || isForge)
+            if (config.TryGetProperty("sound", out var sndProp))
             {
-                AttachAudio(instance, "fire001_loop.wav");
-            }
-            else if (isTorch)
-            {
-                AttachAudio(instance, "fire001_loop.wav", 0.5f);
+                float vol = config.TryGetProperty("soundVolume", out var volProp) ? volProp.GetSingle() : 1.0f;
+                AttachAudio(instance, sndProp.GetString(), vol);
             }
             
-            // Note: OmniLight3Ds have been completely removed by design to allow for pure, dramatic moonlit silhouette rendering. 
-            // The unshaded fire textures will glow brightly on their own without illuminating surrounding objects.
+            if (!DisableLights)
+            {
+                var light = new OmniLight3D();
+                light.ShadowEnabled = false; 
+                
+                light.LightEnergy = config.TryGetProperty("energy", out var energy) ? energy.GetSingle() : 25.0f;
+                light.OmniRange = config.TryGetProperty("range", out var range) ? range.GetSingle() : 10.0f;
+                
+                if (config.TryGetProperty("position", out var pos) && pos.GetArrayLength() >= 3)
+                {
+                    light.Position = new Vector3(pos[0].GetSingle(), pos[1].GetSingle(), pos[2].GetSingle());
+                }
+                
+                if (config.TryGetProperty("color", out var color) && color.GetArrayLength() >= 3)
+                {
+                    light.LightColor = new Color(color[0].GetSingle(), color[1].GetSingle(), color[2].GetSingle());
+                }
+
+                // If flicker is true, the EntityCapsule will handle it if we mark it or attach a script.
+                // In our Godot WorldManager we don't have a specific flicker manager, but ZoneObjectPlacer
+                // adds lights to static objects. Let's not worry about flickering static objects yet,
+                // but the light tunable is available.
+                
+                instance.AddChild(light);
+            }
         }
     }
     private void AttachAudio(Node3D instance, string soundName, float volumeMultiplier = 1.0f)
@@ -362,7 +410,6 @@ public partial class ZoneObjectPlacer : RefCounted
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
-            // Only create if we haven't already (GLTF imports usually don't have collision yet, but some might)
             bool hasCollision = false;
             foreach (Node child in meshInst.GetChildren())
             {
@@ -372,15 +419,80 @@ public partial class ZoneObjectPlacer : RefCounted
                     body.InputRayPickable = false;
                 }
             }
+
             if (!hasCollision)
             {
-                meshInst.CreateTrimeshCollision();
-                // Ensure it doesn't block mouse picking for interactables
-                foreach (Node child in meshInst.GetChildren())
+                if (meshInst.Mesh is ArrayMesh arrayMesh)
                 {
-                    if (child is StaticBody3D body)
+                    var validFaces = new System.Collections.Generic.List<Vector3>();
+
+                    for (int i = 0; i < arrayMesh.GetSurfaceCount(); i++)
                     {
-                        body.InputRayPickable = false;
+                        var mat = meshInst.GetActiveMaterial(i);
+                        bool isNoCollide = false;
+
+                        if (mat != null)
+                        {
+                            var stdMat = mat as BaseMaterial3D;
+                            if (stdMat != null && stdMat.Transparency != BaseMaterial3D.TransparencyEnum.Disabled)
+                            {
+                                isNoCollide = true; // Skip all transparent materials (vines, leaves, cobwebs)
+                            }
+                            else if (!string.IsNullOrEmpty(mat.ResourceName))
+                            {
+                                string n = mat.ResourceName.ToLower();
+                                if (n.Contains("invisible") || n.Contains("door") || n == "inv" || n.StartsWith("inv_") || n.Contains("collide") || n.Contains("boundary") || n.Contains("vine") || n.Contains("leaf") || n.Contains("plant") || n.Contains("fern") || n.Contains("bush") || n.Contains("web"))
+                                {
+                                    isNoCollide = true;
+                                }
+                            }
+                        }
+
+                        if (!isNoCollide)
+                        {
+                            var arrays = arrayMesh.SurfaceGetArrays(i);
+                            var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                            var indicesObj = arrays[(int)Mesh.ArrayType.Index];
+
+                            if (indicesObj.VariantType != Variant.Type.Nil)
+                            {
+                                var indices = indicesObj.AsInt32Array();
+                                for (int j = 0; j < indices.Length; j++)
+                                {
+                                    validFaces.Add(vertices[indices[j]]);
+                                }
+                            }
+                            else
+                            {
+                                for (int j = 0; j < vertices.Length; j++)
+                                {
+                                    validFaces.Add(vertices[j]);
+                                }
+                            }
+                        }
+                    }
+
+                    if (validFaces.Count > 0)
+                    {
+                        var colShape = new CollisionShape3D();
+                        var concaveShape = new ConcavePolygonShape3D();
+                        concaveShape.SetFaces(validFaces.ToArray());
+                        colShape.Shape = concaveShape;
+
+                        var staticBody = new StaticBody3D { InputRayPickable = false };
+                        staticBody.AddChild(colShape);
+                        meshInst.AddChild(staticBody);
+                    }
+                }
+                else
+                {
+                    meshInst.CreateTrimeshCollision();
+                    foreach (Node child in meshInst.GetChildren())
+                    {
+                        if (child is StaticBody3D body)
+                        {
+                            body.InputRayPickable = false;
+                        }
                     }
                 }
             }
@@ -468,3 +580,4 @@ public partial class ZoneObjectPlacer : RefCounted
             RegisterAnimationsRecursive(child, animData, texturesDir);
     }
 }
+

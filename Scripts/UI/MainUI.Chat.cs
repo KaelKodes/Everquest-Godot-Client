@@ -4,6 +4,11 @@ using System.Text.Json;
 
 public partial class MainUI
 {
+	private RichTextLabel _partyLog;
+	private RichTextLabel _guildLog;
+	private string _currentChatTab = "Main";
+	private OptionButton _chatChannelSelect;
+
 	private void OnCombatLogReceived(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -329,10 +334,20 @@ public partial class MainUI
 
 		string trimmed = text.Trim();
 
-		// If it doesn't start with /, default to /say
+		// If it doesn't start with /, use the selected channel
 		if (!trimmed.StartsWith("/"))
 		{
-			_client.SendRaw($"{{\"type\": \"SAY\", \"text\": \"{EscapeJson(trimmed)}\"}}");
+			string channelType = "SAY";
+			if (_chatChannelSelect != null)
+			{
+				int selected = _chatChannelSelect.Selected;
+				if (selected == 1) channelType = "GROUP";
+				else if (selected == 2) channelType = "GUILD";
+				else if (selected == 3) channelType = "SHOUT";
+				else if (selected == 4) channelType = "OOC";
+			}
+			
+			_client.SendRaw($"{{\"type\": \"{channelType}\", \"text\": \"{EscapeJson(trimmed)}\"}}");
 			return;
 		}
 
@@ -430,13 +445,42 @@ public partial class MainUI
 				_client.SendRaw($"{{\"type\": \"ANNOUNCEMENT\", \"text\": \"{EscapeJson(body)}\"}}");
 				break;
 
+			case "/target":
+			case "/tar":
+			{
+				if (string.IsNullOrEmpty(body)) { Log("SYSTEM", "Usage: /target <name>"); break; }
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null)
+				{
+					var target = wm.TargetEntityByPartialName(body);
+					if (target == null)
+					{
+						Log("SYSTEM", $"No entity found matching '{body}'");
+					}
+				}
+				break;
+			}
+
 			case "/hail":
 			{
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null && wm.CurrentTargetId != null)
+				{
+					var targetName = wm.GetEntityById(wm.CurrentTargetId)?.EntityName ?? "";
+					if (targetName.ToLower().Contains("tuner") || targetName.ToLower().Contains("capsule"))
+					{
+						var tuner = new LightTunerWindow();
+						tuner.Setup(wm, wm.CurrentTargetId);
+						AddChild(tuner);
+						tuner.Show();
+						break;
+					}
 					_client.SendRaw($"{{\"type\": \"HAIL\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
+				}
 				else
+				{
 					_client.SendRaw("{\"type\": \"HAIL\"}");
+				}
 				break;
 			}
 
@@ -467,8 +511,17 @@ public partial class MainUI
 				break;
 
 			case "/disband":
-				_client.SendRaw("{\"type\": \"GROUP_DISBAND\"}");
+			{
+				if (_hasActiveMercenary)
+				{
+					_client.SendRaw("{\"type\": \"MERCENARY_ACTION\", \"action\": \"suspend_active\", \"index\": 0}");
+				}
+				else
+				{
+					_client.SendRaw("{\"type\": \"GROUP_DISBAND\"}");
+				}
 				break;
+			}
 
 			case "/grouproles":
 				_client.SendRaw($"{{\"type\": \"GROUPROLES\", \"text\": \"{EscapeJson(body)}\"}}");
@@ -486,7 +539,7 @@ public partial class MainUI
 				break;
 
 			default:
-				Log("SYSTEM", $"Unknown command: {cmd}");
+				_client.SendRaw($"{{\"type\": \"SERVER_COMMAND\", \"command\": \"{EscapeJson(cmd)}\", \"args\": \"{EscapeJson(body)}\"}}");
 				break;
 		}
 	}
@@ -632,6 +685,83 @@ public partial class MainUI
 
 		_combatLog.AppendText($"[color=lightblue]{npcName} says, '{formattedText}'[/color]\n");
 		_logLineCount++;
+	}
+
+	public void SetupChatTabs()
+	{
+		// 1. Setup Chat OptionButton next to ChatInput
+		if (_chatInput != null)
+		{
+			var parent = _chatInput.GetParent();
+			var hbox = new HBoxContainer();
+			hbox.Name = "InputHBox";
+			
+			// Move ChatInput into the new HBox
+			parent.AddChild(hbox);
+			parent.MoveChild(hbox, _chatInput.GetIndex());
+			parent.RemoveChild(_chatInput);
+			
+			_chatChannelSelect = new OptionButton();
+			_chatChannelSelect.AddItem("Say", 0);
+			_chatChannelSelect.AddItem("Group", 1);
+			_chatChannelSelect.AddItem("Guild", 2);
+			_chatChannelSelect.AddItem("Shout", 3);
+			_chatChannelSelect.AddItem("OOC", 4);
+			_chatChannelSelect.CustomMinimumSize = new Vector2(80, 0);
+			
+			hbox.AddChild(_chatChannelSelect);
+			hbox.AddChild(_chatInput);
+			_chatInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		}
+
+		// 2. Setup RichTextLabels for Party and Guild
+		if (_combatLog != null)
+		{
+			var parent = _combatLog.GetParent();
+			
+			_partyLog = (RichTextLabel)_combatLog.Duplicate();
+			_partyLog.Name = "PartyLog";
+			_partyLog.Text = "";
+			parent.AddChild(_partyLog);
+			parent.MoveChild(_partyLog, _combatLog.GetIndex() + 1);
+			_partyLog.Hide();
+
+			_guildLog = (RichTextLabel)_combatLog.Duplicate();
+			_guildLog.Name = "GuildLog";
+			_guildLog.Text = "";
+			parent.AddChild(_guildLog);
+			parent.MoveChild(_guildLog, _combatLog.GetIndex() + 2);
+			_guildLog.Hide();
+		}
+
+		// 3. Wire the Buttons
+		var mainBtn = GetNodeOrNull<Button>("%CombatLog/../../HBoxContainer/MainBtn");
+		var partyBtn = GetNodeOrNull<Button>("%CombatLog/../../HBoxContainer/PartyBtn");
+		var guildBtn = GetNodeOrNull<Button>("%CombatLog/../../HBoxContainer/GuildBtn");
+
+		if (mainBtn != null) mainBtn.Pressed += () => SwitchChatTab("Main");
+		if (partyBtn != null) partyBtn.Pressed += () => SwitchChatTab("Party");
+		if (guildBtn != null) guildBtn.Pressed += () => SwitchChatTab("Guild");
+	}
+
+	private void SwitchChatTab(string tabName)
+	{
+		_currentChatTab = tabName;
+		_combatLog?.Hide();
+		_partyLog?.Hide();
+		_guildLog?.Hide();
+
+		if (tabName == "Main") _combatLog?.Show();
+		else if (tabName == "Party")
+		{
+			_partyLog?.Show();
+			_chatChannelSelect?.Select(1); // Auto switch dropdown to Group
+		}
+		else if (tabName == "Guild")
+		{
+			_guildLog?.Show();
+			_chatChannelSelect?.Select(2); // Auto switch dropdown to Guild
+		}
 	}
 
 	// â”€â”€â”€ Status Bars â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

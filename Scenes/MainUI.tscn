@@ -148,7 +148,7 @@ alignment = 1
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-text = "SIT"
+text = "Sit"
 
 [node name="CampBtn" type="Button" parent="MenuWindow/VBox" unique_id=987654331]
 unique_name_in_owner = true
@@ -163,10 +163,6 @@ text = "OPTIONS"
 [node name="SpellsBtn" type="Button" parent="MenuWindow/VBox" unique_id=39262900]
 layout_mode = 2
 text = "SPELLS"
-
-[node name="AbilitiesBtn" type="Button" parent="MenuWindow/VBox" unique_id=987654330]
-layout_mode = 2
-text = "ABILITIES"
 
 [node name="InventoryBtn" type="Button" parent="MenuWindow/VBox" unique_id=409825125]
 layout_mode = 2

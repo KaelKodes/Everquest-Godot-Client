@@ -34,6 +34,7 @@ public partial class GameClient : Node
     [Signal] public delegate void MerchantOfferReceivedEventHandler(Variant data);
     [Signal] public delegate void MerchantRecoverListReceivedEventHandler(Variant data);
     [Signal] public delegate void TrainerOpenedEventHandler(Variant data);
+    [Signal] public delegate void CloseUIEventHandler(Variant data);
     [Signal] public delegate void BankOpenedEventHandler(Variant data);
     [Signal] public delegate void AccountOkReceivedEventHandler(Variant data);
     [Signal] public delegate void CharacterCreatedEventHandler(Variant data);
@@ -234,6 +235,9 @@ public partial class GameClient : Node
                     break;
                 case "OPEN_TRAINER":
                     EmitSignal(SignalName.TrainerOpened, message);
+                    break;
+                case "CLOSE_UI":
+                    EmitSignal(SignalName.CloseUI, message);
                     break;
                 case "OPEN_BANK":
                     EmitSignal(SignalName.BankOpened, message);

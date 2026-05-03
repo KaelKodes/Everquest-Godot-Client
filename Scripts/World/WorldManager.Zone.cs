@@ -483,7 +483,7 @@ public partial class WorldManager : Node3D
 
         _musicPlayer.PlayZoneAmbience(trackName);
     }
-    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null, Dictionary<string, (string[] frames, float delay)> animData = null)
+    private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null, Dictionary<string, (string[] frames, float delay)> animData = null, bool isInteractiveDoor = false)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
@@ -500,10 +500,51 @@ public partial class WorldManager : Node3D
                     var mat = meshInst.GetActiveMaterial(i);
                     bool isLiquid = mat != null && IsLiquidMaterial(mat, animData);
                     
-                    if (!isLiquid) hasSolid = true;
+                    bool isNoCollide = false;
+                    if (mat != null && !string.IsNullOrEmpty(mat.ResourceName)) {
+                        string n = mat.ResourceName.ToLower();
+                        if (n.Contains("invisible") || n == "inv" || n.StartsWith("inv_") || n.Contains("collide") || n.Contains("boundary") || n.Contains("vine") || n.Contains("leaf") || n.Contains("plant") || n.Contains("fern") || n.Contains("bush") || n.Contains("web")) {
+                            isNoCollide = true;
+                        }
+                        if (!isInteractiveDoor && n.Contains("door")) {
+                            isNoCollide = true;
+                        }
+                    }
+                    if (!isInteractiveDoor && (node.Name.ToString().ToLower().Contains("door") || node.Name.ToString().ToLower().Contains("invisible"))) {
+                        isNoCollide = true;
+                    }
+
+                    if (!isLiquid && !isNoCollide) hasSolid = true;
                     
                     var arrays = arrayMesh.SurfaceGetArrays(i);
                     var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                    
+                    if (!isLiquid && !isNoCollide) {
+                        bool nearCleric = false;
+                        Vector3 min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+                        Vector3 max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+                        foreach(var v in vertices) {
+                            if (v.X < min.X) min.X = v.X;
+                            if (v.Y < min.Y) min.Y = v.Y;
+                            if (v.Z < min.Z) min.Z = v.Z;
+                            if (v.X > max.X) max.X = v.X;
+                            if (v.Y > max.Y) max.Y = v.Y;
+                            if (v.Z > max.Z) max.Z = v.Z;
+                        }
+                        
+                        Aabb bounds = new Aabb(min, max - min);
+                        // Player is at (513, -4, -14.4). Expand box slightly
+                        Aabb targetBox = new Aabb(new Vector3(512f, -8f, -16f), new Vector3(2f, 8f, 4f));
+                        if (bounds.Intersects(targetBox)) {
+                            nearCleric = true;
+                        }
+                        
+                        if (nearCleric) {
+                            string mName = mat != null ? mat.ResourceName : "null";
+                            Godot.GD.Print($"[DEBUG] Solid mesh AABB intersects player at cleric door! Node: {node.Name}, Material: {mName}");
+                        }
+                    }
+
                     var indicesObj = arrays[(int)Mesh.ArrayType.Index];
                     
                     if (indicesObj.VariantType != Variant.Type.Nil)
@@ -511,6 +552,7 @@ public partial class WorldManager : Node3D
                         var indices = indicesObj.AsInt32Array();
                         for (int j = 0; j < indices.Length; j++)
                         {
+                            if (isNoCollide) continue;
                             if (isLiquid) liquidFaces.Add(vertices[indices[j]]);
                             else faces.Add(vertices[indices[j]]);
                         }
@@ -519,6 +561,7 @@ public partial class WorldManager : Node3D
                     {
                         for (int j = 0; j < vertices.Length; j++)
                         {
+                            if (isNoCollide) continue;
                             if (isLiquid) liquidFaces.Add(vertices[j]);
                             else faces.Add(vertices[j]);
                         }
@@ -583,7 +626,7 @@ public partial class WorldManager : Node3D
 
         foreach (var child in node.GetChildren())
         {
-            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody, animData);
+            GenerateCollisionRecursive(child, ref meshCount, ref collisionCount, targetBody, animData, isInteractiveDoor);
         }
     }
 

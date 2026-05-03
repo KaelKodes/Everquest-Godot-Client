@@ -9,12 +9,14 @@ public partial class MelodyWindow : Window
 
     // Data Structure: 4 melodies, each containing an array of 4 spell gem slots (0-7, or -1 for empty)
     private int[][] _melodies = new int[4][];
+    private string[][] _melodyDelays = new string[4][];
     private int[] _melodyIcons = new int[] { -1, -1, -1, -1 };
     private int _currentMelodyIndex = 0;
 
     // UI Nodes
     private Button[] _melodyButtons = new Button[4];
     private Button[] _letterBoxes = new Button[4];
+    private LineEdit[] _delayInputs = new LineEdit[4];
     private PopupMenu _contextMenu;
 
     private int _contextMenuTargetMelody = -1;
@@ -27,6 +29,7 @@ public partial class MelodyWindow : Window
         for (int i = 0; i < 4; i++)
         {
             _melodies[i] = new int[] { -1, -1, -1, -1 };
+            _melodyDelays[i] = new string[] { "Twist", "Twist", "Twist", "Twist" };
         }
 
         // Setup Main Container
@@ -85,6 +88,10 @@ public partial class MelodyWindow : Window
         string[] letters = { "A", "B", "C", "D" };
         for (int i = 0; i < 4; i++)
         {
+            var cellVBox = new VBoxContainer();
+            cellVBox.Alignment = BoxContainer.AlignmentMode.Center;
+            cellVBox.AddThemeConstantOverride("separation", 5);
+
             var box = new Button();
             box.Text = letters[i];
             box.CustomMinimumSize = new Vector2(60, 60);
@@ -94,7 +101,19 @@ public partial class MelodyWindow : Window
             box.GuiInput += (ev) => OnLetterBoxGuiInput(ev, letterIndex);
             
             _letterBoxes[i] = box;
-            grid.AddChild(box);
+            cellVBox.AddChild(box);
+
+            var delayInput = new LineEdit();
+            delayInput.Text = "Twist";
+            delayInput.CustomMinimumSize = new Vector2(60, 24);
+            delayInput.Alignment = HorizontalAlignment.Center;
+            delayInput.TooltipText = "Wait before next song ('Twist', 'Auto', or e.g. '2.5')";
+            delayInput.TextChanged += (text) => OnDelayTextChanged(text, letterIndex);
+            
+            _delayInputs[i] = delayInput;
+            cellVBox.AddChild(delayInput);
+
+            grid.AddChild(cellVBox);
         }
 
         var controlHBox = new HBoxContainer();
@@ -191,6 +210,7 @@ public partial class MelodyWindow : Window
     {
         string[] letters = { "A", "B", "C", "D" };
         var currentLoadout = _melodies[_currentMelodyIndex];
+        var currentDelays = _melodyDelays[_currentMelodyIndex];
 
         for (int i = 0; i < 4; i++)
         {
@@ -203,6 +223,8 @@ public partial class MelodyWindow : Window
             {
                 _letterBoxes[i].Text = letters[i];
             }
+            
+            _delayInputs[i].Text = string.IsNullOrEmpty(currentDelays[i]) ? "Twist" : currentDelays[i];
         }
     }
 
@@ -211,8 +233,15 @@ public partial class MelodyWindow : Window
         for (int i = 0; i < 4; i++)
         {
             _melodies[_currentMelodyIndex][i] = -1;
+            _melodyDelays[_currentMelodyIndex][i] = "Twist";
         }
         UpdateLetterBoxes();
+    }
+
+    private void OnDelayTextChanged(string text, int index)
+    {
+        _melodyDelays[_currentMelodyIndex][index] = text;
+        SaveToLayout();
     }
 
     private void OnMelodyButtonGuiInput(InputEvent ev, int index)
@@ -289,7 +318,9 @@ public partial class MelodyWindow : Window
             int gemSlot = _melodies[melodyIndex][i];
             if (gemSlot >= 0)
             {
-                macroText += $" {gemSlot + 1}";
+                string delay = _melodyDelays[melodyIndex][i];
+                if (string.IsNullOrWhiteSpace(delay)) delay = "Twist";
+                macroText += $" {gemSlot + 1} {delay}";
                 hasSpells = true;
             }
         }
@@ -310,8 +341,14 @@ public partial class MelodyWindow : Window
         for (int i = 0; i < 4; i++)
         {
             var arr = new Godot.Collections.Array<int>();
-            for (int j = 0; j < 4; j++) arr.Add(_melodies[i][j]);
+            var delayArr = new Godot.Collections.Array<string>();
+            for (int j = 0; j < 4; j++) 
+            {
+                arr.Add(_melodies[i][j]);
+                delayArr.Add(string.IsNullOrWhiteSpace(_melodyDelays[i][j]) ? "Twist" : _melodyDelays[i][j]);
+            }
             section[$"Melody_{i}"] = arr;
+            section[$"MelodyDelays_{i}"] = delayArr;
             section[$"MelodyIcon_{i}"] = _melodyIcons[i];
         }
         UILayoutManager.SetSection("Melodies", section);
@@ -329,6 +366,14 @@ public partial class MelodyWindow : Window
                 for (int j = 0; j < 4 && j < arr.Count; j++)
                 {
                     _melodies[i][j] = arr[j];
+                }
+            }
+            if (section.TryGetValue($"MelodyDelays_{i}", out Variant delayVal))
+            {
+                var arr = delayVal.AsGodotArray<string>();
+                for (int j = 0; j < 4 && j < arr.Count; j++)
+                {
+                    _melodyDelays[i][j] = arr[j];
                 }
             }
             if (section.TryGetValue($"MelodyIcon_{i}", out Variant iconVal))

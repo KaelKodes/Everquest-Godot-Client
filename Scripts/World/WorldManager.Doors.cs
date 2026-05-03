@@ -91,11 +91,11 @@ public partial class WorldManager : Node3D
             int collisionCount = 0;
             if (isElevator)
             {
-                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, platformBody);
+                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, platformBody, null, true);
             }
             else
             {
-                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, null);
+                GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, null, null, true);
             }
             
             // Calculate AABB for the target ring sizing

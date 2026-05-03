@@ -55,8 +55,8 @@ public partial class MainUI : Control
 		if (_mercenariesManagerWindow != null && IsInstanceValid(_mercenariesManagerWindow)) return;
 
 		_mercenariesManagerWindow = new Window();
-		_mercenariesManagerWindow.Name = "MercenariesManagerWindow";
-		_mercenariesManagerWindow.Title = "Mercenaries";
+		_mercenariesManagerWindow.Name = "StudentManagerWindow";
+		_mercenariesManagerWindow.Title = "Students";
 		_mercenariesManagerWindow.Size = new Vector2I(200, 260);
 		_mercenariesManagerWindow.Position = new Vector2I(100, 100);
 		_mercenariesManagerWindow.Visible = false; // Hide by default until opened via some menu
@@ -75,7 +75,7 @@ public partial class MainUI : Control
 		panel.AddChild(vbox);
 
 		var title = new Label();
-		title.Text = "Mercenaries";
+		title.Text = "Students";
 		title.AddThemeFontSizeOverride("font_size", 18);
 		title.HorizontalAlignment = HorizontalAlignment.Center;
 		vbox.AddChild(title);

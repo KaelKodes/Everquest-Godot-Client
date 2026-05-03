@@ -213,19 +213,13 @@ public partial class MainUI : Control
 
         _hireStudentWindow.Hide();
 
-        // The user requested that hitting OK pops open the Character Creation UI with these locked in.
-        // We simulate that transition by firing a local event or sending a packet.
-        // For now, we'll send a payload to the server indicating the "Configured Student".
-        // When the Main Menu agent hooks it up, it will intercept this state.
+        // Transition to MainMenu for Student Character Creation
+        GameState.IsCreatingStudent = true;
+        GameState.PendingStudentName = studentName;
+        GameState.PendingStudentRaceId = selectedRaceId;
+        GameState.PendingStudentClassId = selectedClassId;
+        GameState.PendingStudentLevel = _hireCurrentLevel;
         
-        var payload = new {
-            type = "HIRE_STUDENT_CONFIG",
-            name = studentName,
-            raceId = selectedRaceId,
-            classId = selectedClassId,
-            level = _hireCurrentLevel
-        };
-
-        _client.SendRaw(JsonSerializer.Serialize(payload));
+        GetTree().CallDeferred("change_scene_to_file", "res://Scenes/MainMenu.tscn");
     }
 }

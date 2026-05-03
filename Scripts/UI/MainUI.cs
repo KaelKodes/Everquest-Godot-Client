@@ -308,6 +308,9 @@ public partial class MainUI : Control
 	// Options state
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
+	private bool _hasActiveMercenary = false;
+
+	public string GetPlayerName() => _charName;
 	private float _cameraFov = 75f;
 	private int _antiAliasing = 0; // 0=Off, 1=2x, 2=4x, 3=8x
 	private bool _vSync = true;
@@ -404,6 +407,7 @@ public partial class MainUI : Control
 		_client.MerchantOfferReceived += OnMerchantOfferReceived;
 		_client.MerchantRecoverListReceived += OnMerchantRecoverListReceived;
 		_client.TrainerOpened += OnTrainerOpened;
+		_client.CloseUI += OnCloseUi;
 		_client.BankOpened += OnBankOpened;
 		_client.ChatReceived += OnChatReceived;
 		_client.CampComplete += OnCampComplete;
@@ -415,6 +419,11 @@ public partial class MainUI : Control
 		_client.Connected += OnClientConnected;
 		_client.Disconnected += OnClientDisconnected;
 		_client.AccountOkReceived += OnAccountOkReceived;
+
+		if (_client.IsSocketConnected)
+		{
+			_client.SendRaw("{\"type\":\"REQUEST_SYNC\"}");
+		}
 
 		// Buff Context Menu created lazily on first right-click (see EnsureBuffContextMenu)
 
@@ -665,6 +674,7 @@ public partial class MainUI : Control
 		_combatLog = GetNode<RichTextLabel>("%CombatLog");
 		_combatLog.BbcodeEnabled = true;
 		_combatLog.MetaClicked += OnMetaClicked;
+		SetupChatTabs();
 
 		// Target Frame
 		_targetWindow = GetNode<Window>("%TargetWindow");
@@ -1057,10 +1067,6 @@ public partial class MainUI : Control
 		if (_autoFightBtn != null) _autoFightBtn.Pressed += OnAutoFightPressed;
 		if (_bagsBtn != null) _bagsBtn.Pressed += () => _inventoryWindow.Visible = !_inventoryWindow.Visible;
 
-		// Wire ABILITIES button on Simple Panel to toggle ActionBarWindow
-		var abilitiesBtn = GetNodeOrNull<Button>("MenuWindow/VBox/AbilitiesBtn");
-		if (abilitiesBtn != null) abilitiesBtn.Pressed += () => ToggleActionBarWindow();
-
 		// Wire SPELLS button on Simple Panel to toggle Spellbook
 		var spellsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/SpellsBtn");
 		if (spellsBtn != null) spellsBtn.Pressed += () => ToggleSpellbook();
@@ -1069,33 +1075,27 @@ public partial class MainUI : Control
 		var optionsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/OptionsBtn");
 		if (optionsBtn != null) optionsBtn.Pressed += () => ToggleOptionsPanel();
 
-		// Dynamically add a SKILLS button to the Simple Panel
+		// Dynamically add buttons to the Simple Panel
 		var menuVBoxNode = GetNodeOrNull<VBoxContainer>("MenuWindow/VBox");
 		if (menuVBoxNode != null)
 		{
-			// Add Group Button
-			var groupBtn = new Button();
-			groupBtn.Text = "Group";
-			groupBtn.CustomMinimumSize = new Vector2(0, 30);
-			menuVBoxNode.AddChild(groupBtn);
-			groupBtn.Pressed += () => _groupWindow.Visible = !_groupWindow.Visible;
+			// Add Students Button
+			var studentsBtn = new Button();
+			studentsBtn.Text = "STUDENTS";
+			studentsBtn.CustomMinimumSize = new Vector2(0, 30);
+			menuVBoxNode.AddChild(studentsBtn);
+			studentsBtn.Pressed += () => {
+				EnsureMercenariesManagerWindow();
+				_mercenariesManagerWindow.Visible = !_mercenariesManagerWindow.Visible;
+			};
 		}
-		if (menuVBoxNode != null && abilitiesBtn != null)
+		if (menuVBoxNode != null)
 		{
-			var skillsBtn = new Button();
-			skillsBtn.Text = "SKILLS";
-			skillsBtn.Name = "SkillsBtn";
-			int abilitiesIdx = abilitiesBtn.GetIndex();
-			menuVBoxNode.AddChild(skillsBtn);
-			menuVBoxNode.MoveChild(skillsBtn, abilitiesIdx + 1);
-			skillsBtn.Pressed += () => _skillsWindow.Visible = !_skillsWindow.Visible;
-
-			// Dev Spells Button
 			var devSpellsBtn = new Button();
 			devSpellsBtn.Text = "DEV: SPELLS";
 			devSpellsBtn.Name = "DevSpellsBtn";
 			menuVBoxNode.AddChild(devSpellsBtn);
-			menuVBoxNode.MoveChild(devSpellsBtn, abilitiesIdx + 2);
+			menuVBoxNode.MoveChild(devSpellsBtn, menuVBoxNode.GetChildCount() - 1);
 			devSpellsBtn.Hide(); // Hide from players, keep for devs
 
 			var spellIconDebugger = new SpellIconDebugger();
@@ -1561,6 +1561,7 @@ public partial class MainUI : Control
 			_client.NpcSayReceived -= OnNpcSayReceived;
 			_client.MerchantOpened -= OnMerchantOpened;
 			_client.TrainerOpened -= OnTrainerOpened;
+			_client.CloseUI -= OnCloseUi;
 			_client.BankOpened -= OnBankOpened;
 			_client.ChatReceived -= OnChatReceived;
 			_client.CampComplete -= OnCampComplete;
@@ -2000,11 +2001,11 @@ public partial class MainUI : Control
 					var root = doc.RootElement;
 					if (root.TryGetProperty("target", out var tgt))
 					{
-						string tName = tgt.TryGetProperty("name", out var tn) ? tn.GetString() : "Unknown";
-						int tHp = tgt.TryGetProperty("hp", out var th) ? th.GetInt32() : 0;
-						int tMaxHp = tgt.TryGetProperty("maxHp", out var tmh) ? tmh.GetInt32() : 1;
-						int tLevel = tgt.TryGetProperty("level", out var tl) ? tl.GetInt32() : 0;
-						string tType = tgt.TryGetProperty("type", out var tt) ? tt.GetString() : "";
+						string tName = tgt.TryGetProperty("name", out var tn) && tn.ValueKind != JsonValueKind.Null ? tn.GetString() : "Unknown";
+						int tHp = tgt.TryGetProperty("hp", out var th) && th.ValueKind != JsonValueKind.Null ? th.GetInt32() : 0;
+						int tMaxHp = tgt.TryGetProperty("maxHp", out var tmh) && tmh.ValueKind != JsonValueKind.Null ? tmh.GetInt32() : 1;
+						int tLevel = tgt.TryGetProperty("level", out var tl) && tl.ValueKind != JsonValueKind.Null ? tl.GetInt32() : 0;
+						string tType = tgt.TryGetProperty("type", out var tt) && tt.ValueKind != JsonValueKind.Null ? tt.GetString() : "";
 
 						_targetWindow.Visible = true;
 						_targetNameLabel.Text = tType == "mining_node" ? $"{tName} (T{tLevel})" : $"{tName} (Lv {tLevel})";
@@ -2017,9 +2018,9 @@ public partial class MainUI : Control
 						if (_targetsTargetEnabled && tgt.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
 						{
 							_targetsTargetWindow.Visible = true;
-							string ttName = ttProp.GetProperty("name").GetString();
-							int ttHp = ttProp.GetProperty("hp").GetInt32();
-							int ttMaxHp = ttProp.GetProperty("maxHp").GetInt32();
+							string ttName = ttProp.TryGetProperty("name", out var ttn) && ttn.ValueKind != JsonValueKind.Null ? ttn.GetString() : "Unknown";
+							int ttHp = ttProp.TryGetProperty("hp", out var tth) && tth.ValueKind != JsonValueKind.Null ? tth.GetInt32() : 0;
+							int ttMaxHp = ttProp.TryGetProperty("maxHp", out var ttmh) && ttmh.ValueKind != JsonValueKind.Null ? ttmh.GetInt32() : 1;
 							
 							_targetsTargetNameLabel.Text = ttName;
 							_targetsTargetHpBar.MaxValue = ttMaxHp;
@@ -2041,9 +2042,11 @@ public partial class MainUI : Control
 				{
 					using var doc = JsonDocument.Parse(json);
 					var root = doc.RootElement;
-					var members = root.GetProperty("members");
-					var roles = root.GetProperty("roles");
-					_groupWindow?.UpdateGroup(members, roles);
+					if (root.TryGetProperty("members", out var members))
+					{
+						root.TryGetProperty("roles", out var roles); // It's okay if this is undefined, UpdateGroup should handle it
+						_groupWindow?.UpdateGroup(members, roles);
+					}
 					break;
 				}
 				case "GROUP_INVITE":
@@ -2940,6 +2943,22 @@ public partial class MainUI : Control
 	// ═══════════════════════════════════════════════════════════════
 	//  CONNECTION RECOVERY
 	// ═══════════════════════════════════════════════════════════════
+
+	private void OnCloseUi(Variant data)
+	{
+		var root = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
+		string uiName = root.TryGetProperty("uiName", out var uiNode) ? uiNode.GetString() : "";
+
+		if (uiName == "trainer")
+		{
+			if (_trainerWindow != null && _trainerWindow.Visible)
+			{
+				_trainerWindow.Hide();
+			}
+		}
+	}
+
+
 
 	private void OnClientConnected()
 	{

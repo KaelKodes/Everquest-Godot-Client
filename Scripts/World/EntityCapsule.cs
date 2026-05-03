@@ -261,10 +261,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         else
             anim.LoopMode = Animation.LoopModeEnum.Linear;
         bool isImportantTrace = IsPlayerControlled || (ChaseTarget is EntityCapsule ec && ec.IsPlayerControlled);
-        if (isImportantTrace)
-        {
-            GD.Print($"[ANIM_TRACE] {EntityName} playing '{resolved}' (req: {animName}) at speed {_animPlayer.SpeedScale:F2}");
-        }
+        // if (isImportantTrace)
+        // {
+        //     GD.Print($"[ANIM_TRACE] {EntityName} playing '{resolved}' (req: {animName}) at speed {_animPlayer.SpeedScale:F2}");
+        // }
 
         if (isCombatOrEmote)
         {

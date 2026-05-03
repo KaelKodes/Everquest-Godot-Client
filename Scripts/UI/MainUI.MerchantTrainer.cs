@@ -371,7 +371,7 @@ public partial class MainUI
 	private Label _trainerMoneyPp, _trainerMoneyGp, _trainerMoneySp, _trainerMoneyCp;
 	private Button _trainerTrainBtn;
 	private string _trainerSelectedSkillKey = null;
-	private int _trainerNpcId = 0;
+	private string _trainerNpcId = "";
 	private string _trainerNpcName = "";
 
 	private void OnTrainerOpened(Variant data)
@@ -380,7 +380,7 @@ public partial class MainUI
 		try
 		{
 			var root = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
-			_trainerNpcId = root.TryGetProperty("npcId", out var nId) ? nId.GetInt32() : 0;
+			_trainerNpcId = root.TryGetProperty("npcId", out var nId) ? nId.GetString() : "";
 			_trainerNpcName = root.TryGetProperty("npcName", out var nN) ? nN.GetString() : "Trainer";
 			int practices = root.TryGetProperty("practices", out var pr) ? pr.GetInt32() : 0;
 			long copper = root.TryGetProperty("copper", out var cu) ? cu.GetInt64() : 0;
@@ -627,7 +627,7 @@ public partial class MainUI
 	private void OnTrainSkillPressed()
 	{
 		if (string.IsNullOrEmpty(_trainerSelectedSkillKey)) return;
-		string json = $"{{\"type\": \"TRAIN_SKILL\", \"skillKey\": \"{_trainerSelectedSkillKey}\", \"npcId\": {_trainerNpcId}, \"npcName\": \"{EscapeJson(_trainerNpcName)}\"}}";
+		string json = $"{{\"type\": \"TRAIN_SKILL\", \"skillKey\": \"{_trainerSelectedSkillKey}\", \"npcId\": \"{EscapeJson(_trainerNpcId)}\", \"npcName\": \"{EscapeJson(_trainerNpcName)}\"}}";
 		_client.SendRaw(json);
 	}
 	private void OnBankOpened(Variant data) { if (!IsInstanceValid(this)) return; Log("SYSTEM", "Bank window opened (Placeholder)"); }

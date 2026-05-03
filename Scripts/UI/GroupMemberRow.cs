@@ -28,13 +28,13 @@ public partial class GroupMemberRow : Button
 		_nameLabel.Text = _memberName;
 
 		// Stats
-		int hp = data.TryGetProperty("hp", out var h) ? h.GetInt32() : 0;
-		int maxHp = data.TryGetProperty("maxHp", out var mh) ? mh.GetInt32() : 100;
+		int hp = data.TryGetProperty("hp", out var h) && h.ValueKind != JsonValueKind.Null ? h.GetInt32() : 0;
+		int maxHp = data.TryGetProperty("maxHp", out var mh) && mh.ValueKind != JsonValueKind.Null ? mh.GetInt32() : 100;
 		_hpBar.MaxValue = maxHp;
 		_hpBar.Value = hp;
 
-		int mp = data.TryGetProperty("mana", out var m) ? m.GetInt32() : 0;
-		int maxMp = data.TryGetProperty("maxMana", out var mm) ? mm.GetInt32() : 0;
+		int mp = data.TryGetProperty("mana", out var m) && m.ValueKind != JsonValueKind.Null ? m.GetInt32() : 0;
+		int maxMp = data.TryGetProperty("maxMana", out var mm) && mm.ValueKind != JsonValueKind.Null ? mm.GetInt32() : 0;
 		
 		if (maxMp > 0)
 		{
@@ -47,14 +47,14 @@ public partial class GroupMemberRow : Button
 			_manaBar.Visible = false;
 		}
 
-		int end = data.TryGetProperty("endurance", out var e) ? e.GetInt32() : 0;
-		int maxEnd = data.TryGetProperty("maxEndurance", out var me) ? me.GetInt32() : 100;
+		int end = data.TryGetProperty("endurance", out var e) && e.ValueKind != JsonValueKind.Null ? e.GetInt32() : 0;
+		int maxEnd = data.TryGetProperty("maxEndurance", out var me) && me.ValueKind != JsonValueKind.Null ? me.GetInt32() : 100;
 		_enduranceBar.MaxValue = maxEnd;
 		_enduranceBar.Value = end;
 
 		// Hate / Aggro (0-100%)
 		// In EQ this often shows relative hate. We'll use it as a simple slider for now.
-		float hatePct = data.TryGetProperty("hatePct", out var hpct) ? (float)hpct.GetDouble() : 0f;
+		float hatePct = data.TryGetProperty("hatePct", out var hpct) && hpct.ValueKind != JsonValueKind.Null ? (float)hpct.GetDouble() : 0f;
 		_hateBar.Position = new Vector2(hatePct * (Size.X - 20) / 100f, _hateBar.Position.Y);
 		
 		// Dim if out of zone

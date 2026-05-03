@@ -223,6 +223,37 @@ public partial class WorldManager : Node3D
         return null;
     }
 
+    public EntityCapsule TargetEntityByPartialName(string partialName)
+    {
+        if (string.IsNullOrWhiteSpace(partialName)) return null;
+        string lower = partialName.ToLower();
+        
+        EntityCapsule closest = null;
+        float closestDist = float.MaxValue;
+        
+        foreach (var entity in _activeEntities.Values)
+        {
+            if (entity is EntityCapsule cap && cap != _playerCapsule)
+            {
+                if (cap.EntityName.ToLower().Contains(lower) || cap.Name.ToString().ToLower().Contains(lower))
+                {
+                    float dist = _playerCapsule.GlobalPosition.DistanceTo(cap.GlobalPosition);
+                    if (dist < closestDist)
+                    {
+                        closestDist = dist;
+                        closest = cap;
+                    }
+                }
+            }
+        }
+        
+        if (closest != null)
+        {
+            SetTarget(closest);
+        }
+        return closest;
+    }
+
     public EntityCapsule GetEntityById(string id)
     {
         if (string.IsNullOrEmpty(id)) return null;
@@ -248,6 +279,55 @@ public partial class WorldManager : Node3D
         if (entity != null)
         {
             TriggerEntityActionInternal(entity, action);
+        }
+    }
+
+    public void ReloadLightTuning()
+    {
+        if (_objectPlacer != null)
+        {
+            _objectPlacer.ReloadLightConfig();
+        }
+    }
+
+    public void SetEntityAsLightModel(string entityId, string modelName)
+    {
+        var capsule = GetEntityById(entityId);
+        if (capsule != null && _objectPlacer != null)
+        {
+            string objectsDir = $"{EQAssetCache.Instance.CacheRoot}/zones/{_currentZoneId.ToLower()}/Objects";
+            var scene = _objectPlacer.GetObjectScene(modelName, objectsDir);
+            
+            if (scene != null)
+            {
+                // Clear existing visual
+                var oldMesh = capsule.GetNodeOrNull<Node3D>("Mesh");
+                if (oldMesh != null)
+                {
+                    capsule.RemoveChild(oldMesh);
+                    oldMesh.QueueFree();
+                }
+
+                // Add the new model
+                var instance = scene.Instantiate<Node3D>();
+                instance.Name = "Mesh";
+                capsule.AddChild(instance);
+                
+                // Clear existing light if we didn't just remove it with the old mesh
+                var oldLight = capsule.GetNodeOrNull<OmniLight3D>("TunerLight");
+                if (oldLight != null)
+                {
+                    capsule.RemoveChild(oldLight);
+                    oldLight.QueueFree();
+                }
+                
+                // The light requires a parent container, we pass the capsule as container
+                _objectPlacer.AddLightIfSource(instance, modelName, capsule, capsule.Position.X, capsule.Position.Y, capsule.Position.Z);
+            }
+            else
+            {
+                GD.Print($"[WorldManager] Failed to load light model {modelName} for Tuner.");
+            }
         }
     }
 

@@ -189,14 +189,12 @@ public partial class DoorEntity : Node3D, ITargetable
                 torus.Material = mat;
                 _targetRing.Mesh = torus;
 
-                // Scale ring based on the door's AABB size if needed, or just use a fixed size
                 float maxScale = Mathf.Max(_doorAabb.Size.X, _doorAabb.Size.Z);
                 if (maxScale > 0)
                 {
                     _targetRing.Scale = new Vector3(maxScale, 1f, maxScale);
                 }
 
-                // Place target ring at the bottom of the door
                 _targetRing.Position = new Vector3(_doorAabb.Position.X + _doorAabb.Size.X / 2f, _doorAabb.Position.Y + 0.1f, _doorAabb.Position.Z + _doorAabb.Size.Z / 2f);
                 AddChild(_targetRing);
             }
@@ -235,15 +233,9 @@ public partial class DoorEntity : Node3D, ITargetable
                             GameClient.Instance.SendRaw($"{{\"type\": \"DOOR_CLICK\", \"door_id\": {DoorId}}}");
                             GD.Print($"[WORLD] Sent DOOR_CLICK for door {DoorId} ({EntityName})");
                         }
-                        else
-                        {
-                            GD.PrintErr("[WORLD] Cannot interact with door: GameClient.Instance is null");
-                        }
                     }
                     else
                     {
-                        GD.Print($"[WORLD] Right-clicked door {DoorId}, but it is not the current target. Current target: {wm.CurrentTargetId}");
-                        // Auto-target it if they right-click it, to make it more user friendly
                         wm.SetTarget(this);
                         if (GameClient.Instance != null)
                         {

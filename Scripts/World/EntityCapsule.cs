@@ -229,6 +229,19 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
             if (resolved == null)
             {
+                // Try fuzzy matching for names like "[t04] Cast 1"
+                foreach (var a in _animPlayer.GetAnimationList())
+                {
+                    if (a.ToString().Contains($"[{animName}]") || a.ToString().StartsWith($"{animName} ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        resolved = a;
+                        break;
+                    }
+                }
+            }
+
+            if (resolved == null)
+            {
                 // Only warn once per entity per animation to avoid log spam
                 if (_warnedAnims.Add(animName))
                 {
@@ -241,7 +254,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
         // Set loop mode: death/social/cast anims play once, movement loops
         var anim = _animPlayer.GetAnimation(resolved);
-        bool isCombatOrEmote = resolved.StartsWith("d") || resolved.StartsWith("s") || resolved.StartsWith("t") || resolved.StartsWith("c") || resolved == "p02" || resolved == "p05";
+        bool isCombatOrEmote = animName.StartsWith("d") || animName.StartsWith("s") || animName.StartsWith("t") || animName.StartsWith("c") || animName == "p02" || animName == "p05";
         
         if (isCombatOrEmote)
             anim.LoopMode = Animation.LoopModeEnum.None;
@@ -466,33 +479,61 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         _emoteTimer = 2.5; // let emote play for 2.5 seconds
         string animCode = emote.ToLower() switch
         {
+            // Social emotes (s-prefix)
             "cheer" => "s01",
             "disappointed" => "s02",
             "wave" => "s03",
             "rude" => "s04",
+            // Poses / actions (p-prefix)
+            "sit" => "p02",
+            "loot" or "kneel" => "p05",
+            "shuffle" or "rotate" => "p03",
+            // Combat animations (c-prefix)
+            "kick" => "c01",
+            "pierce" => "c02",
+            "2hslash" => "c03",
+            "2hblunt" => "c04",
+            "slash" or "1hslash" => "c05",
+            "offhand" => "c06",
+            "bash" => "c07",
+            "punch" or "h2h" => "c08",
+            "archery" or "bow" => "c09",
+            "swim" or "swimming" => "c10",
+            "roundkick" => "c11",
+            // Technique animations (t-prefix)
+            "stringed" or "lute" or "guitar" => "t02",
+            "woodwind" or "flute" => "t03",
+            "cast" or "cast1" => "t04",
+            "cast2" => "t05",
+            "cast3" => "t06",
+            "flyingkick" => "t07",
+            "tigerstrike" => "t08",
+            "dragonpunch" => "t09",
+            // Damage / death (d-prefix)
+            "flinch" or "damage" => "d01",
+            "heavydamage" => "d02",
+            "drown" or "drowning" => "d04",
+            "death" or "die" => "d05",
             _ => null
         };
         // If no named match, try using the emote string as a raw animation code
         PlayAnimation(animCode ?? emote);
         
-        // Emote sounds for combat/aggro
+        if (_animPlayer != null && !string.IsNullOrEmpty(_currentAnim) && _animPlayer.HasAnimation(_currentAnim))
+        {
+            _emoteTimer = _animPlayer.GetAnimation(_currentAnim).Length;
+        }
+        else
+        {
+            _emoteTimer = 2.0; // Fallback
+        }
+        
+        // Emote sounds for combat/aggro/casting
         if (emote == "aggro" || emote == "attack") PlayVoice("atk");
+        else if (emote == "t04" || emote == "t05" || emote == "t06") PlayVoice("spl");
     }
 
-    public void PlayCast(int castType = 1)
-    {
-        if (_isDead) return;
-        _emoteTimer = 3.0; // casting time
-        string animCode = castType switch
-        {
-            1 => "t04", // Cast 1
-            2 => "t05", // Cast 2
-            3 => "t06", // Cast 3
-            _ => "t04"
-        };
-        PlayAnimation(animCode);
-        PlayVoice("spl"); // Use spell voice/shout if exists
-    }
+
 
     public void PlayAttack(string attackType = "slash", bool isHit = true)
     {

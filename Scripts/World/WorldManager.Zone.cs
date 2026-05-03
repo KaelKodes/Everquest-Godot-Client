@@ -16,12 +16,18 @@ public partial class WorldManager : Node3D
         foreach (var child in _spawnsContainer.GetChildren())
         {
             if (child != _playerCapsule && GodotObject.IsInstanceValid(child))
+            {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
+            }
         }
         foreach (var child in _doorsContainer.GetChildren())
         {
             if (GodotObject.IsInstanceValid(child))
+            {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
+            }
         }
         _spawnedDoors.Clear();
         _activeEntities.Clear();
@@ -49,6 +55,7 @@ public partial class WorldManager : Node3D
             string name = child.Name;
             if (name == "VisualFloor" || name == "PhysicalFloor" || name == "Floor" || name.StartsWith("Wall_") || name.StartsWith("ZoneLine_"))
             {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
             }
         }
@@ -284,6 +291,8 @@ public partial class WorldManager : Node3D
     }
     public void LoadZoneMap(string zoneId)
     {
+        ClearWorld();
+        
         _currentZoneId = zoneId;
         ApplyTimeOfDayVisuals(); // Instantly apply indoor/outdoor sky logic
 
@@ -296,6 +305,7 @@ public partial class WorldManager : Node3D
         {
             foreach (var child in _zoneGeometryContainer.GetChildren())
             {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
             }
         }
@@ -742,6 +752,7 @@ public partial class WorldManager : Node3D
             string name = child.Name;
             if (name == "VisualFloor" || name == "PhysicalFloor" || name.StartsWith("Wall_"))
             {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
             }
         }
@@ -917,6 +928,7 @@ public partial class WorldManager : Node3D
             if (name == "VisualFloor" || name == "PhysicalFloor" || 
                 name.StartsWith("Wall_"))
             {
+                child.GetParent()?.RemoveChild(child);
                 child.QueueFree();
             }
         }

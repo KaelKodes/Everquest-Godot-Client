@@ -360,6 +360,7 @@ public partial class MainUI : Control
 	private Label _companionHateLabel;
 	private TextureRect[] _companionBuffIcons = new TextureRect[24];
 	private Button _companionGetLostBtn;
+	private OptionButton _mercStanceDropdown;
 	private bool _hasPet = false;
 
 	// ── Mercenaries Manager ──
@@ -387,6 +388,7 @@ public partial class MainUI : Control
 		_client.InventoryUpdated += OnInventoryUpdated;
 		_client.PetInventoryUpdated += OnPetInventoryUpdated;
 		_client.MercenariesUpdated += OnMercenariesUpdated;
+		_client.HireStudentReceived += OnHireStudentReceived;
 		_client.ZoneStateReceived += OnZoneStateReceived;
 		_client.MobMoveReceived += OnMobMoveReceived;
 		_client.EnvironmentUpdated += OnEnvironmentUpdated;
@@ -408,6 +410,11 @@ public partial class MainUI : Control
 		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.SpellAnimationReceived += OnSpellAnimationReceived;
 		_client.MessageReceived += OnGenericMessage;
+
+		// ── Connection Recovery ──
+		_client.Connected += OnClientConnected;
+		_client.Disconnected += OnClientDisconnected;
+		_client.AccountOkReceived += OnAccountOkReceived;
 
 		// Buff Context Menu created lazily on first right-click (see EnsureBuffContextMenu)
 
@@ -1559,6 +1566,9 @@ public partial class MainUI : Control
 			_client.CampComplete -= OnCampComplete;
 			_client.SpellAnimationReceived -= OnSpellAnimationReceived;
 			_client.MessageReceived -= OnGenericMessage;
+			_client.Connected -= OnClientConnected;
+			_client.Disconnected -= OnClientDisconnected;
+			_client.AccountOkReceived -= OnAccountOkReceived;
 		}
 		base._ExitTree();
 	}
@@ -1832,8 +1842,14 @@ public partial class MainUI : Control
 					string emote = root.TryGetProperty("emote", out var em) ? em.GetString() : "";
 					string anim = root.TryGetProperty("anim", out var an) && an.ValueKind == JsonValueKind.String ? an.GetString() : null;
 
-					// Display emote text
-					Log("EMOTE", $"{charName} {emote}s.");
+					// Determine if this is a casting animation (t04/t05/t06)
+					bool isCastEmote = emote == "t04" || emote == "t05" || emote == "t06";
+
+					// Display emote text (suppress raw anim codes)
+					if (!isCastEmote)
+						Log("EMOTE", $"{charName} {emote}s.");
+					else
+						Log("EMOTE", $"{charName} begins to cast a spell.");
 
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 					if (wm != null)
@@ -1846,12 +1862,96 @@ public partial class MainUI : Control
 								float godotYaw = ((float)val / 512f) * 360f;
 								entity.TargetYaw = godotYaw;
 							}
+							
 							entity.PlayEmote(emote);
 						}
 						// Fallback to player if it was a player emote
 						else if (!string.IsNullOrEmpty(anim) && (charName == _charName || string.IsNullOrEmpty(_charName)))
 						{
 							wm.PlayPlayerAnimation(anim);
+						}
+					}
+					break;
+				}
+				case "NPC_ANIM":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string npcId = "";
+					if (root.TryGetProperty("id", out var idProp))
+					{
+						npcId = idProp.ValueKind == JsonValueKind.Number ? idProp.GetInt32().ToString() : idProp.GetString();
+					}
+					int animId = root.TryGetProperty("anim", out var animProp) ? animProp.GetInt32() : -1;
+
+					if (!string.IsNullOrEmpty(npcId) && animId >= 0)
+					{
+						var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+						if (wm != null)
+						{
+							var entity = wm.GetEntityById(npcId);
+							if (entity != null)
+							{
+								// Map EQ doanim() numeric IDs to animation codes
+								// Reference: EQEmu Animation enum
+								string animCode = animId switch
+								{
+									// Combat (c-prefix)
+									1 => "c01",   // Kick
+									2 => "c02",   // 1H Pierce
+									3 => "c03",   // 2H Slash
+									4 => "c04",   // 2H Blunt
+									5 => "c05",   // 1H Slash
+									6 => "c06",   // 1H Slash Offhand
+									7 => "c07",   // Bash
+									8 => "c08",   // Hand to Hand
+									9 => "c09",   // Archery
+									10 => "c10",  // Swimming 1
+									11 => "c11",  // Roundhouse Kick
+									// Damage (d-prefix)
+									12 => "d01",  // Minor Damage
+									13 => "d02",  // Heavy Damage
+									14 => "d04",  // Drowning
+									15 => "d05",  // Death
+									// Locomotion (l-prefix)
+									16 => "l01",  // Walking
+									17 => "l02",  // Running
+									18 => "l03",  // Running Jump
+									19 => "l04",  // Stationary Jump
+									20 => "l05",  // Falling
+									21 => "l06",  // Duck Walking
+									22 => "l07",  // Ladder Climbing
+									23 => "l08",  // Duck Down
+									24 => "l09",  // Swimming Stationary
+									// Poses (p/o-prefix)
+									25 => "o01",  // Idle 2
+									26 => "p01",  // Idle 1
+									27 => "p02",  // Sit Down
+									28 => "p03",  // Shuffle Rotate
+									29 => "s03",  // Wave
+									30 => "p05",  // Loot
+									31 => "p06",  // Swimming 2
+									// Social (s-prefix)
+									35 => "s01",  // Cheer
+									36 => "s02",  // Disappointed
+									38 => "s04",  // Rude
+									// Technique (t-prefix)
+									42 => "t04",  // Cast 1
+									43 => "t05",  // Cast 2
+									44 => "t06",  // Cast 3
+									45 => "t02",  // Stringed Instrument
+									46 => "t03",  // Woodwind Instrument
+									47 => "t07",  // Flying Kick
+									48 => "t08",  // Tiger Strike
+									49 => "t09",  // Dragon Punch
+									_ => null
+								};
+
+								if (animCode != null)
+								{
+									entity.PlayEmote(animCode);
+								}
+							}
 						}
 					}
 					break;
@@ -2835,5 +2935,39 @@ public partial class MainUI : Control
 		
 		string json = JsonSerializer.Serialize(payload);
 		_client.SendRaw(json);
+	}
+
+	// ═══════════════════════════════════════════════════════════════
+	//  CONNECTION RECOVERY
+	// ═══════════════════════════════════════════════════════════════
+
+	private void OnClientConnected()
+	{
+		GD.Print("[MAINUI] Reconnected to server! Attempting to resume session...");
+		string pwd = GameState.AccountPassword;
+		
+		if (!string.IsNullOrEmpty(GameState.AccountName) && !string.IsNullOrEmpty(pwd))
+		{
+			GD.Print($"[MAINUI] Re-authenticating account: {GameState.AccountName}...");
+			_client.SendMessage("LOGIN_ACCOUNT", new { username = GameState.AccountName, password = pwd });
+		}
+		else
+		{
+			GD.PrintErr($"[MAINUI] Cannot re-authenticate: Missing username or password.");
+		}
+	}
+
+	private void OnClientDisconnected()
+	{
+		GD.Print("[MAINUI] Disconnected from server. Waiting for auto-reconnect...");
+	}
+
+	private void OnAccountOkReceived(Variant data)
+	{
+		GD.Print("[MAINUI] Account re-authenticated. Requesting to re-enter world...");
+		if (!string.IsNullOrEmpty(GameState.CharacterName))
+		{
+			_client.SendMessage("SELECT_CHARACTER", new { name = GameState.CharacterName });
+		}
 	}
 }

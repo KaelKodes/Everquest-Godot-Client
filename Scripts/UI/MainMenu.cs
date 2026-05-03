@@ -12,6 +12,13 @@ public partial class MainMenu : Control
     private Control _createPanel;
     private Label _statusLabel;
 
+    // ── 3D Menu Backdrop ──────────────────────────────────────────
+    private SubViewportContainer _backdropContainer;
+    private SubViewport _backdropViewport;
+    private Node3D _backdropRoot;
+    private Camera3D _backdropCamera;
+    private string _currentBackdropZone = null;
+
     // ── Login Panel Nodes ─────────────────────────────────────────
     private LineEdit _usernameInput;
     private LineEdit _passwordInput;
@@ -188,6 +195,10 @@ public partial class MainMenu : Control
         // ── Build Create Panel programmatically (replacing .tscn version) ──
         BuildCreatePanel();
 
+        // ── Build 3D Backdrop ──
+        BuildMenuBackdrop();
+        _ = LoadBackdropZone("mistmoore", new Vector3(2.1690567f, -194.32549f, -204.49268f), new Vector3(15.469843f, 178.62137f, 0f));
+
         // Hide all panels initially except login
         _createPanel.Hide();
         _charSelectPanel.Hide();
@@ -213,6 +224,7 @@ public partial class MainMenu : Control
             string password = _passwordInput.Text;
             if (username.Length >= 2 && password.Length >= 4)
             {
+                GameState.AccountPassword = password;
                 GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
             }
             else
@@ -253,7 +265,7 @@ public partial class MainMenu : Control
         _loginPanel = new PanelContainer();
         _loginPanel.Name = "LoginPanel";
         var loginStyle = new StyleBoxFlat();
-        loginStyle.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.92f);
+        loginStyle.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.25f);
         loginStyle.BorderWidthLeft = loginStyle.BorderWidthTop = loginStyle.BorderWidthRight = loginStyle.BorderWidthBottom = 2;
         loginStyle.BorderColor = new Color(0.7f, 0.55f, 0.2f, 0.8f);
         loginStyle.CornerRadiusTopLeft = loginStyle.CornerRadiusTopRight = loginStyle.CornerRadiusBottomLeft = loginStyle.CornerRadiusBottomRight = 6;
@@ -283,12 +295,14 @@ public partial class MainMenu : Control
         // Username
         var userLabel = new Label();
         userLabel.Text = "Account Name";
+        userLabel.HorizontalAlignment = HorizontalAlignment.Center;
         userLabel.AddThemeFontSizeOverride("font_size", 13);
         userLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(userLabel);
 
         _usernameInput = new LineEdit();
         _usernameInput.PlaceholderText = "Enter account name...";
+        _usernameInput.Alignment = HorizontalAlignment.Center;
         _usernameInput.MaxLength = 30;
         _usernameInput.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_usernameInput);
@@ -296,12 +310,14 @@ public partial class MainMenu : Control
         // Password
         var passLabel = new Label();
         passLabel.Text = "Password";
+        passLabel.HorizontalAlignment = HorizontalAlignment.Center;
         passLabel.AddThemeFontSizeOverride("font_size", 13);
         passLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(passLabel);
 
         _passwordInput = new LineEdit();
         _passwordInput.PlaceholderText = "Enter password...";
+        _passwordInput.Alignment = HorizontalAlignment.Center;
         _passwordInput.Secret = true;
         _passwordInput.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_passwordInput);
@@ -309,6 +325,7 @@ public partial class MainMenu : Control
         // Remember Me checkbox
         _rememberCheckbox = new CheckBox();
         _rememberCheckbox.Text = "Remember Me";
+        _rememberCheckbox.Alignment = HorizontalAlignment.Center;
         _rememberCheckbox.AddThemeFontSizeOverride("font_size", 13);
         _rememberCheckbox.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(_rememberCheckbox);
@@ -316,6 +333,7 @@ public partial class MainMenu : Control
         // Server Address Input (Dynamic Server Selection)
         var serverLabel = new Label();
         serverLabel.Text = "Server Address";
+        serverLabel.HorizontalAlignment = HorizontalAlignment.Center;
         serverLabel.AddThemeFontSizeOverride("font_size", 13);
         serverLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(serverLabel);
@@ -323,6 +341,7 @@ public partial class MainMenu : Control
         _serverAddressInput = new LineEdit();
         _serverAddressInput.PlaceholderText = "ws://localhost:3005";
         _serverAddressInput.Text = "ws://localhost:3005"; // Default, but editable
+        _serverAddressInput.Alignment = HorizontalAlignment.Center;
         _serverAddressInput.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_serverAddressInput);
 
@@ -485,9 +504,9 @@ public partial class MainMenu : Control
         _charSelectPanel = new PanelContainer();
         _charSelectPanel.Name = "CharSelectPanel";
         var style = new StyleBoxFlat();
-        style.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.92f);
+        style.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.25f);
         style.BorderWidthLeft = style.BorderWidthTop = style.BorderWidthRight = style.BorderWidthBottom = 2;
-        style.BorderColor = new Color(0.7f, 0.55f, 0.2f, 0.8f);
+        style.BorderColor = new Color(0.7f, 0.55f, 0.2f, 0.4f);
         style.CornerRadiusTopLeft = style.CornerRadiusTopRight = style.CornerRadiusBottomLeft = style.CornerRadiusBottomRight = 6;
         style.ShadowColor = new Color(0, 0, 0, 0.6f);
         style.ShadowSize = 12;
@@ -585,9 +604,9 @@ public partial class MainMenu : Control
         _charSelectPreviewContainer.Stretch = true;
         
         var previewStyle = new StyleBoxFlat();
-        previewStyle.BgColor = new Color(0.02f, 0.02f, 0.04f, 1f);
-        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 1;
-        previewStyle.BorderColor = new Color(0.5f, 0.4f, 0.15f, 0.6f);
+        previewStyle.BgColor = new Color(0.0f, 0.0f, 0.0f, 0.0f);
+        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 0;
+        previewStyle.BorderColor = new Color(0.0f, 0.0f, 0.0f, 0.0f);
         previewStyle.CornerRadiusTopLeft = previewStyle.CornerRadiusTopRight = previewStyle.CornerRadiusBottomLeft = previewStyle.CornerRadiusBottomRight = 4;
         
         var bgPanel = new PanelContainer();
@@ -645,9 +664,9 @@ public partial class MainMenu : Control
         _createPanel = new PanelContainer();
         _createPanel.Name = "CreatePanelNew";
         var style = new StyleBoxFlat();
-        style.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.92f);
+        style.BgColor = new Color(0.04f, 0.04f, 0.06f, 0.25f);
         style.BorderWidthLeft = style.BorderWidthTop = style.BorderWidthRight = style.BorderWidthBottom = 2;
-        style.BorderColor = new Color(0.7f, 0.55f, 0.2f, 0.8f);
+        style.BorderColor = new Color(0.7f, 0.55f, 0.2f, 0.4f);
         style.CornerRadiusTopLeft = style.CornerRadiusTopRight = style.CornerRadiusBottomLeft = style.CornerRadiusBottomRight = 6;
         style.ShadowColor = new Color(0, 0, 0, 0.6f);
         style.ShadowSize = 12;
@@ -696,9 +715,9 @@ public partial class MainMenu : Control
         _previewContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
         _previewContainer.Stretch = true;
         var previewStyle = new StyleBoxFlat();
-        previewStyle.BgColor = new Color(0.02f, 0.02f, 0.04f, 1f);
-        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 1;
-        previewStyle.BorderColor = new Color(0.5f, 0.4f, 0.15f, 0.6f);
+        previewStyle.BgColor = new Color(0.0f, 0.0f, 0.0f, 0.0f);
+        previewStyle.BorderWidthLeft = previewStyle.BorderWidthTop = previewStyle.BorderWidthRight = previewStyle.BorderWidthBottom = 0;
+        previewStyle.BorderColor = new Color(0.0f, 0.0f, 0.0f, 0.0f);
         previewStyle.CornerRadiusTopLeft = previewStyle.CornerRadiusTopRight = previewStyle.CornerRadiusBottomLeft = previewStyle.CornerRadiusBottomRight = 4;
 
         _previewViewport = new SubViewport();
@@ -798,6 +817,8 @@ public partial class MainMenu : Control
         _armorLabel.Text = "Cloth";
         _armorLabel.CustomMinimumSize = new Vector2(70, 0);
         _armorLabel.HorizontalAlignment = HorizontalAlignment.Center;
+
+
         _armorLabel.AddThemeFontSizeOverride("font_size", 13);
         armorRow.AddChild(_armorLabel);
         _armorNextBtn = new Button { Text = "▶" };
@@ -849,7 +870,7 @@ public partial class MainMenu : Control
         // ── Stats Panel with +/- allocation ──
         var statsPanel = new PanelContainer();
         var statsStyle = new StyleBoxFlat();
-        statsStyle.BgColor = new Color(0.05f, 0.05f, 0.08f, 0.9f);
+        statsStyle.BgColor = new Color(0.05f, 0.05f, 0.08f, 0.25f);
         statsStyle.BorderWidthLeft = statsStyle.BorderWidthTop = statsStyle.BorderWidthRight = statsStyle.BorderWidthBottom = 1;
         statsStyle.BorderColor = new Color(0.5f, 0.4f, 0.15f, 0.6f);
         statsStyle.CornerRadiusTopLeft = statsStyle.CornerRadiusTopRight = statsStyle.CornerRadiusBottomLeft = statsStyle.CornerRadiusBottomRight = 4;
@@ -976,7 +997,7 @@ public partial class MainMenu : Control
         var descPanel = new PanelContainer();
         descPanel.SizeFlagsVertical = SizeFlags.ExpandFill;
         var descStyle = new StyleBoxFlat();
-        descStyle.BgColor = new Color(0.03f, 0.03f, 0.05f, 0.9f);
+        descStyle.BgColor = new Color(0.03f, 0.03f, 0.05f, 0.25f);
         descStyle.BorderWidthLeft = descStyle.BorderWidthTop = descStyle.BorderWidthRight = descStyle.BorderWidthBottom = 1;
         descStyle.BorderColor = new Color(0.3f, 0.3f, 0.35f, 1f);
         descStyle.CornerRadiusTopLeft = descStyle.CornerRadiusTopRight = descStyle.CornerRadiusBottomLeft = descStyle.CornerRadiusBottomRight = 4;
@@ -1016,6 +1037,221 @@ public partial class MainMenu : Control
 
         // Set defaults
         _raceSelect.Selected = 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  BUILD MENU BACKDROP (3D ENVIRONMENT)
+    // ═══════════════════════════════════════════════════════════════
+
+    private void BuildMenuBackdrop()
+    {
+        _backdropContainer = new SubViewportContainer();
+        _backdropContainer.Name = "BackdropContainer";
+        _backdropContainer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        _backdropContainer.SetAnchor(Side.Right, 1.0f);
+        _backdropContainer.SetAnchor(Side.Bottom, 1.0f);
+        _backdropContainer.OffsetRight = 0;
+        _backdropContainer.OffsetBottom = 0;
+        _backdropContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _backdropContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _backdropContainer.Stretch = true;
+        
+        // Ensure it sits at the very back behind everything else
+        AddChild(_backdropContainer);
+        MoveChild(_backdropContainer, 0);
+
+        _backdropViewport = new SubViewport();
+        _backdropViewport.TransparentBg = false;
+        _backdropViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+        _backdropViewport.OwnWorld3D = true;
+        _backdropContainer.AddChild(_backdropViewport);
+
+        _backdropRoot = new Node3D();
+        _backdropRoot.Name = "BackdropRoot";
+        _backdropViewport.AddChild(_backdropRoot);
+
+        _backdropCamera = new Camera3D();
+        _backdropCamera.Name = "BackdropCamera";
+        _backdropCamera.Far = 1000f;
+        _backdropCamera.Fov = 45f;
+        _backdropRoot.AddChild(_backdropCamera);
+
+        // ── The Blood/Pale Moon ──
+        var moon = new MeshInstance3D();
+        moon.Name = "Moon";
+        var sphere = new SphereMesh();
+        sphere.Radius = 30f;
+        sphere.Height = 60f;
+        sphere.RadialSegments = 32;
+        sphere.Rings = 16;
+        moon.Mesh = sphere;
+
+        var moonMat = new StandardMaterial3D();
+        moonMat.ShadingMode = StandardMaterial3D.ShadingModeEnum.Unshaded;
+        moonMat.AlbedoColor = new Color(0.95f, 0.9f, 0.75f); // Pale yellowish white
+        moonMat.EmissionEnabled = true;
+        moonMat.Emission = new Color(0.6f, 0.5f, 0.4f);
+        moonMat.EmissionEnergyMultiplier = 1.5f;
+        moon.MaterialOverride = moonMat;
+
+        // Position closer so it pierces the fog
+        moon.Position = new Vector3(40f, -80f, 100f);
+        _backdropRoot.AddChild(moon);
+
+        var dirLight = new DirectionalLight3D();
+        dirLight.RotationDegrees = new Vector3(-30, 0, 0); // Shines FROM the moon (+Z) TOWARDS the camera (-Z)
+        dirLight.LightEnergy = 0.8f;
+        dirLight.ShadowEnabled = true; // Fixes the weird lighting bleeding through walls
+        dirLight.DirectionalShadowMaxDistance = 1000f; // Prevent shadows from disappearing when far away
+        dirLight.SkyMode = DirectionalLight3D.SkyModeEnum.LightOnly; // Stop Godot from rendering a duplicate sun in the sky!
+        _backdropRoot.AddChild(dirLight);
+
+        // Fill light has been completely removed to allow for pure, dramatic silhouettes against the moon.
+
+        // Optional: Fog/Environment settings
+        var env = new Godot.Environment();
+        env.BackgroundMode = Godot.Environment.BGMode.Color;
+        env.BackgroundColor = new Color(0.15f, 0.05f, 0.08f); // Dark red/purple moody background
+        env.FogEnabled = true;
+        env.FogDensity = 0.008f; // Thinner fog so the moon and background are more visible
+        env.FogLightColor = new Color(0.05f, 0.05f, 0.08f);
+        
+        _backdropCamera.Environment = env;
+
+        // Hide the original black ColorRect background if it exists
+        var bg = GetNodeOrNull<ColorRect>("Background");
+        if (bg != null) bg.Hide();
+    }
+
+    /// <summary>
+    /// Loads a zone .glb directly from cache to serve as the menu backdrop.
+    /// Provide Godot world coordinates for the camera.
+    /// </summary>
+    public async System.Threading.Tasks.Task LoadBackdropZone(string zoneId, Vector3 cameraPosition, Vector3 cameraRotationDegrees)
+    {
+        // Clean up old backdrop mesh
+        var oldMesh = _backdropRoot.GetNodeOrNull<Node3D>($"GLB_{_currentBackdropZone}");
+        if (oldMesh != null) oldMesh.QueueFree();
+
+        _currentBackdropZone = zoneId;
+        
+        if (EQAssetConfig.Instance.IsConfigured && !EQAssetCache.Instance.HasZone(zoneId))
+        {
+            var extractor = LanternExtractorRunner.Instance;
+            if (extractor.IsAvailable)
+            {
+                GD.Print($"[MENU] Extracting backdrop zone {zoneId}...");
+                bool extracted = await extractor.ExtractZone(zoneId);
+                if (!extracted)
+                {
+                    GD.PrintErr($"[MENU] Failed to extract backdrop zone {zoneId}.");
+                    return;
+                }
+            }
+        }
+        
+        string glbPath = EQAssetCache.Instance.GetZoneGlbPath(zoneId);
+        if (string.IsNullOrEmpty(glbPath) || !System.IO.File.Exists(glbPath))
+        {
+            GD.PrintErr($"[MENU] Backdrop zone {zoneId} not found in cache.");
+            return;
+        }
+
+        try
+        {
+            var gltfDoc = new Godot.GltfDocument();
+            var gltfState = new Godot.GltfState();
+
+            var err = gltfDoc.AppendFromFile(glbPath, gltfState);
+            if (err != Godot.Error.Ok)
+            {
+                GD.PrintErr($"[MENU] GLTF parse error for backdrop: {err}");
+                return;
+            }
+
+            Node scene = gltfDoc.GenerateScene(gltfState);
+            if (scene == null) return;
+
+            var zoneRoot = new Node3D { Name = $"GLB_{zoneId}" };
+            zoneRoot.Transform = new Transform3D(
+                new Vector3(0, 0, 10),
+                new Vector3(0, 10, 0),
+                new Vector3(-10, 0, 0),
+                Vector3.Zero
+            );
+            zoneRoot.AddChild(scene);
+            _backdropRoot.AddChild(zoneRoot);
+
+            _backdropCamera.Position = cameraPosition;
+            _backdropCamera.RotationDegrees = cameraRotationDegrees;
+            
+            // Note: We will apply FixBackdropMaterials to the entire _backdropRoot later
+            
+            string cachePath = EQAssetCache.Instance.GetZonePath(zoneId);
+            
+            // Set up material animator for fire, water, lava, etc.
+            var materialAnimator = new MaterialAnimator { Name = "MenuMaterialAnimator" };
+            _backdropRoot.AddChild(materialAnimator);
+
+            var objectPlacer = new ZoneObjectPlacer();
+            objectPlacer.ShadowsEnabled = true;
+            objectPlacer.Animator = materialAnimator;
+            
+            // Animate main zone terrain
+            string zoneMatList = System.IO.Path.Combine(cachePath, "Zone", "MaterialLists", $"{zoneId}.txt");
+            if (System.IO.File.Exists(zoneMatList))
+            {
+                var animData = objectPlacer.ParseMaterialList(zoneMatList);
+                if (animData != null && animData.Count > 0)
+                {
+                    string texturesDir = System.IO.Path.Combine(cachePath, "Zone", "Textures");
+                    objectPlacer.RegisterAnimationsRecursive(zoneRoot, animData, texturesDir);
+                }
+            }
+
+            // Place sub-objects like trees, portcullises, braziers, etc. (they will animate automatically via objectPlacer)
+            objectPlacer.PlaceObjects(zoneId, cachePath, _backdropRoot);
+            objectPlacer.PlaceLights(zoneId, cachePath, _backdropRoot);
+
+            // Apply standard zone material fixes to EVERYTHING (zone mesh + objects)
+            FixBackdropMaterials(_backdropRoot);
+
+            GD.Print($"[MENU] Loaded backdrop zone: {zoneId} (with objects)");
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[MENU] Backdrop load exception: {ex.Message}");
+        }
+    }
+
+    private void FixBackdropMaterials(Node node)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            {
+                if (meshInst.GetSurfaceOverrideMaterial(i) is StandardMaterial3D mat)
+                {
+                    mat.SpecularMode = StandardMaterial3D.SpecularModeEnum.Disabled; // Prevent weird white glowing
+                }
+            }
+
+            if (meshInst.Mesh != null)
+            {
+                for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
+                {
+                    if (meshInst.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D mat)
+                    {
+                        mat.SpecularMode = StandardMaterial3D.SpecularModeEnum.Disabled; // Prevent weird white glowing
+                    }
+                }
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            FixBackdropMaterials(child);
+        }
     }
 
     // Helper: labeled LineEdit row
@@ -1336,6 +1572,7 @@ public partial class MainMenu : Control
         if (_pendingAction == "login")
         {
             _loginStatusLabel.Text = "Logging in...";
+            GameState.AccountPassword = password;
             GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
             GD.Print($"[MENU] Sent LOGIN_ACCOUNT: {username}");
         }
@@ -2282,9 +2519,31 @@ public partial class MainMenu : Control
     }
 
     private float _charSelectPreviewRotation = -Mathf.Pi / 2f;
+    private bool _adminCameraMode = false;
+    private float _adminPitch = 0f;
+    private float _adminYaw = 0f;
 
     public override void _Process(double delta)
     {
+        if (_adminCameraMode && _backdropCamera != null)
+        {
+            float speed = 20.0f;
+            if (Input.IsKeyPressed(Key.Shift)) speed *= 3f;
+            
+            Vector3 velocity = Vector3.Zero;
+            if (Input.IsKeyPressed(Key.W)) velocity += -_backdropCamera.GlobalTransform.Basis.Z;
+            if (Input.IsKeyPressed(Key.S)) velocity += _backdropCamera.GlobalTransform.Basis.Z;
+            if (Input.IsKeyPressed(Key.A)) velocity += -_backdropCamera.GlobalTransform.Basis.X;
+            if (Input.IsKeyPressed(Key.D)) velocity += _backdropCamera.GlobalTransform.Basis.X;
+            if (Input.IsKeyPressed(Key.E)) velocity += Vector3.Up;
+            if (Input.IsKeyPressed(Key.Q)) velocity += Vector3.Down;
+            
+            if (velocity != Vector3.Zero)
+            {
+                _backdropCamera.GlobalPosition += velocity.Normalized() * speed * (float)delta;
+            }
+        }
+
         if (_previewRoot != null && _createPanel != null && _createPanel.Visible)
         {
             if (_previewAutoRotate)
@@ -2304,6 +2563,61 @@ public partial class MainMenu : Control
         {
             _charSelectPreviewRotation += (float)delta * 0.5f;
             _charSelectPreviewRoot.Rotation = new Vector3(0, _charSelectPreviewRotation, 0);
+        }
+    }
+
+    public override void _Input(InputEvent @event)
+    {
+        if (@event is InputEventKey ek && ek.Pressed && !ek.Echo)
+        {
+            if (GetViewport().GuiGetFocusOwner() is Godot.LineEdit) return;
+
+            if (ek.Keycode == Key.Key1)
+            {
+                if (_loginPanel != null) _loginPanel.Visible = !_loginPanel.Visible;
+                GetViewport().SetInputAsHandled();
+            }
+            else if (ek.Keycode == Key.Key2)
+            {
+                _adminCameraMode = !_adminCameraMode;
+                Input.MouseMode = _adminCameraMode ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+                
+                if (_adminCameraMode && _backdropCamera != null)
+                {
+                    _adminPitch = _backdropCamera.Rotation.X;
+                    _adminYaw = _backdropCamera.Rotation.Y;
+                }
+                
+                GetViewport().SetInputAsHandled();
+            }
+            else if (ek.Keycode == Key.Key3)
+            {
+                if (_backdropCamera != null)
+                {
+                    GD.Print($"[ADMIN] Camera Pos: {_backdropCamera.GlobalPosition}, Rot: {_backdropCamera.GlobalRotationDegrees}, FOV: {_backdropCamera.Fov}");
+                }
+                GetViewport().SetInputAsHandled();
+            }
+            else if (ek.Keycode == Key.Key4)
+            {
+                if (_backdropCamera != null)
+                {
+                    _backdropCamera.Fov = _backdropCamera.Fov >= 105f ? 45f : (_backdropCamera.Fov + 15f);
+                    GD.Print($"[ADMIN] Camera FOV set to: {_backdropCamera.Fov}");
+                }
+                GetViewport().SetInputAsHandled();
+            }
+        }
+
+        if (_adminCameraMode && @event is InputEventMouseMotion mm && _backdropCamera != null)
+        {
+            float sensitivity = 0.005f;
+            _adminYaw -= mm.Relative.X * sensitivity;
+            _adminPitch -= mm.Relative.Y * sensitivity;
+            _adminPitch = Mathf.Clamp(_adminPitch, -Mathf.Pi/2f, Mathf.Pi/2f);
+            
+            _backdropCamera.Rotation = new Vector3(_adminPitch, _adminYaw, 0);
+            GetViewport().SetInputAsHandled();
         }
     }
 

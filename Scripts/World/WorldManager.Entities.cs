@@ -297,14 +297,7 @@ public partial class WorldManager : Node3D
 
             if (spellAnimId == -1) return;
 
-            Node3D targetEntity = null;
-            if (_activeEntities.TryGetValue(targetId, out Node3D tgt)) {
-                targetEntity = tgt;
-            } else if (_activeEntities.TryGetValue($"mob_{targetId}", out tgt)) {
-                targetEntity = tgt;
-            } else if (_playerCapsule != null && _playerCapsule.Name == targetId) {
-                targetEntity = _playerCapsule;
-            }
+            Node3D targetEntity = GetEntityById(targetId);
 
             if (targetEntity == null) return;
 

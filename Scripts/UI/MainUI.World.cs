@@ -259,6 +259,24 @@ public partial class MainUI
 		sep.CustomMinimumSize = new Vector2(0, 4);
 		leftVBox.AddChild(sep);
 
+		// Mercenary Stance Dropdown (Only visible for Mercs)
+		_mercStanceDropdown = new OptionButton();
+		_mercStanceDropdown.AddItem("Aggressive", 0);
+		_mercStanceDropdown.AddItem("Balanced", 1);
+		_mercStanceDropdown.AddItem("Conservative", 2);
+		_mercStanceDropdown.AddItem("Passive", 3);
+		_mercStanceDropdown.Select(1); // Default to Balanced
+		_mercStanceDropdown.CustomMinimumSize = new Vector2(160, 24);
+		_mercStanceDropdown.SizeFlagsHorizontal = SizeFlags.ShrinkCenter;
+		_mercStanceDropdown.AddThemeFontSizeOverride("font_size", 12);
+		_mercStanceDropdown.Visible = false; // Hidden until we confirm it's a merc
+		_mercStanceDropdown.ItemSelected += (idx) =>
+		{
+			string[] stances = { "aggressive", "balanced", "conservative", "passive" };
+			_client.SendRaw($"{{\"type\": \"MERCENARY_ACTION\", \"action\": \"set_stance\", \"stance\": \"{stances[idx]}\"}}");
+		};
+		leftVBox.AddChild(_mercStanceDropdown);
+
 		// Command buttons grid (2 columns)
 		var btnGrid = new GridContainer();
 		btnGrid.Columns = 2;
@@ -648,9 +666,11 @@ public partial class MainUI
 					if (isMercenary) {
 						_companionTypeClassLabel.Text = $"{raceStr}/{classStr}";
 						if (_companionGetLostBtn != null) _companionGetLostBtn.Text = "Suspend";
+						if (_mercStanceDropdown != null) _mercStanceDropdown.Visible = true;
 					} else {
 						_companionTypeClassLabel.Text = $"{typeTag}";
 						if (_companionGetLostBtn != null) _companionGetLostBtn.Text = "Get Lost";
+						if (_mercStanceDropdown != null) _mercStanceDropdown.Visible = false;
 					}
 
 					// HP

@@ -18,6 +18,7 @@ public partial class GameClient : Node
     [Signal] public delegate void InventoryUpdatedEventHandler(Variant data);
     [Signal] public delegate void PetInventoryUpdatedEventHandler(Variant data);
     [Signal] public delegate void MercenariesUpdatedEventHandler(Variant data);
+    [Signal] public delegate void HireStudentReceivedEventHandler(Variant data);
     [Signal] public delegate void ZoneStateReceivedEventHandler(Variant data);
     [Signal] public delegate void MobMoveReceivedEventHandler(Variant data);
     [Signal] public delegate void EnvironmentUpdatedEventHandler(Variant data);
@@ -215,6 +216,9 @@ public partial class GameClient : Node
                     break;
                 case "MERCENARIES_UPDATE":
                     EmitSignal(SignalName.MercenariesUpdated, message);
+                    break;
+                case "OPEN_HIRE_STUDENT":
+                    EmitSignal(SignalName.HireStudentReceived, message);
                     break;
                 case "NPC_SAY":
                     EmitSignal(SignalName.NpcSayReceived, message);

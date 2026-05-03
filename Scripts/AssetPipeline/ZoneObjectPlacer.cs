@@ -253,123 +253,19 @@ public partial class ZoneObjectPlacer : RefCounted
 
         if (isCampfire || isBrazier || isTorch || isLantern || isForge || isCandelabra || isChandelier || isOtherFire)
         {
-            var light = new OmniLight3D();
-            
             if (isCampfire || isBrazier || isForge)
             {
-                if (instance.HasNode("BrazierLight")) return;
-                
-                light.Name = "BrazierLight";
-                light.LightEnergy = 10.0f; 
-                light.OmniRange = 35.0f; 
-                light.LightSize = 0.0f; 
-                light.OmniAttenuation = 1.0f;
-                light.LightColor = new Color(1.0f, 0.6f, 0.25f);
-                light.Position = new Vector3(0, 7.5f, 0);
-                light.ShadowEnabled = ShadowsEnabled;
-                light.ShadowBias = 0.1f;
-                instance.AddChild(light);
-                
                 AttachAudio(instance, "fire001_loop.wav");
             }
             else if (isTorch)
             {
-                if (instance.HasNode("TorchLight")) return;
-                light.Name = "TorchLight";
-                light.LightEnergy = 6.0f; // BUMPED from 3.0
-                light.OmniRange = 25.0f; // BUMPED from 15.0
-                light.LightColor = new Color(1.0f, 0.7f, 0.3f);
-                light.Position = new Vector3(0, 0.2f, 0);
-                instance.AddChild(light);
-                
                 AttachAudio(instance, "fire001_loop.wav", 0.5f);
             }
-            else if (isChandelier)
-            {
-                if (instance.HasNode("ChandelierLight")) return;
-                light.Name = "ChandelierLight";
-                light.LightEnergy = 6.0f;
-                light.OmniRange = 30.0f;
-                light.LightColor = new Color(1.0f, 0.8f, 0.45f);
-                light.Position = new Vector3(0, -0.3f, 0);
-                instance.AddChild(light);
-            }
-            else if (isCandelabra)
-            {
-                if (instance.HasNode("CandelabraLight")) return;
-                light.Name = "CandelabraLight";
-                light.LightEnergy = 5.0f;
-                light.OmniRange = 20.0f;
-                light.LightColor = new Color(1.0f, 0.8f, 0.4f);
-                light.Position = new Vector3(0, 0.5f, 0);
-                instance.AddChild(light);
-            }
-            else if (isLantern)
-            {
-                if (instance.HasNode("LanternLight")) return;
-                light.Name = "LanternLight";
-                light.LightEnergy = 5.0f; // BUMPED from 2.5
-                light.OmniRange = 20.0f; // BUMPED from 12.0
-                light.LightColor = new Color(1.0f, 0.75f, 0.35f);
-                light.Position = new Vector3(0, 0.3f, 0);
-                instance.AddChild(light);
-            }
-            else
-            {
-                if (instance.HasNode("GenericLight")) return;
-                light.Name = "GenericLight";
-                light.LightEnergy = 2.0f;
-                light.OmniRange = 10.0f;
-                light.LightColor = new Color(1.0f, 0.65f, 0.3f);
-                light.Position = new Vector3(0, 0.5f, 0);
-                instance.AddChild(light);
-            }
             
-            // CRITICAL FIX: Disable shadow casting on the object's geometry itself!
-            // This prevents the brazier bowl, the torch stick, or the flame texture from blocking
-            // the OmniLight3D and casting massive shadows onto the surrounding walls.
-            // The dungeon walls behind it will STILL cast shadows to stop light bleed, which is perfect.
-            DisableShadowsRecursive(instance);
+            // Note: OmniLight3Ds have been completely removed by design to allow for pure, dramatic moonlit silhouette rendering. 
+            // The unshaded fire textures will glow brightly on their own without illuminating surrounding objects.
         }
     }
-    
-    private void DisableShadowsRecursive(Node node)
-    {
-        if (node is GeometryInstance3D geom)
-        {
-            geom.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
-            
-            // Also ensure the material is double-sided so the light can pass through "from the inside" 
-            // of the bowl or flame and still illuminate the other side.
-            if (geom is MeshInstance3D meshInst)
-            {
-                for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
-                {
-                    if (meshInst.GetSurfaceOverrideMaterial(i) is StandardMaterial3D mat)
-                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                }
-                if (meshInst.Mesh != null)
-                {
-                    for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
-                    {
-                        if (meshInst.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D mat)
-                        {
-                            // Do NOT duplicate the material! Doing so orphans the mesh from the
-                            // shared material instance that is registered in the MaterialAnimator.
-                            // Modifying the shared material directly is perfectly fine here since
-                            // all instances of this light source should be double-sided anyway.
-                            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                        }
-                    }
-                }
-            }
-        }
-        foreach (Node child in node.GetChildren())
-        {
-            DisableShadowsRecursive(child);
-        }
-    }
-    
     private void AttachAudio(Node3D instance, string soundName, float volumeMultiplier = 1.0f)
     {
         var audioStream = EQAssetCache.Instance.GetSound(soundName, loop: true);
@@ -494,7 +390,7 @@ public partial class ZoneObjectPlacer : RefCounted
             GenerateCollisionRecursive(child);
         }
     }
-    private Dictionary<string, (string[] frames, float delay)> ParseMaterialList(string file)
+    public Dictionary<string, (string[] frames, float delay)> ParseMaterialList(string file)
     {
         var data = new Dictionary<string, (string[] frames, float delay)>();
         foreach (var line in File.ReadAllLines(file))
@@ -524,7 +420,7 @@ public partial class ZoneObjectPlacer : RefCounted
         return data;
     }
 
-    private void RegisterAnimationsRecursive(Node node, Dictionary<string, (string[] frames, float delay)> animData, string texturesDir)
+    public void RegisterAnimationsRecursive(Node node, Dictionary<string, (string[] frames, float delay)> animData, string texturesDir)
     {
         if (node is MeshInstance3D meshInst)
         {

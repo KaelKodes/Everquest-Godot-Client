@@ -214,9 +214,10 @@ public partial class WorldManager : Node3D
     public EntityCapsule GetEntityByName(string name)
     {
         if (name == "You") return _playerCapsule;
+        string cleanName = name.Replace("_", " ");
         foreach (var entity in _activeEntities.Values)
         {
-            if (entity is EntityCapsule cap && cap.EntityName == name)
+            if (entity is EntityCapsule cap && (cap.EntityName == name || cap.EntityName == cleanName))
                 return cap;
         }
         return null;
@@ -255,13 +256,16 @@ public partial class WorldManager : Node3D
         if (action == "hit") entity.PlayDamage(false);
         else if (action == "hit_heavy") entity.PlayDamage(true);
         else if (action == "miss") entity.PlaySfx("aam_hit.wav"); // Placeholder for miss/whoosh sound
-        else if (action == "cast") entity.PlayCast(1);
+        else if (action == "cast") entity.PlayEmote("t04");
         else if (action.StartsWith("cast:"))
         {
             if (int.TryParse(action.Split(':')[1], out int castType))
-                entity.PlayCast(castType);
+            {
+                string animCode = castType switch { 1 => "t04", 2 => "t05", 3 => "t06", _ => "t04" };
+                entity.PlayEmote(animCode);
+            }
             else
-                entity.PlayCast(1);
+                entity.PlayEmote("t04");
         }
         else if (action == "die") entity.PlayDeath();
         else if (action == "fizzle") entity.PlaySfx("fizzle.wav");

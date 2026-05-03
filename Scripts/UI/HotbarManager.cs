@@ -202,6 +202,16 @@ public partial class HotbarManager : Control
 				_socialManager.ExecuteSocial(data.SocialIndex);
 				break;
 			}
+			case Hotbar.HotbuttonType.Macro:
+			{
+				if (!string.IsNullOrEmpty(data.MacroText))
+				{
+					// Route the macro string back through the main chat command parser
+					var mainUI = GetNodeOrNull<MainUI>("/root/MainUI") ?? GetParent() as MainUI;
+					if (mainUI != null) mainUI.ExecuteCommand(data.MacroText);
+				}
+				break;
+			}
 		}
 	}
 
@@ -266,6 +276,19 @@ public partial class HotbarManager : Control
 			DisplayName = socialName
 		};
 		_dragLabel.Text = $"[Social] {socialName}";
+		_dragLabel.Visible = true;
+	}
+
+	public void StartMacroDrag(string macroText, string macroName)
+	{
+		_isDragging = true;
+		_dragData = new Hotbar.HotbuttonData
+		{
+			Type = Hotbar.HotbuttonType.Macro,
+			MacroText = macroText,
+			DisplayName = macroName
+		};
+		_dragLabel.Text = $"[Macro] {macroName}";
 		_dragLabel.Visible = true;
 	}
 
@@ -482,6 +505,7 @@ public partial class HotbarManager : Control
 							["itemKey"] = data.ItemKey,
 							["socialIndex"] = data.SocialIndex,
 							["displayName"] = data.DisplayName,
+							["macroText"] = data.MacroText,
 						};
 						slotsArray.Add(slotDict);
 					}
@@ -599,6 +623,7 @@ public partial class HotbarManager : Control
 								ItemKey = slotDict.ContainsKey("itemKey") ? slotDict["itemKey"].AsString() : "",
 								SocialIndex = slotDict["socialIndex"].AsInt32(),
 								DisplayName = slotDict["displayName"].AsString(),
+								MacroText = slotDict.ContainsKey("macroText") ? slotDict["macroText"].AsString() : "",
 							};
 							bar.SlotData[page, slot] = data;
 						}

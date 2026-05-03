@@ -11,7 +11,7 @@ public partial class Hotbar : Control
 {
 	// ── Data Model ──────────────────────────────────────────────────
 
-	public enum HotbuttonType { Empty, Spell, Ability, Item, Social }
+	public enum HotbuttonType { Empty, Spell, Ability, Item, Social, Macro }
 
 	public class HotbuttonData
 	{
@@ -21,6 +21,7 @@ public partial class Hotbar : Control
 		public int ItemId = -1;            // For Item: inventory item ID
 		public string ItemKey = "";        // For Item: item key for equip/unequip
 		public int SocialIndex = -1;       // For Social: index into social library
+		public string MacroText = "";      // For Macro: raw command text
 		public string DisplayName = "";    // Label on the button
 		public int IconIndex = -1;         // Sprite atlas index (if applicable)
 	}
@@ -499,6 +500,7 @@ public partial class Hotbar : Control
 					HotbuttonType.Ability => new Color(1.0f, 0.8f, 0.5f),
 					HotbuttonType.Item => new Color(0.7f, 1.0f, 0.7f),
 					HotbuttonType.Social => new Color(1.0f, 0.7f, 1.0f),
+					HotbuttonType.Macro => new Color(0.8f, 0.8f, 0.8f),
 					_ => new Color(0.85f, 0.8f, 0.6f),
 				};
 				btn.AddThemeColorOverride("font_color", fontColor);

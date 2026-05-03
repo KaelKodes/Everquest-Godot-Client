@@ -32,6 +32,9 @@ public partial class MainUI
 			{
 				string src = evt.GetProperty("source").GetString();
 				string tgt = evt.GetProperty("target").GetString();
+				string srcId = evt.TryGetProperty("sourceId", out var sIdProp) && sIdProp.ValueKind != JsonValueKind.Null ? sIdProp.GetString() : "";
+				string tgtId = evt.TryGetProperty("targetId", out var tIdProp) && tIdProp.ValueKind != JsonValueKind.Null ? tIdProp.GetString() : "";
+				
 				int dmg = evt.GetProperty("damage").GetInt32();
 				string text = "slash";
 				if (evt.TryGetProperty("text", out var tProp) && tProp.ValueKind != JsonValueKind.Null)
@@ -57,11 +60,16 @@ public partial class MainUI
 				{
 					bool isHeavy = dmg >= 25 || text.Contains("Bash") || text.Contains("Kick") || text.Contains("Backstab") || text.Contains("Crush") || text.Contains("Critical");
 					string hitAction = isHeavy ? "hit_heavy" : "hit";
-					wm.TriggerEntityAction(tgt, hitAction);
+					
+					if (!string.IsNullOrEmpty(tgtId)) wm.TriggerEntityActionById(tgtId, hitAction);
+					else wm.TriggerEntityAction(tgt, hitAction);
 					
 					// Player attack animations are client-timer-driven; only trigger NPC swings here
 					if (src != "You")
-						wm.TriggerCombatAnimation(src, typeStr, true);
+					{
+						if (!string.IsNullOrEmpty(srcId)) wm.TriggerCombatAnimationById(srcId, typeStr, true);
+						else wm.TriggerCombatAnimation(src, typeStr, true);
+					}
 				}
 				// Weapon impact sound
 				UISoundPlayer.Instance?.PlayWeaponImpact(text);
@@ -71,6 +79,9 @@ public partial class MainUI
 			{
 				string src = evt.GetProperty("source").GetString();
 				string tgt = evt.GetProperty("target").GetString();
+				string srcId = evt.TryGetProperty("sourceId", out var sIdProp) && sIdProp.ValueKind != JsonValueKind.Null ? sIdProp.GetString() : "";
+				string tgtId = evt.TryGetProperty("targetId", out var tIdProp) && tIdProp.ValueKind != JsonValueKind.Null ? tIdProp.GetString() : "";
+
 				string text = "slash";
 				if (evt.TryGetProperty("text", out var tProp) && tProp.ValueKind != JsonValueKind.Null)
 				{
@@ -93,10 +104,15 @@ public partial class MainUI
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null) 
 				{
-					wm.TriggerEntityAction(tgt, "miss");
+					if (!string.IsNullOrEmpty(tgtId)) wm.TriggerEntityActionById(tgtId, "miss");
+					else wm.TriggerEntityAction(tgt, "miss");
+					
 					// Player attack animations are client-timer-driven; only trigger NPC swings here
 					if (src != "You")
-						wm.TriggerCombatAnimation(src, typeStr, false);
+					{
+						if (!string.IsNullOrEmpty(srcId)) wm.TriggerCombatAnimationById(srcId, typeStr, false);
+						else wm.TriggerCombatAnimation(src, typeStr, false);
+					}
 				}
 				break;
 			}
@@ -304,7 +320,7 @@ public partial class MainUI
 
 	// ── Chat System ─────────────────────────────────────────────────────
 
-	private void OnChatSubmitted(string text)
+	public void OnChatSubmitted(string text)
 	{
 		_chatInput.Text = "";
 		CallDeferred(MethodName.ReleaseChatFocus);
@@ -352,10 +368,27 @@ public partial class MainUI
 			case "/tell":
 			case "/t":
 			{
-				// /whisper PlayerName message
 				string[] whisperParts = body.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
-				if (whisperParts.Length < 2) { Log("SYSTEM", "Usage: /whisper <player> <message>"); break; }
+				if (whisperParts.Length < 2) { Log("SYSTEM", "Usage: /whisper <name> <message>"); break; }
 				_client.SendRaw($"{{\"type\": \"WHISPER\", \"target\": \"{EscapeJson(whisperParts[0])}\", \"text\": \"{EscapeJson(whisperParts[1])}\"}}");
+				break;
+			}
+			
+			case "/melody":
+			{
+				if (string.IsNullOrEmpty(body)) { 
+					if (_melodyWindow != null) _melodyWindow.Visible = !_melodyWindow.Visible;
+					break; 
+				}
+				_client.SendRaw($"{{\"type\": \"MELODY\", \"slots\": \"{EscapeJson(body)}\"}}");
+				break;
+			}
+			
+			case "/stop":
+			case "/stopsong":
+			case "/stopcast":
+			{
+				_client.SendRaw($"{{\"type\": \"STOP_MELODY\"}}");
 				break;
 			}
 
@@ -427,6 +460,30 @@ public partial class MainUI
 				_client.SendRaw($"{{\"type\": \"PET_COMMAND\", \"command\": \"{EscapeJson(petCmd)}\"}}");
 				break;
 			}
+
+			case "/invite":
+				if (string.IsNullOrEmpty(body)) { Log("SYSTEM", "Usage: /invite <name>"); break; }
+				_client.SendRaw($"{{\"type\": \"GROUP_INVITE\", \"targetName\": \"{EscapeJson(body)}\"}}");
+				break;
+
+			case "/disband":
+				_client.SendRaw("{\"type\": \"GROUP_DISBAND\"}");
+				break;
+
+			case "/grouproles":
+				_client.SendRaw($"{{\"type\": \"GROUPROLES\", \"text\": \"{EscapeJson(body)}\"}}");
+				break;
+
+			case "/assist":
+				if (body.ToLower() == "group")
+				{
+					_client.SendRaw("{\"type\": \"ASSIST_GROUP\"}");
+				}
+				else
+				{
+					_client.SendRaw($"{{\"type\": \"ASSIST\", \"target\": \"{EscapeJson(body)}\"}}");
+				}
+				break;
 
 			default:
 				Log("SYSTEM", $"Unknown command: {cmd}");

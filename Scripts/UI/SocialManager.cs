@@ -201,6 +201,11 @@ public partial class SocialManager : Node
 			case "/cast":
 				HandleCast(args);
 				break;
+			case "/melody":
+				if (MainUI.Instance != null) {
+					MainUI.Instance.OnChatSubmitted(line);
+				}
+				break;
 			case "/sit":
 				if (args.ToLower() == "off")
 					_client.SendRaw("{\"type\": \"STAND\"}");

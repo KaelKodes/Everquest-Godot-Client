@@ -270,6 +270,14 @@ public partial class ItemDetailsWindow : PanelContainer
         if (cha != 0) _statsText.AppendText($"[cell]Charisma: {cha}[/cell][cell][/cell]");
         _statsText.AppendText("[/table]");
 
+        if (item.TryGetProperty("bookText", out var bookTextProp)) {
+            string txt = bookTextProp.GetString();
+            if (!string.IsNullOrEmpty(txt) && txt != "MISSING ITEM TEXT") {
+                _statsText.AppendText("\n\n[color=#eebb22]--- Note ---[/color]\n");
+                _statsText.AppendText(txt.Replace("`", "\n").Replace("^", ""));
+            }
+        }
+
         // Augments
         _augmentsText.Clear();
         bool hasAugs = false;

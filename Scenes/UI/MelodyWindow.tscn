@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://melody_window_1"]
+
+[ext_resource type="Script" path="res://Scripts/UI/MelodyWindow.cs" id="1_script"]
+
+[node name="MelodyWindow" type="Window"]
+title = "Melodies"
+position = Vector2i(200, 200)
+size = Vector2i(300, 260)
+visible = false
+script = ExtResource("1_script")

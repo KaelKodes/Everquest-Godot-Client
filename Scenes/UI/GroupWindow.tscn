@@ -1,0 +1,72 @@
+[gd_scene load_steps=3 format=3 uid="uid://group_window"]
+
+[ext_resource type="Script" path="res://Scripts/UI/GroupWindow.cs" id="1_script"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_window"]
+bg_color = Color(0.08, 0.08, 0.08, 0.9)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.3, 0.3, 0.3, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[node name="GroupWindow" type="Window"]
+title = "Group"
+position = Vector2i(17, 539)
+size = Vector2i(270, 480)
+visible = false
+script = ExtResource("1_script")
+
+[node name="Panel" type="Panel" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_window")
+
+[node name="MainVBox" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="TitleLabel" type="Label" parent="Panel/MainVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Group"
+horizontal_alignment = 1
+
+[node name="MemberContainer" type="VBoxContainer" parent="Panel/MainVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="ButtonHBox" type="HBoxContainer" parent="Panel/MainVBox"]
+layout_mode = 2
+theme_override_constants/separation = 15
+alignment = 1
+
+[node name="InviteBtn" type="Button" parent="Panel/MainVBox/ButtonHBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(100, 35)
+layout_mode = 2
+text = "Invite"
+
+[node name="DisbandBtn" type="Button" parent="Panel/MainVBox/ButtonHBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(100, 35)
+layout_mode = 2
+text = "Disband"

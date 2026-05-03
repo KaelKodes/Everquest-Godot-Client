@@ -70,12 +70,24 @@ public partial class MainUI : Control
 	private Label _targetHpLabel;
 	private Control _targetBuffBar;
 	
+	// Target's Target Frame
+	private Window _targetsTargetWindow;
+	private Label _targetsTargetNameLabel;
+	private ProgressBar _targetsTargetHpBar;
+	private Label _targetsTargetHpLabel;
+	
 	// Extended Target Frame
 	private Window _targetListWindow;
 	private TrackingWindow _trackingWindow;
 	public void ClearTrackingWindow() { _trackingWindow = null; }
 	private BankWindow _bankWindow;
 	private Button[] _extendedTargetBtns = new Button[10];
+
+	// Group System
+	private GroupWindow _groupWindow;
+	private ConfirmationDialog _invitePopup;
+	private bool _targetsTargetEnabled = true; // Master switch for Alt+U
+
 
 	// XP / Level / Zone
 	private ProgressBar _xpBar;
@@ -98,6 +110,12 @@ public partial class MainUI : Control
 	private PackedScene _merchantWindowScene = GD.Load<PackedScene>("res://Scenes/UI/MerchantWindow.tscn");
 	private PackedScene _giveNPCWindowScene = GD.Load<PackedScene>("res://Scenes/UI/GiveNPCWindow.tscn");
 	private PackedScene _skillsWindowScene = GD.Load<PackedScene>("res://Scenes/UI/SkillsWindow.tscn");
+	private PackedScene _groupWindowScene = GD.Load<PackedScene>("res://Scenes/UI/GroupWindow.tscn");
+	private PackedScene _melodyWindowScene = GD.Load<PackedScene>("res://Scenes/UI/MelodyWindow.tscn");
+	private PackedScene _invitePopupScene = GD.Load<PackedScene>("res://Scenes/UI/GroupInvitePopup.tscn");
+	
+	private MelodyWindow _melodyWindow;
+
 
 	private Control _merchantWindow;
 	private Control _giveNPCWindow;
@@ -330,10 +348,28 @@ public partial class MainUI : Control
 	// ── Companion Window (Pet / future Mercenary) ──
 	private Window _companionWindow;
 	private Label _companionNameLabel;
+	private Label _companionTypeClassLabel;
 	private Label _companionStateLabel;
 	private ProgressBar _companionHpBar;
 	private Label _companionHpLabel;
+	private ProgressBar _companionMpBar;
+	private Label _companionMpLabel;
+	private ProgressBar _companionEndBar;
+	private Label _companionEndLabel;
+	private ProgressBar _companionHateBar;
+	private Label _companionHateLabel;
+	private TextureRect[] _companionBuffIcons = new TextureRect[24];
+	private Button _companionGetLostBtn;
 	private bool _hasPet = false;
+
+	// ── Mercenaries Manager ──
+	private Window _mercenariesManagerWindow;
+	private Button[] _mercSlotButtons = new Button[2];
+	private Button _mercSwitchBtn;
+	private Button _mercSuspendBtn;
+	private Button _mercReleaseBtn;
+	private int _selectedMercSlot = -1;
+	private JsonElement _mercenariesData;
 
 	public override void _Ready()
 	{
@@ -349,6 +385,8 @@ public partial class MainUI : Control
 		_client.CombatLogReceived += OnCombatLogReceived;
 		_client.BuffsUpdated += OnBuffsUpdated;
 		_client.InventoryUpdated += OnInventoryUpdated;
+		_client.PetInventoryUpdated += OnPetInventoryUpdated;
+		_client.MercenariesUpdated += OnMercenariesUpdated;
 		_client.ZoneStateReceived += OnZoneStateReceived;
 		_client.MobMoveReceived += OnMobMoveReceived;
 		_client.EnvironmentUpdated += OnEnvironmentUpdated;
@@ -628,6 +666,17 @@ public partial class MainUI : Control
 		_targetHpLabel = GetNode<Label>("%TargetHPLabel");
 		_targetBuffBar = GetNode<Control>("%TargetBuffBar");
 
+		// Target's Target Frame
+		_targetsTargetWindow = GetNode<Window>("%TargetsTargetWindow");
+		_targetsTargetNameLabel = GetNode<Label>("%TargetTargetName");
+		_targetsTargetHpBar = GetNode<ProgressBar>("%TargetTargetHPBar");
+		_targetsTargetHpLabel = GetNode<Label>("%TargetTargetHPLabel");
+
+		// Group Window
+		_groupWindow = _groupWindowScene.Instantiate<GroupWindow>();
+		AddChild(_groupWindow);
+		_groupWindow.Hide();
+
 		// Extended Target List
 		_targetListWindow = GetNodeOrNull<Window>("%TargetListWindow") ?? GetNodeOrNull<Window>("TargetListWindow");
 		if (_targetListWindow != null)
@@ -687,7 +736,7 @@ public partial class MainUI : Control
 		_mapPanel.AddChild(_mudMap);
 		_mudMap.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		_mudMap.Hide(); // Map starts closed by default
-
+		
 		// Optional Navigation container for floating text
 		var navContainer = new Control();
 		navContainer.Name = "NavContainer";
@@ -1015,6 +1064,15 @@ public partial class MainUI : Control
 
 		// Dynamically add a SKILLS button to the Simple Panel
 		var menuVBoxNode = GetNodeOrNull<VBoxContainer>("MenuWindow/VBox");
+		if (menuVBoxNode != null)
+		{
+			// Add Group Button
+			var groupBtn = new Button();
+			groupBtn.Text = "Group";
+			groupBtn.CustomMinimumSize = new Vector2(0, 30);
+			menuVBoxNode.AddChild(groupBtn);
+			groupBtn.Pressed += () => _groupWindow.Visible = !_groupWindow.Visible;
+		}
 		if (menuVBoxNode != null && abilitiesBtn != null)
 		{
 			var skillsBtn = new Button();
@@ -1218,6 +1276,11 @@ public partial class MainUI : Control
 		_hotbarManager.ToggleAutoAttack = OnAutoFightPressed;
 
 		var sm = _hotbarManager.GetSocialManager();
+		
+		_melodyWindow = _melodyWindowScene.Instantiate<MelodyWindow>();
+		_melodyWindow.InjectDependencies(this, _hotbarManager);
+		AddChild(_melodyWindow);
+		_melodyWindow.Hide();
 		if (sm != null)
 		{
 			sm.GetDoAbilityName = (slot) => {
@@ -1390,7 +1453,7 @@ public partial class MainUI : Control
 			}
 			else if (k.Keycode == Key.B && k.ShiftPressed)
 			{
-				Log("SYSTEM", "Backpacks not implemented yet.");
+				ToggleAllBags();
 			}
 			else if (k.Keycode == Key.A && k.AltPressed)
 			{
@@ -1402,6 +1465,23 @@ public partial class MainUI : Control
 				{
 					_targetListWindow.Visible = !_targetListWindow.Visible;
 					GD.Print($"[UI] Target List toggled: {_targetListWindow.Visible}");
+				}
+			}
+			else if (k.Keycode == Key.U && k.AltPressed)
+			{
+				if (_targetsTargetWindow != null)
+				{
+					_targetsTargetEnabled = !_targetsTargetEnabled;
+					_targetsTargetWindow.Visible = _targetsTargetEnabled; 
+					GD.Print($"[UI] Targets Target master switch: {_targetsTargetEnabled}");
+				}
+			}
+			else if (k.Keycode == Key.G && k.AltPressed)
+			{
+				if (_groupWindow != null)
+				{
+					_groupWindow.Visible = !_groupWindow.Visible;
+					GD.Print($"[UI] Group Window toggled: {_groupWindow.Visible}");
 				}
 			}
 			else if (k.Keycode == Key.M && k.AltPressed)
@@ -1671,6 +1751,19 @@ public partial class MainUI : Control
 		{
 			switch (type)
 			{
+				case "MOB_VISUAL_UPDATE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string id = root.GetProperty("id").GetString();
+					string equipVis = root.TryGetProperty("equipVisuals", out var evProp) && evProp.ValueKind != System.Text.Json.JsonValueKind.Null ? evProp.GetRawText() : "";
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null)
+					{
+						wm.UpdateEntityEquipVisuals(id, equipVis);
+					}
+					break;
+				}
 				case "CAST_START":
 				{
 					using var doc = JsonDocument.Parse(json);
@@ -1763,6 +1856,32 @@ public partial class MainUI : Control
 					}
 					break;
 				}
+				case "BIND_SIGHT":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					bool active = root.TryGetProperty("active", out var aProp) && aProp.GetBoolean();
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null)
+					{
+						if (active)
+						{
+							string targetName = root.TryGetProperty("targetName", out var tnProp) ? tnProp.GetString() : "unknown";
+							float bsX = root.TryGetProperty("x", out var xp) ? (float)xp.GetDouble() : 0;
+							float bsY = root.TryGetProperty("y", out var yp) ? (float)yp.GetDouble() : 0;
+							float bsZ = root.TryGetProperty("z", out var zp) ? (float)zp.GetDouble() : 0;
+							// Convert EQ coords to Godot coords: Godot.X = -EQ.X, Godot.Y = EQ.Z, Godot.Z = -EQ.Y
+							wm.SetBindSightPosition(-bsX, bsZ + 5f, -bsY); // +5 for eye height
+							Log("SYSTEM", $"[color=cyan]You see through {targetName}'s eyes.[/color]");
+						}
+						else
+						{
+							wm.ClearBindSight();
+							Log("SYSTEM", "[color=cyan]Your vision returns to normal.[/color]");
+						}
+					}
+					break;
+				}
 				case "NODE_DESTROYED":
 				{
 					using var doc = JsonDocument.Parse(json);
@@ -1793,7 +1912,63 @@ public partial class MainUI : Control
 						_targetHpBar.Value = Math.Max(0, tHp);
 						double pct = tMaxHp > 0 ? ((double)tHp / tMaxHp * 100) : 100;
 						_targetHpLabel.Text = $"{pct:F0}%";
+						
+						// --- Target's Target Logic ---
+						if (_targetsTargetEnabled && tgt.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
+						{
+							_targetsTargetWindow.Visible = true;
+							string ttName = ttProp.GetProperty("name").GetString();
+							int ttHp = ttProp.GetProperty("hp").GetInt32();
+							int ttMaxHp = ttProp.GetProperty("maxHp").GetInt32();
+							
+							_targetsTargetNameLabel.Text = ttName;
+							_targetsTargetHpBar.MaxValue = ttMaxHp;
+							_targetsTargetHpBar.Value = ttHp;
+							
+							double ttPct = ttMaxHp > 0 ? ((double)ttHp / ttMaxHp * 100) : 100;
+							_targetsTargetHpLabel.Text = $"{ttPct:F0}%";
+						}
+						else
+						{
+							_targetsTargetWindow.Visible = false;
+						}
+						
+						_groupWindow?.OnTargetChanged(tName, tType);
 					}
+					break;
+				}
+				case "GROUP_UPDATE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					var members = root.GetProperty("members");
+					var roles = root.GetProperty("roles");
+					_groupWindow?.UpdateGroup(members, roles);
+					break;
+				}
+				case "GROUP_INVITE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string inviter = root.GetProperty("inviterName").GetString();
+					
+					// Lazy instance the popup
+					if (_invitePopup == null)
+					{
+						_invitePopup = _invitePopupScene.Instantiate<ConfirmationDialog>();
+						AddChild(_invitePopup);
+						_invitePopup.Confirmed += () => SendNetworkMessage("GROUP_INVITE_RESPONSE", new Dictionary<string, object> { { "accepted", true } });
+						_invitePopup.Canceled += () => SendNetworkMessage("GROUP_INVITE_RESPONSE", new Dictionary<string, object> { { "accepted", false } });
+					}
+					
+					_invitePopup.DialogText = $"{inviter} has invited you to join their group.";
+					_invitePopup.PopupCentered();
+					break;
+				}
+				case "SET_TARGET":
+				{
+					// Handled by the server sending a TARGET_UPDATE shortly after, 
+					// but we can log it here if needed.
 					break;
 				}
 				case "SKILLS_UPDATE":
@@ -2165,6 +2340,9 @@ public partial class MainUI : Control
 		var windows = UILayoutManager.GetSection("Windows");
 		if (_targetWindow != null) ApplyWindowPos(_targetWindow, "TargetWindow", windows);
 		if (_targetListWindow != null) ApplyWindowPos(_targetListWindow, "TargetListWindow", windows);
+		if (_targetsTargetWindow != null) ApplyWindowPos(_targetsTargetWindow, "TargetsTargetWindow", windows);
+		if (_groupWindow != null) ApplyWindowPos(_groupWindow, "GroupWindow", windows);
+		if (_melodyWindow != null) ApplyWindowPos(_melodyWindow, "MelodyWindow", windows);
 		ApplyWindowPos(_castBarPanel, "CastBar", windows);
 		if (_optionsPanel != null) ApplyWindowPos(_optionsPanel, "OptionsPanel", windows);
 		if (_actionBarWindow != null) ApplyWindowPos(_actionBarWindow, "ActionBarWindow", windows);
@@ -2218,6 +2396,9 @@ public partial class MainUI : Control
 		var windows = UILayoutManager.GetSection("Windows");
 		StoreWindowPos(_targetWindow, "TargetWindow", windows);
 		StoreWindowPos(_targetListWindow, "TargetListWindow", windows);
+		StoreWindowPos(_targetsTargetWindow, "TargetsTargetWindow", windows);
+		StoreWindowPos(_groupWindow, "GroupWindow", windows);
+		StoreWindowPos(_melodyWindow, "MelodyWindow", windows);
 		StoreWindowPos(_castBarPanel, "CastBar", windows);
 		StoreWindowPos(_optionsPanel, "OptionsPanel", windows);
 		StoreWindowPos(_actionBarWindow, "ActionBarWindow", windows);
@@ -2397,7 +2578,11 @@ public partial class MainUI : Control
 						_loadingBar.Value = 90;
 						if (_flavorLabel != null) _flavorLabel.Text = "Spawning entities...";
 						
-						wm.SyncLiveMobs(entitiesArray);
+						bool isDelta = dict.TryGetProperty("isDelta", out var dProp) && dProp.GetBoolean();
+						JsonElement removedArr = default;
+						if (isDelta) dict.TryGetProperty("removed", out removedArr);
+
+						wm.SyncLiveMobs(entitiesArray, isDelta, removedArr);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
 						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);
@@ -2415,7 +2600,11 @@ public partial class MainUI : Control
 					else
 					{
 						// Periodic sync (not initial load)
-						wm.SyncLiveMobs(entitiesArray);
+						bool isDelta = dict.TryGetProperty("isDelta", out var dProp) && dProp.GetBoolean();
+						JsonElement removedArr = default;
+						if (isDelta) dict.TryGetProperty("removed", out removedArr);
+
+						wm.SyncLiveMobs(entitiesArray, isDelta, removedArr);
 					}
 					
 						if (dict.TryGetProperty("vision", out var visionDict))
@@ -2629,5 +2818,22 @@ public partial class MainUI : Control
 		}
 
 		_contextMenuTargetBuff = null;
+	}
+
+	// --- Public API for child windows ---
+	public void ExecuteCommand(string text)
+	{
+		OnChatSubmitted(text);
+	}
+
+	public void SendNetworkMessage(string type, Dictionary<string, object> data)
+	{
+		if (_client == null) return;
+		
+		var payload = new Dictionary<string, object>(data);
+		payload["type"] = type;
+		
+		string json = JsonSerializer.Serialize(payload);
+		_client.SendRaw(json);
 	}
 }

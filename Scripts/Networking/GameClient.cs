@@ -16,6 +16,8 @@ public partial class GameClient : Node
     [Signal] public delegate void CombatLogReceivedEventHandler(Variant data);
     [Signal] public delegate void BuffsUpdatedEventHandler(Variant data);
     [Signal] public delegate void InventoryUpdatedEventHandler(Variant data);
+    [Signal] public delegate void PetInventoryUpdatedEventHandler(Variant data);
+    [Signal] public delegate void MercenariesUpdatedEventHandler(Variant data);
     [Signal] public delegate void ZoneStateReceivedEventHandler(Variant data);
     [Signal] public delegate void MobMoveReceivedEventHandler(Variant data);
     [Signal] public delegate void EnvironmentUpdatedEventHandler(Variant data);
@@ -204,9 +206,15 @@ public partial class GameClient : Node
                     LastInventoryPayload = message;
                     EmitSignal(SignalName.InventoryUpdated, message);
                     break;
+                case "PET_INVENTORY_UPDATE":
+                    EmitSignal(SignalName.PetInventoryUpdated, message);
+                    break;
                 case "BUFFS_UPDATE":
                     LastBuffsPayload = message;
                     EmitSignal(SignalName.BuffsUpdated, message);
+                    break;
+                case "MERCENARIES_UPDATE":
+                    EmitSignal(SignalName.MercenariesUpdated, message);
                     break;
                 case "NPC_SAY":
                     EmitSignal(SignalName.NpcSayReceived, message);

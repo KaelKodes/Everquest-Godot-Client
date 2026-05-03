@@ -33,6 +33,10 @@ public partial class WorldManager : Node3D
     private float _cameraDistance = 10f;
     private float _cameraPitch = -30f;
     private float _cameraYaw = 0f;
+    
+    // Bind Sight (SPA 73) — camera override
+    private bool _bindSightActive = false;
+    private Vector3 _bindSightPosition = Vector3.Zero;
 
     // Signal for UI target updates
     [Signal] public delegate void TargetChangedEventHandler(string name, string type);
@@ -218,29 +222,53 @@ public partial class WorldManager : Node3D
         return null;
     }
 
+    public EntityCapsule GetEntityById(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        if (id == "You" || id == "player_self" || (_playerCapsule != null && id == $"player_{_playerCapsule.Name}")) 
+            return _playerCapsule;
+        if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule cap)
+            return cap;
+        return null;
+    }
+
     public void TriggerEntityAction(string name, string action)
     {
         var entity = GetEntityByName(name);
         if (entity != null)
         {
-            if (action == "hit") entity.PlayDamage(false);
-            else if (action == "hit_heavy") entity.PlayDamage(true);
-            else if (action == "miss") entity.PlaySfx("aam_hit.wav"); // Placeholder for miss/whoosh sound
-            else if (action == "cast") entity.PlayCast(1);
-            else if (action.StartsWith("cast:"))
-            {
-                if (int.TryParse(action.Split(':')[1], out int castType))
-                    entity.PlayCast(castType);
-                else
-                    entity.PlayCast(1);
-            }
-            else if (action == "die") entity.PlayDeath();
-            else if (action == "fizzle") entity.PlaySfx("fizzle.wav");
-            else if (action.StartsWith("attack:"))
-            {
-                string type = action.Split(':')[1];
-                entity.PlayAttack(type);
-            }
+            TriggerEntityActionInternal(entity, action);
+        }
+    }
+
+    public void TriggerEntityActionById(string id, string action)
+    {
+        var entity = GetEntityById(id);
+        if (entity != null)
+        {
+            TriggerEntityActionInternal(entity, action);
+        }
+    }
+
+    private void TriggerEntityActionInternal(EntityCapsule entity, string action)
+    {
+        if (action == "hit") entity.PlayDamage(false);
+        else if (action == "hit_heavy") entity.PlayDamage(true);
+        else if (action == "miss") entity.PlaySfx("aam_hit.wav"); // Placeholder for miss/whoosh sound
+        else if (action == "cast") entity.PlayCast(1);
+        else if (action.StartsWith("cast:"))
+        {
+            if (int.TryParse(action.Split(':')[1], out int castType))
+                entity.PlayCast(castType);
+            else
+                entity.PlayCast(1);
+        }
+        else if (action == "die") entity.PlayDeath();
+        else if (action == "fizzle") entity.PlaySfx("fizzle.wav");
+        else if (action.StartsWith("attack:"))
+        {
+            string type = action.Split(':')[1];
+            entity.PlayAttack(type);
         }
     }
 
@@ -1105,7 +1133,15 @@ public partial class WorldManager : Node3D
         bool isFirstPerson = _cameraDistance < 0.5f;
         float heightOffset = isFirstPerson ? _playerCapsule.EyeHeight : _playerCapsule.OverheadHeight;
 
-        _cameraArm.GlobalPosition = _playerCapsule.GlobalPosition + new Vector3(0, heightOffset, 0);
+        if (_bindSightActive)
+        {
+            // Bind Sight: camera tracks the scouted target instead of the player
+            _cameraArm.GlobalPosition = _cameraArm.GlobalPosition.Lerp(_bindSightPosition, 0.15f);
+        }
+        else
+        {
+            _cameraArm.GlobalPosition = _playerCapsule.GlobalPosition + new Vector3(0, heightOffset, 0);
+        }
         _cameraArm.Rotation = new Vector3(
             Mathf.DegToRad(_cameraPitch),
             Mathf.DegToRad(_cameraYaw),
@@ -1147,6 +1183,19 @@ public partial class WorldManager : Node3D
         {
             _camera.Fov = fov;
         }
+    }
+
+    /// <summary>Override camera position for Bind Sight (SPA 73).</summary>
+    public void SetBindSightPosition(float x, float y, float z)
+    {
+        _bindSightActive = true;
+        _bindSightPosition = new Vector3(x, y, z);
+    }
+
+    /// <summary>Clear Bind Sight and return camera to player.</summary>
+    public void ClearBindSight()
+    {
+        _bindSightActive = false;
     }
 
     /// <summary>Toggle dynamic shadows for object-attached lights (torches, braziers).</summary>
@@ -1255,17 +1304,24 @@ public partial class WorldManager : Node3D
         // (StartPlayerAutoAttack/StopPlayerAutoAttack). Only NPC swings are event-driven.
         if (sourceName != "You")
         {
-            // _activeEntities uses numeric network IDs as keys, but sourceName is the string name (e.g. "a fire beetle").
-            // We must find the capsule by checking its display name.
+            // Fallback for name-based combat animation triggering (deprecated)
             foreach (var node in _activeEntities.Values)
             {
                 if (node is EntityCapsule mobCapsule && mobCapsule.EntityName == sourceName)
                 {
-                    // Found the mob that is attacking
                     mobCapsule.PlayAttack(type, isHit);
-                    break; // Only trigger one animation if multiple share a name
+                    break; 
                 }
             }
+        }
+    }
+
+    public void TriggerCombatAnimationById(string sourceId, string type, bool isHit)
+    {
+        var entity = GetEntityById(sourceId);
+        if (entity != null && entity != _playerCapsule)
+        {
+            entity.PlayAttack(type, isHit);
         }
     }
 

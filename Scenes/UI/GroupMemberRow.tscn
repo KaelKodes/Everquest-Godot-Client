@@ -1,0 +1,124 @@
+[gd_scene load_steps=7 format=3 uid="uid://party_member_row"]
+
+[ext_resource type="Script" path="res://Scripts/UI/GroupMemberRow.cs" id="1_script"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bg"]
+bg_color = Color(0.12, 0.12, 0.12, 0.8)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp"]
+bg_color = Color(0.6, 0.1, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mana"]
+bg_color = Color(0.1, 0.1, 0.6, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_end"]
+bg_color = Color(0.6, 0.5, 0.1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hate"]
+bg_color = Color(0.8, 0.4, 0.1, 1)
+
+[node name="GroupMemberRow" type="Button"]
+custom_minimum_size = Vector2(240, 65)
+offset_right = 240.0
+offset_bottom = 65.0
+theme_override_styles/normal = SubResource("StyleBoxFlat_bg")
+script = ExtResource("1_script")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 2
+alignment = 1
+
+[node name="HPBar" type="ProgressBar" parent="VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 14)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_hp")
+value = 100.0
+show_percentage = false
+
+[node name="ManaBar" type="ProgressBar" parent="VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 14)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_mana")
+value = 100.0
+show_percentage = false
+
+[node name="EnduranceBar" type="ProgressBar" parent="VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 14)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_end")
+value = 100.0
+show_percentage = false
+
+[node name="HateContainer" type="Control" parent="VBox"]
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+
+[node name="ColorRect" type="ColorRect" parent="VBox/HateContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.5)
+
+[node name="HateBar" type="ProgressBar" parent="VBox/HateContainer"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_top = -2.0
+offset_right = 20.0
+offset_bottom = 2.0
+grow_vertical = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_hate")
+value = 100.0
+show_percentage = false
+
+[node name="NameLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 14
+text = "Member Name"
+horizontal_alignment = 1
+vertical_alignment = 1

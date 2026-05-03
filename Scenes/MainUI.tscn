@@ -455,8 +455,10 @@ vertical_alignment = 1
 unique_name_in_owner = true
 oversampling_override = 1.0
 position = Vector2i(15, 409)
-size = Vector2i(260, 100)
+size = Vector2i(260, 125)
 visible = false
+min_size = Vector2i(150, 125)
+max_size = Vector2i(500, 500)
 metadata/_edit_lock_ = true
 
 [node name="VBox" type="VBoxContainer" parent="StatusWindow" unique_id=598446401]
@@ -522,119 +524,6 @@ theme_override_font_sizes/font_size = 14
 text = "MP: 50/50"
 horizontal_alignment = 1
 vertical_alignment = 1
-
-[node name="PartyWindow" type="Window" parent="." unique_id=1893413473]
-oversampling_override = 1.0
-position = Vector2i(17, 539)
-size = Vector2i(260, 240)
-visible = false
-
-[node name="VBoxContainer" type="VBoxContainer" parent="PartyWindow" unique_id=706458889]
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_constants/separation = 8
-alignment = 1
-
-[node name="PartyLabel" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1595887735]
-layout_mode = 2
-text = "PARTY"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartyMember1" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1965191802]
-layout_mode = 2
-text = "[1]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartyMember2" type="Label" parent="PartyWindow/VBoxContainer" unique_id=392814811]
-layout_mode = 2
-text = "[2]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartyMember3" type="Label" parent="PartyWindow/VBoxContainer" unique_id=356222588]
-layout_mode = 2
-text = "[3]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartyMember4" type="Label" parent="PartyWindow/VBoxContainer" unique_id=1119377388]
-layout_mode = 2
-text = "[4]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartyMember5" type="Label" parent="PartyWindow/VBoxContainer" unique_id=982822901]
-layout_mode = 2
-text = "[5]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="MembersLabel" type="Label" parent="PartyWindow/VBoxContainer" unique_id=780753835]
-layout_mode = 2
-text = "MEMBERS"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="TargetWindow" type="Window" parent="." unique_id=27210106]
-unique_name_in_owner = true
-oversampling_override = 1.0
-position = Vector2i(15, 280)
-size = Vector2i(260, 100)
-visible = false
-metadata/_edit_lock_ = true
-
-[node name="VBox" type="VBoxContainer" parent="TargetWindow" unique_id=998971029]
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = -10.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="TargetName" type="Label" parent="TargetWindow/VBox" unique_id=581631974]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.4, 0.4, 1)
-text = "No Target"
-horizontal_alignment = 1
-
-[node name="TargetHPBar" type="ProgressBar" parent="TargetWindow/VBox" unique_id=434396692]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 25)
-layout_mode = 2
-theme_override_styles/fill = SubResource("StyleBoxFlat_targethp")
-value = 100.0
-show_percentage = false
-
-[node name="TargetHPLabel" type="Label" parent="TargetWindow/VBox/TargetHPBar" unique_id=983227659]
-unique_name_in_owner = true
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 2
-theme_override_font_sizes/font_size = 12
-text = "100%"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="TargetBuffBar" type="GridContainer" parent="TargetWindow/VBox" unique_id=599812423]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/h_separation = 2
-theme_override_constants/v_separation = 2
-columns = 5
 
 [node name="TargetListWindow" type="Window" parent="." unique_id=451079970]
 unique_name_in_owner = true
@@ -768,3 +657,109 @@ layout_mode = 0
 [node name="ZoneConnections" type="HBoxContainer" parent="." unique_id=1250082682]
 unique_name_in_owner = true
 layout_mode = 0
+
+[node name="TargetWindow" type="Window" parent="." unique_id=27210106]
+unique_name_in_owner = true
+oversampling_override = 1.0
+position = Vector2i(15, 280)
+size = Vector2i(260, 100)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="TargetWindow" unique_id=998971029]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TargetName" type="Label" parent="TargetWindow/VBox" unique_id=581631974]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.4, 0.4, 1)
+text = "No Target"
+horizontal_alignment = 1
+
+[node name="TargetHPBar" type="ProgressBar" parent="TargetWindow/VBox" unique_id=434396692]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_targethp")
+value = 100.0
+show_percentage = false
+
+[node name="TargetHPLabel" type="Label" parent="TargetWindow/VBox/TargetHPBar" unique_id=983227659]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 12
+text = "100%"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TargetBuffBar" type="GridContainer" parent="TargetWindow/VBox" unique_id=599812423]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 2
+theme_override_constants/v_separation = 2
+columns = 5
+
+[node name="TargetsTargetWindow" type="Window" parent="." unique_id=27210107]
+unique_name_in_owner = true
+oversampling_override = 1.0
+position = Vector2i(280, 280)
+size = Vector2i(200, 70)
+visible = false
+metadata/_edit_lock_ = true
+
+[node name="VBox" type="VBoxContainer" parent="TargetsTargetWindow" unique_id=998971030]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 5.0
+offset_top = 5.0
+offset_right = -5.0
+offset_bottom = -5.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TargetTargetName" type="Label" parent="TargetsTargetWindow/VBox" unique_id=581631975]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.6, 0.4, 1)
+theme_override_font_sizes/font_size = 12
+text = "No Target"
+horizontal_alignment = 1
+
+[node name="TargetTargetHPBar" type="ProgressBar" parent="TargetsTargetWindow/VBox" unique_id=434396693]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 15)
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_targethp")
+value = 100.0
+show_percentage = false
+
+[node name="TargetTargetHPLabel" type="Label" parent="TargetsTargetWindow/VBox/TargetTargetHPBar" unique_id=983227660]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 10
+text = "100%"
+horizontal_alignment = 1
+vertical_alignment = 1

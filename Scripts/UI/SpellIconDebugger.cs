@@ -5,10 +5,11 @@ public partial class SpellIconDebugger : Window
 {
 	private VBoxContainer _vbox;
 	private float _currentScale = 1.0f;
+    public Action<int> OnIconSelected;
 
-	public SpellIconDebugger()
+	public SpellIconDebugger(bool pickerMode = false)
 	{
-		Title = "Spell Icon Debugger (TGA Mapping)";
+		Title = pickerMode ? "Select Icon" : "Spell Icon Debugger (TGA Mapping)";
 		Size = new Vector2I(800, 600);
 		MinSize = new Vector2I(400, 300);
 		InitialPosition = Window.WindowInitialPosition.CenterMainWindowScreen;
@@ -17,6 +18,26 @@ public partial class SpellIconDebugger : Window
 		var scroll = new ScrollContainer();
 		scroll.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		AddChild(scroll);
+
+		// --- Custom Close Button ---
+		if (pickerMode)
+		{
+			var topCloseBtn = new Button();
+			topCloseBtn.Text = "X";
+			topCloseBtn.CustomMinimumSize = new Vector2(24, 24);
+			var closeSb = new StyleBoxFlat();
+			closeSb.BgColor = new Color(0.4f, 0.1f, 0.1f, 1f);
+			topCloseBtn.AddThemeStyleboxOverride("normal", closeSb);
+			topCloseBtn.Pressed += Hide;
+			
+			topCloseBtn.SetAnchorsPreset(Control.LayoutPreset.TopRight);
+			topCloseBtn.OffsetLeft = -34;
+			topCloseBtn.OffsetRight = -10;
+			topCloseBtn.OffsetTop = 10;
+			topCloseBtn.OffsetBottom = 34;
+			
+			AddChild(topCloseBtn);
+		}
 
 		_vbox = new VBoxContainer();
 		_vbox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -30,10 +51,12 @@ public partial class SpellIconDebugger : Window
 		scaleContainer.AddChild(_vbox);
 		scroll.AddChild(scaleContainer);
 
-		string[] filesToLoad = new string[] {
-			"spells01.tga", "spells02.tga", "spells03.tga", "spells04.tga", "spells05.tga", "spells06.tga", "spells07.tga",
-			"gemicons01.tga", "gemicons02.tga"
-		};
+		string[] filesToLoad = pickerMode ? 
+			new string[] { "gemicons01.tga", "gemicons02.tga" } : 
+			new string[] {
+				"spells01.tga", "spells02.tga", "spells03.tga", "spells04.tga", "spells05.tga", "spells06.tga", "spells07.tga",
+				"gemicons01.tga", "gemicons02.tga"
+			};
 
 		foreach (string file in filesToLoad)
 		{
@@ -70,26 +93,58 @@ public partial class SpellIconDebugger : Window
 				{
 					int col = index % cols;
 					int row = index / cols;
+                    
+                    // Global icon ID mapping across files (Assuming 0-indexed across sheets)
+                    // If it's gemicons01, fileIdx = 0, so global ID = index.
+                    // If it's gemicons02, fileIdx = 1, so global ID = 100 + index.
+                    int fileOffset = 0;
+                    if (file == "gemicons02.tga") fileOffset = 100;
+                    int iconId = index + fileOffset;
 
-					var label = new Label();
-					label.Text = index.ToString();
-					label.Position = new Vector2(col * cellSize, row * cellSize);
-					label.Size = new Vector2(cellSize, cellSize);
-					label.HorizontalAlignment = HorizontalAlignment.Center;
-					label.VerticalAlignment = VerticalAlignment.Center;
-					
-					// Add a dark background for visibility
-					var styleBox = new StyleBoxFlat();
-					styleBox.BgColor = new Color(0, 0, 0, 0.5f);
-					label.AddThemeStyleboxOverride("normal", styleBox);
-					
-					label.AddThemeColorOverride("font_color", Colors.Yellow);
-					label.AddThemeFontSizeOverride("font_size", 14);
+                    if (pickerMode)
+                    {
+                        var btn = new Button();
+                        btn.Position = new Vector2(col * cellSize, row * cellSize);
+                        btn.Size = new Vector2(cellSize, cellSize);
+                        btn.Flat = true; // Invisible button overlay
+                        
+                        // Hover effect
+                        var hoverStyle = new StyleBoxFlat();
+                        hoverStyle.BgColor = new Color(1f, 1f, 1f, 0.2f);
+                        btn.AddThemeStyleboxOverride("hover", hoverStyle);
+                        
+                        btn.Pressed += () => {
+                            OnIconSelected?.Invoke(iconId);
+                            Hide();
+                        };
+                        texContainer.AddChild(btn);
+                    }
+                    else
+                    {
+                        var label = new Label();
+                        label.Text = index.ToString();
+                        label.Position = new Vector2(col * cellSize, row * cellSize);
+                        label.Size = new Vector2(cellSize, cellSize);
+                        label.HorizontalAlignment = HorizontalAlignment.Center;
+                        label.VerticalAlignment = VerticalAlignment.Center;
+                        
+                        var styleBox = new StyleBoxFlat();
+                        styleBox.BgColor = new Color(0, 0, 0, 0.5f);
+                        label.AddThemeStyleboxOverride("normal", styleBox);
+                        
+                        label.AddThemeColorOverride("font_color", Colors.Yellow);
+                        label.AddThemeFontSizeOverride("font_size", 14);
 
-					texContainer.AddChild(label);
+                        texContainer.AddChild(label);
+                    }
 				}
 			}
 		}
+
+        if (pickerMode) {
+            _currentScale = 2.5f;
+            UpdateZoom();
+        }
 	}
 
 	public override void _Input(InputEvent @event)

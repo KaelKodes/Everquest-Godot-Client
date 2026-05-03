@@ -54,7 +54,7 @@ public partial class WorldManager : Node3D
             GD.PrintErr($"[WORLD] Failed Setup on '{name}': {ex.Message}");
         }
     }
-    public void SyncLiveMobs(System.Text.Json.JsonElement entitiesArray)
+    public void SyncLiveMobs(System.Text.Json.JsonElement entitiesArray, bool isDelta = false, System.Text.Json.JsonElement removedArray = default)
     {
         int count = entitiesArray.GetArrayLength();
         // Sync entities silently
@@ -91,7 +91,7 @@ public partial class WorldManager : Node3D
             int face = ent.TryGetProperty("face", out var fProp) ? fProp.GetInt32() : 0;
             bool sneaking = ent.TryGetProperty("sneaking", out var sProp) && sProp.GetBoolean();
             bool hidden = ent.TryGetProperty("hidden", out var hidProp) && hidProp.GetBoolean();
-            string equipVis = ent.TryGetProperty("equipVisuals", out var evProp) ? evProp.ToString() : "";
+            string equipVis = ent.TryGetProperty("equipVisuals", out var evProp) && evProp.ValueKind != System.Text.Json.JsonValueKind.Null ? evProp.GetRawText() : "";
             float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
 
             // EQEmu headings are 0-512 where 0=North, 128=West, 256=South, 384=East
@@ -147,11 +147,24 @@ public partial class WorldManager : Node3D
         }
 
         // Remove entities that no longer exist on the server
-        foreach (var oldId in existingIds)
+        if (isDelta)
         {
-            if (!incomingIds.Contains(oldId))
+            if (removedArray.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
-                RemoveEntity(oldId);
+                foreach (var removedId in removedArray.EnumerateArray())
+                {
+                    RemoveEntity(removedId.GetString());
+                }
+            }
+        }
+        else
+        {
+            foreach (var oldId in existingIds)
+            {
+                if (!incomingIds.Contains(oldId))
+                {
+                    RemoveEntity(oldId);
+                }
             }
         }
     }
@@ -183,6 +196,13 @@ public partial class WorldManager : Node3D
     {
         if (_playerCapsule != null)
             _playerCapsule.UpdateEquipVisuals(equipVisualsJson);
+    }
+    public void UpdateEntityEquipVisuals(string id, string equipVisualsJson)
+    {
+        if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule ec)
+        {
+            ec.UpdateEquipVisuals(equipVisualsJson);
+        }
     }
     public void SpawnEntity(string id, string name, string type, string appearanceJson = "")
     {

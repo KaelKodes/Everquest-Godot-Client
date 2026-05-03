@@ -16,6 +16,71 @@ public partial class MainUI
 			_openBags.Remove(slotId);
 		}
 	}
+
+	public void OpenBag(int slotId, JsonElement itemData)
+	{
+		if (_openBags.ContainsKey(slotId)) return;
+		
+		int bagslots = itemData.TryGetProperty("bagslots", out var bsProp) ? bsProp.GetInt32() : 8;
+		string bagName = itemData.TryGetProperty("itemName", out var nProp) ? nProp.GetString() : "Bag";
+		
+		var bagWin = new BagWindow();
+		AddChild(bagWin);
+		bagWin.Init(slotId, bagslots, bagName);
+		_openBags[slotId] = bagWin;
+		
+		// Refresh inventory to populate bag contents
+		_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
+	}
+
+	public void ToggleAllBags()
+	{
+		bool anyBagClosed = false;
+		for (int slotId = 22; slotId <= 29; slotId++)
+		{
+			int idx = slotId - 22;
+			if (idx < 0 || idx >= _invSlots.Length) continue;
+			var btn = _invSlots[idx];
+			if (btn == null) continue;
+			
+			if (_slotItemData.TryGetValue(btn, out var itemData))
+			{
+				if (itemData.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1)
+				{
+					if (!_openBags.ContainsKey(slotId))
+					{
+						anyBagClosed = true;
+						break;
+					}
+				}
+			}
+		}
+
+		if (anyBagClosed)
+		{
+			for (int slotId = 22; slotId <= 29; slotId++)
+			{
+				int idx = slotId - 22;
+				var btn = _invSlots[idx];
+				if (_slotItemData.TryGetValue(btn, out var itemData))
+				{
+					if (itemData.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1)
+					{
+						OpenBag(slotId, itemData);
+					}
+				}
+			}
+		}
+		else
+		{
+			var slotsToClose = new List<int>();
+			foreach (var slotId in _openBags.Keys)
+			{
+				if (slotId >= 22 && slotId <= 29) slotsToClose.Add(slotId);
+			}
+			foreach (var slotId in slotsToClose) CloseBag(slotId);
+		}
+	}
 	private void OnInventoryUpdated(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -406,16 +471,8 @@ public partial class MainUI
 						// Short right-click — open bag
 						if (_rightClickItemData.HasValue && _rightClickItemData.Value.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1) {
 							// Open bag window if it's a container
-							int bagslots = _rightClickItemData.Value.TryGetProperty("bagslots", out var bsProp) ? bsProp.GetInt32() : 8;
-							string bagName = _rightClickItemData.Value.TryGetProperty("itemName", out var nProp) ? nProp.GetString() : "Bag";
 							if (!_openBags.ContainsKey(slotId)) {
-								var bagWin = new BagWindow();
-								AddChild(bagWin);
-								bagWin.Init(slotId, bagslots, bagName);
-								_openBags[slotId] = bagWin;
-								
-								// Force inventory refresh so it populates immediately
-								_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
+								OpenBag(slotId, _rightClickItemData.Value);
 							} else {
 								CloseBag(slotId);
 							}
@@ -443,6 +500,18 @@ public partial class MainUI
 	{
 		if (!_heldItem.HasValue) return;
 		int fromSlot = _heldFromSlotId;
+
+		if (fromSlot == -100 && _heldPetSource != null) {
+			// Taking an item from pet to player inventory
+			bool targetIsBag = targetSlotId >= 251;
+			bool targetIsInv = targetSlotId >= 22 && targetSlotId <= 29;
+			// For MVP, just send take action without specifying exact target slot, server auto-places it
+			string takeMsg = $"{{\"type\": \"PET_INVENTORY_ACTION\", \"action\": \"take\", " +
+							 $"\"location\": {{\"type\":\"{_heldPetSource.Value.type}\", \"slot\":\"{_heldPetSource.Value.slot}\"}}}}";
+			_client.SendRaw(takeMsg);
+			CancelHeldItem();
+			return;
+		}
 
 		bool targetIsEquipSlot = targetSlotId < 22;
 		bool sourceIsEquipSlot = fromSlot < 22;
@@ -475,13 +544,20 @@ public partial class MainUI
 				string slotName = MapSlotToName(_heldFromSlotId);
 				if (slotName != null && _equipSlots.TryGetValue(slotName, out var btn))
 					btn.Modulate = Colors.White;
-			} else {
-				int idx = _heldFromSlotId - 22;
-				if (idx >= 0 && idx < 10) _invSlots[idx].Modulate = Colors.White;
+			} else if (_heldFromSlotId == -100 && _heldPetSource != null) {
+				// Restore pet button appearance
+				if (_heldPetSource.Value.type == "equip") {
+					if (_petEquipSlots.TryGetValue(_heldPetSource.Value.slot, out var btn))
+						btn.Modulate = Colors.White;
+				} else {
+					if (int.TryParse(_heldPetSource.Value.slot, out int invIdx) && invIdx >= 0 && invIdx < 8)
+						if (_petInvSlots[invIdx] != null) _petInvSlots[invIdx].Modulate = Colors.White;
+				}
 			}
 		}
 		_heldItem = null;
 		_heldFromSlotId = -1;
+		_heldPetSource = null;
 		_cursorIcon.Visible = false;
 	}
 
@@ -517,7 +593,18 @@ public partial class MainUI
 		if (item.TryGetProperty("wis", out var wis) && wis.GetInt32() != 0) parts.Add($"WIS:+{wis.GetInt32()}");
 		if (item.TryGetProperty("int", out var intel) && intel.GetInt32() != 0) parts.Add($"INT:+{intel.GetInt32()}");
 		if (item.TryGetProperty("cha", out var cha) && cha.GetInt32() != 0) parts.Add($"CHA:+{cha.GetInt32()}");
-		return parts.Count > 0 ? string.Join(" | ", parts) : "";
+		
+		string stats = parts.Count > 0 ? string.Join(" | ", parts) : "";
+		
+		if (item.TryGetProperty("bookText", out var bookTextProp)) {
+			string txt = bookTextProp.GetString();
+			if (!string.IsNullOrEmpty(txt) && txt != "MISSING ITEM TEXT") {
+				if (!string.IsNullOrEmpty(stats)) stats += "\n\n";
+				stats += $"[Note]\n{txt.Replace("`", "\n").Replace("^", "")}";
+			}
+		}
+		
+		return stats;
 	}
 
 	private void BuildEquipmentGrid()
@@ -664,6 +751,9 @@ public partial class MainUI
 	private int _statOffhandDmg = 0;
 	private int _statOffhandDly = 0;
 	private int _ac, _mitigationAC, _avoidanceAC;
+	private int _atkBonus = 0;
+	private int _resistFire = 0, _resistCold = 0, _resistPoison = 0, _resistDisease = 0, _resistMagic = 0;
+	private bool _hasInfravision = false, _hasUltravision = false, _hasSeeInvis = false;
 	private float _xpPct = 0f;
 	private string _cls = "";
 
@@ -701,6 +791,17 @@ public partial class MainUI
 		if (source.TryGetProperty("offhandDmg", out var d3)) _statOffhandDmg = d3.GetInt32();
 		if (source.TryGetProperty("offhandDly", out var d4)) _statOffhandDly = d4.GetInt32();
 		
+		if (source.TryGetProperty("atkBonus", out var atkProp)) _atkBonus = atkProp.GetInt32();
+		if (source.TryGetProperty("resistFire", out var rfProp)) _resistFire = rfProp.GetInt32();
+		if (source.TryGetProperty("resistCold", out var rcProp)) _resistCold = rcProp.GetInt32();
+		if (source.TryGetProperty("resistPoison", out var rpProp)) _resistPoison = rpProp.GetInt32();
+		if (source.TryGetProperty("resistDisease", out var rdProp)) _resistDisease = rdProp.GetInt32();
+		if (source.TryGetProperty("resistMagic", out var rmProp)) _resistMagic = rmProp.GetInt32();
+
+		if (source.TryGetProperty("hasInfravision", out var hivProp)) _hasInfravision = hivProp.GetBoolean();
+		if (source.TryGetProperty("hasUltravision", out var huvProp)) _hasUltravision = huvProp.GetBoolean();
+		if (source.TryGetProperty("hasSeeInvis", out var hsiProp)) _hasSeeInvis = hsiProp.GetBoolean();
+
 		if (source.TryGetProperty("xpPercent", out var xp)) _xpPct = (float)xp.GetDouble();
 		if (source.TryGetProperty("copper", out var cProp)) _copper = cProp.GetInt32();
 
@@ -732,7 +833,7 @@ public partial class MainUI
 		AddRow("AC", $"{_ac}");
 		AddRow("Mitigation", $"{_mitigationAC}");
 		AddRow("Avoidance", $"{_avoidanceAC}");
-		AddRow("ATK", "0");
+		AddRow("ATK", $"{_atkBonus}");
 		AddRow("DMG", $"{_statDmg}");
 		AddRow("DLY", $"{_statDly}");
 		AddRow("STR", $"{_statStr}");
@@ -742,11 +843,11 @@ public partial class MainUI
 		AddRow("WIS", $"{_statWis}");
 		AddRow("INT", $"{_statInt}");
 		AddRow("CHA", $"{_statCha}");
-		AddRow("POISON", "0");
-		AddRow("MAGIC", "0");
-		AddRow("DISEASE", "0");
-		AddRow("FIRE", "0");
-		AddRow("COLD", "0");
+		AddRow("POISON", $"{_resistPoison}");
+		AddRow("MAGIC", $"{_resistMagic}");
+		AddRow("DISEASE", $"{_resistDisease}");
+		AddRow("FIRE", $"{_resistFire}");
+		AddRow("COLD", $"{_resistCold}");
 		AddRow("CORRUPT", "0");
 		AddRow("WEIGHT", "0/100");
 
@@ -803,7 +904,7 @@ public partial class MainUI
 		AddRow(L, "Mana", $"{_currentMana}/{_maxMana}");
 		AddRow(L, "Endurance", $"{(int)_currentEndurance}/100");
 		AddRow(L, "Armor Class", $"{_ac}");
-		AddRow(L, "Attack", "0");
+		AddRow(L, "Attack", $"{_atkBonus}");
 		AddRow(L, "Damage", $"{_statDmg}");
 		AddRow(L, "Delay", $"{_statDly}");
 		if (_statOffhandDmg > 0) {
@@ -828,11 +929,11 @@ public partial class MainUI
 		AddRow(L, "Charisma", $"{_statCha}");
 
 		AddHeader(L, "Resists");
-		AddRow(L, "Magic", "0/550");
-		AddRow(L, "Fire", "0/550");
-		AddRow(L, "Cold", "0/550");
-		AddRow(L, "Disease", "0/500");
-		AddRow(L, "Poison", "0/500");
+		AddRow(L, "Magic", $"{_resistMagic}/550");
+		AddRow(L, "Fire", $"{_resistFire}/550");
+		AddRow(L, "Cold", $"{_resistCold}/550");
+		AddRow(L, "Disease", $"{_resistDisease}/500");
+		AddRow(L, "Poison", $"{_resistPoison}/500");
 		AddRow(L, "Corruption", "0/500");
 
 		L.Pop(); // table
@@ -872,9 +973,9 @@ public partial class MainUI
 			AddRow(R, "Tiger Claw", "0/100");
 
 			AddHeader(R, "Vision");
-			AddRow(R, "Ultravision", "No");
-			AddRow(R, "Infravision", "No");
-			AddRow(R, "See Invisible", "No");
+			AddRow(R, "Ultravision", _hasUltravision ? "Yes" : "No");
+			AddRow(R, "Infravision", _hasInfravision ? "Yes" : "No");
+			AddRow(R, "See Invisible", _hasSeeInvis ? "Yes" : "No");
 
 			R.Pop(); // table
 		}

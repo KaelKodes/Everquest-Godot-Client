@@ -158,12 +158,13 @@ public partial class MainUI
 	/// </summary>
 	private void EnsureCompanionWindow()
 	{
+		EnsurePetInventoryWindow();
 		if (_companionWindow != null && IsInstanceValid(_companionWindow)) return;
 
 		_companionWindow = new Window();
 		_companionWindow.Name = "CompanionWindow";
 		_companionWindow.Title = "Companion";
-		_companionWindow.Size = new Vector2I(260, 280);
+		_companionWindow.Size = new Vector2I(360, 320);
 		_companionWindow.Position = new Vector2I(10, 380);
 		_companionWindow.Visible = false;
 		_companionWindow.AlwaysOnTop = true;
@@ -178,53 +179,72 @@ public partial class MainUI
 		panelStyle.BorderWidthLeft = panelStyle.BorderWidthTop = panelStyle.BorderWidthRight = panelStyle.BorderWidthBottom = 1;
 		panelStyle.BorderColor = new Color(0.5f, 0.45f, 0.2f, 0.8f);
 		panelStyle.ContentMarginLeft = panelStyle.ContentMarginRight = 10;
-		panelStyle.ContentMarginTop = panelStyle.ContentMarginBottom = 8;
+		panelStyle.ContentMarginTop = panelStyle.ContentMarginBottom = 10;
 		panel.AddThemeStyleboxOverride("panel", panelStyle);
 		panel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 		_companionWindow.AddChild(panel);
 
-		var vbox = new VBoxContainer();
-		vbox.AddThemeConstantOverride("separation", 6);
-		panel.AddChild(vbox);
+		var mainHBox = new HBoxContainer();
+		mainHBox.AddThemeConstantOverride("separation", 10);
+		panel.AddChild(mainHBox);
 
+		var leftVBox = new VBoxContainer();
+		leftVBox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		leftVBox.AddThemeConstantOverride("separation", 8);
+		mainHBox.AddChild(leftVBox);
+
+		var rightVBox = new VBoxContainer();
+		rightVBox.CustomMinimumSize = new Vector2(100, 0);
+		mainHBox.AddChild(rightVBox);
+
+		// --- Left Column ---
 		// Pet name + level
 		_companionNameLabel = new Label();
-		_companionNameLabel.Text = "No Companion";
-		_companionNameLabel.AddThemeFontSizeOverride("font_size", 14);
-		_companionNameLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.85f, 0.6f));
+		_companionNameLabel.Text = "(Lvl) Name";
+		_companionNameLabel.AddThemeFontSizeOverride("font_size", 16);
+		_companionNameLabel.AddThemeColorOverride("font_color", Colors.White);
 		_companionNameLabel.HorizontalAlignment = HorizontalAlignment.Center;
-		vbox.AddChild(_companionNameLabel);
+		leftVBox.AddChild(_companionNameLabel);
 
-		// HP bar container
-		var hpContainer = new HBoxContainer();
-		hpContainer.AddThemeConstantOverride("separation", 4);
+		// Type / Class
+		_companionTypeClassLabel = new Label();
+		_companionTypeClassLabel.Text = "Type/Class";
+		_companionTypeClassLabel.AddThemeFontSizeOverride("font_size", 14);
+		_companionTypeClassLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.9f, 0.9f));
+		_companionTypeClassLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		leftVBox.AddChild(_companionTypeClassLabel);
 
-		var hpLabelLeft = new Label { Text = "HP" };
-		hpLabelLeft.AddThemeFontSizeOverride("font_size", 11);
-		hpLabelLeft.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.6f));
-		hpContainer.AddChild(hpLabelLeft);
+		// Status Bars Container (VBox)
+		var barsVBox = new VBoxContainer();
+		barsVBox.AddThemeConstantOverride("separation", 2);
+		leftVBox.AddChild(barsVBox);
 
-		_companionHpBar = new ProgressBar();
-		_companionHpBar.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-		_companionHpBar.CustomMinimumSize = new Vector2(120, 18);
-		_companionHpBar.MaxValue = 100;
-		_companionHpBar.Value = 100;
-		_companionHpBar.ShowPercentage = false;
-		var barStyle = new StyleBoxFlat();
-		barStyle.BgColor = new Color(0.15f, 0.5f, 0.15f, 0.9f);
-		_companionHpBar.AddThemeStyleboxOverride("fill", barStyle);
-		var barBg = new StyleBoxFlat();
-		barBg.BgColor = new Color(0.15f, 0.1f, 0.1f, 0.8f);
-		_companionHpBar.AddThemeStyleboxOverride("background", barBg);
-		hpContainer.AddChild(_companionHpBar);
+		// HP Bar (Red)
+		_companionHpBar = CreateCompanionBar(new Color(0.6f, 0.1f, 0.1f, 0.9f), 18);
+		_companionHpLabel = CreateCompanionBarLabel("HP");
+		_companionHpBar.AddChild(_companionHpLabel);
+		barsVBox.AddChild(_companionHpBar);
 
-		_companionHpLabel = new Label { Text = "100%" };
-		_companionHpLabel.AddThemeFontSizeOverride("font_size", 11);
-		_companionHpLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.9f, 0.8f));
-		_companionHpLabel.CustomMinimumSize = new Vector2(36, 0);
-		_companionHpLabel.HorizontalAlignment = HorizontalAlignment.Right;
-		hpContainer.AddChild(_companionHpLabel);
-		vbox.AddChild(hpContainer);
+		// MP Bar (Blue)
+		_companionMpBar = CreateCompanionBar(new Color(0.2f, 0.3f, 0.8f, 0.9f), 18);
+		_companionMpLabel = CreateCompanionBarLabel("MP");
+		_companionMpBar.AddChild(_companionMpLabel);
+		barsVBox.AddChild(_companionMpBar);
+
+		// END Bar (Yellow)
+		_companionEndBar = CreateCompanionBar(new Color(0.8f, 0.8f, 0.2f, 0.9f), 18);
+		_companionEndLabel = CreateCompanionBarLabel("END");
+		_companionEndBar.AddChild(_companionEndLabel);
+		barsVBox.AddChild(_companionEndBar);
+
+		// Hate Bar (Orange) - smaller
+		_companionHateBar = CreateCompanionBar(new Color(0.8f, 0.4f, 0.1f, 0.9f), 12);
+		_companionHateLabel = CreateCompanionBarLabel("Hate");
+		_companionHateLabel.AddThemeFontSizeOverride("font_size", 10);
+		_companionHateLabel.HorizontalAlignment = HorizontalAlignment.Left;
+		_companionHateLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.CenterLeft, Control.LayoutPresetMode.KeepSize, 2);
+		_companionHateBar.AddChild(_companionHateLabel);
+		barsVBox.AddChild(_companionHateBar);
 
 		// State label
 		_companionStateLabel = new Label();
@@ -232,36 +252,109 @@ public partial class MainUI
 		_companionStateLabel.AddThemeFontSizeOverride("font_size", 11);
 		_companionStateLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.75f, 0.9f));
 		_companionStateLabel.HorizontalAlignment = HorizontalAlignment.Center;
-		vbox.AddChild(_companionStateLabel);
+		leftVBox.AddChild(_companionStateLabel);
 
 		// Separator
 		var sep = new HSeparator();
 		sep.CustomMinimumSize = new Vector2(0, 4);
-		vbox.AddChild(sep);
+		leftVBox.AddChild(sep);
 
 		// Command buttons grid (2 columns)
 		var btnGrid = new GridContainer();
 		btnGrid.Columns = 2;
 		btnGrid.AddThemeConstantOverride("h_separation", 4);
 		btnGrid.AddThemeConstantOverride("v_separation", 4);
-		vbox.AddChild(btnGrid);
+		btnGrid.SizeFlagsHorizontal = SizeFlags.ShrinkCenter;
+		leftVBox.AddChild(btnGrid);
 
-		string[] commands = { "Attack", "Follow", "Guard", "Back Off", "Sit", "Taunt", "Health", "Get Lost" };
-		string[] cmdKeys = { "attack", "follow", "guard", "backoff", "sit", "taunt", "health", "getlost" };
+		string[] commands = { "Attack", "Follow", "Guard", "Back Off", "Sit", "Taunt", "Get Lost", "Inventory" };
+		string[] cmdKeys = { "attack", "follow", "guard", "backoff", "sit", "taunt", "getlost", "inventory" };
 
 		for (int i = 0; i < commands.Length; i++)
 		{
 			var btn = new Button();
 			btn.Text = commands[i];
-			btn.CustomMinimumSize = new Vector2(110, 28);
-			btn.AddThemeFontSizeOverride("font_size", 12);
+			btn.CustomMinimumSize = new Vector2(100, 28);
+			btn.AddThemeFontSizeOverride("font_size", 13);
 			string key = cmdKeys[i];
+			if (key == "getlost") _companionGetLostBtn = btn;
 			btn.Pressed += () =>
 			{
-				_client.SendRaw($"{{\"type\": \"PET_COMMAND\", \"command\": \"{key}\"}}");
+				if (key == "inventory") {
+					if (_petInventoryWindow != null) _petInventoryWindow.Visible = !_petInventoryWindow.Visible;
+				} else {
+					_client.SendRaw($"{{\"type\": \"PET_COMMAND\", \"command\": \"{key}\"}}");
+				}
 			};
 			btnGrid.AddChild(btn);
 		}
+
+		// --- Right Column (Buffs) ---
+		var buffGrid = new GridContainer();
+		buffGrid.Columns = 3;
+		buffGrid.AddThemeConstantOverride("h_separation", 2);
+		buffGrid.AddThemeConstantOverride("v_separation", 2);
+		rightVBox.AddChild(buffGrid);
+
+		for (int i = 0; i < 24; i++)
+		{
+			var buffRect = new TextureRect();
+			buffRect.CustomMinimumSize = new Vector2(30, 30);
+			buffRect.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+			
+			// Give it a background panel
+			var bg = new Panel();
+			bg.ShowBehindParent = true;
+			bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+			var style = new StyleBoxFlat();
+			style.BgColor = new Color(0.1f, 0.1f, 0.1f, 0.5f);
+			style.BorderColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+			style.BorderWidthBottom = 1; style.BorderWidthTop = 1; style.BorderWidthLeft = 1; style.BorderWidthRight = 1;
+			bg.AddThemeStyleboxOverride("panel", style);
+			buffRect.AddChild(bg);
+			
+			buffGrid.AddChild(buffRect);
+			_companionBuffIcons[i] = buffRect;
+		}
+	}
+
+	private ProgressBar CreateCompanionBar(Color color, int height)
+	{
+		var bar = new ProgressBar();
+		bar.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		bar.CustomMinimumSize = new Vector2(0, height);
+		bar.MaxValue = 100;
+		bar.Value = 100;
+		bar.ShowPercentage = false;
+		
+		var barStyle = new StyleBoxFlat();
+		barStyle.BgColor = color;
+		barStyle.BorderWidthBottom = 1; barStyle.BorderWidthTop = 1; barStyle.BorderWidthLeft = 1; barStyle.BorderWidthRight = 1;
+		barStyle.BorderColor = new Color(0.8f, 0.8f, 0.8f, 0.8f);
+		barStyle.CornerRadiusTopLeft = 2; barStyle.CornerRadiusTopRight = 2; barStyle.CornerRadiusBottomLeft = 2; barStyle.CornerRadiusBottomRight = 2;
+		bar.AddThemeStyleboxOverride("fill", barStyle);
+		
+		var barBg = new StyleBoxFlat();
+		barBg.BgColor = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+		barBg.BorderWidthBottom = 1; barBg.BorderWidthTop = 1; barBg.BorderWidthLeft = 1; barBg.BorderWidthRight = 1;
+		barBg.BorderColor = new Color(0.8f, 0.8f, 0.8f, 0.8f);
+		barBg.CornerRadiusTopLeft = 2; barBg.CornerRadiusTopRight = 2; barBg.CornerRadiusBottomLeft = 2; barBg.CornerRadiusBottomRight = 2;
+		bar.AddThemeStyleboxOverride("background", barBg);
+		
+		return bar;
+	}
+
+	private Label CreateCompanionBarLabel(string text)
+	{
+		var lbl = new Label { Text = text };
+		lbl.AddThemeFontSizeOverride("font_size", 12);
+		lbl.AddThemeColorOverride("font_color", Colors.White);
+		lbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+		lbl.AddThemeConstantOverride("outline_size", 4);
+		lbl.SetAnchorsPreset(Control.LayoutPreset.Center);
+		lbl.HorizontalAlignment = HorizontalAlignment.Center;
+		lbl.VerticalAlignment = VerticalAlignment.Center;
+		return lbl;
 	}
 
 	// â”€â”€â”€ Buff System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -472,6 +565,7 @@ public partial class MainUI
 				_targetHpBar.Value = Math.Max(0, _currentHp);
 				double pct = _maxHp > 0 ? (_currentHp / (double)_maxHp * 100) : 100;
 				_targetHpLabel.Text = $"{pct:F0}%";
+				_targetsTargetWindow.Visible = false;
 			}
 			else if (character.TryGetProperty("target", out var targetProp) && targetProp.ValueKind != JsonValueKind.Null)
 			{
@@ -488,6 +582,25 @@ public partial class MainUI
 				double pct = targetMaxHp > 0 ? (targetHp / targetMaxHp * 100) : 0;
 				_targetHpLabel.Text = $"{pct:F0}%";
 
+				// ── Target's Target ──
+				if (targetProp.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
+				{
+					_targetsTargetWindow.Visible = true;
+					string ttName = ttProp.GetProperty("name").GetString();
+					double ttHp = ttProp.GetProperty("hp").GetDouble();
+					double ttMaxHp = ttProp.GetProperty("maxHp").GetDouble();
+
+					_targetsTargetNameLabel.Text = ttName;
+					_targetsTargetHpBar.MaxValue = ttMaxHp;
+					_targetsTargetHpBar.Value = Math.Max(0, ttHp);
+					double ttPct = ttMaxHp > 0 ? (ttHp / ttMaxHp * 100) : 0;
+					_targetsTargetHpLabel.Text = $"{ttPct:F0}%";
+				}
+				else
+				{
+					_targetsTargetWindow.Visible = false;
+				}
+
 				// Give the target a ChaseAI instruction in the 3D world ONLY if we are in combat
 				bool inCombat = character.TryGetProperty("inCombat", out var icProp) && icProp.GetBoolean();
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
@@ -502,6 +615,7 @@ public partial class MainUI
 			else
 			{
 				_targetWindow.Visible = false;
+				_targetsTargetWindow.Visible = false;
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 				if (wm != null) wm.SetCombatTarget(null);
 			}
@@ -517,18 +631,54 @@ public partial class MainUI
 				string petState = petProp.TryGetProperty("state", out var psProp) ? psProp.GetString() : "follow";
 				bool petTaunting = petProp.TryGetProperty("taunting", out var ptProp) && ptProp.GetBoolean();
 				bool isCharmed = petProp.TryGetProperty("isCharmed", out var pcProp) && pcProp.GetBoolean();
+				bool isMercenary = petProp.TryGetProperty("isMercenary", out var imProp) && imProp.GetBoolean();
 				string petTarget = petProp.TryGetProperty("target", out var pttProp) && pttProp.ValueKind != JsonValueKind.Null ? pttProp.GetString() : null;
 
 				EnsureCompanionWindow();
 				if (_companionWindow != null)
 				{
 					_companionWindow.Visible = true;
-					string typeTag = isCharmed ? "[Charmed]" : "[Pet]";
-					_companionNameLabel.Text = $"{petName} Lv{petLevel} {typeTag}";
+					string typeTag = isMercenary ? "Mercenary" : (isCharmed ? "Charmed" : "Pet");
+					
+					string raceStr = petProp.TryGetProperty("raceStr", out var pRace) ? pRace.GetString() : "Human";
+					string classStr = petProp.TryGetProperty("classStr", out var pClass) ? pClass.GetString() : "Warrior";
+
+					_companionNameLabel.Text = $"(Lv{petLevel}) {petName}";
+					
+					if (isMercenary) {
+						_companionTypeClassLabel.Text = $"{raceStr}/{classStr}";
+						if (_companionGetLostBtn != null) _companionGetLostBtn.Text = "Suspend";
+					} else {
+						_companionTypeClassLabel.Text = $"{typeTag}";
+						if (_companionGetLostBtn != null) _companionGetLostBtn.Text = "Get Lost";
+					}
+
+					// HP
 					_companionHpBar.MaxValue = petMaxHp;
 					_companionHpBar.Value = Math.Max(0, petHp);
 					double petPct = petMaxHp > 0 ? ((double)petHp / petMaxHp * 100) : 0;
 					_companionHpLabel.Text = $"{petPct:F0}%";
+
+					// MP
+					int petMana = petProp.TryGetProperty("mana", out var manaProp) ? (int)manaProp.GetDouble() : 0;
+					int petMaxMana = petProp.TryGetProperty("maxMana", out var maxManaProp) ? (int)maxManaProp.GetDouble() : 100;
+					_companionMpBar.MaxValue = petMaxMana > 0 ? petMaxMana : 100;
+					_companionMpBar.Value = Math.Max(0, petMana);
+					_companionMpLabel.Text = petMaxMana > 0 ? $"{((double)petMana / petMaxMana * 100):F0}%" : "0%";
+
+					// END
+					int petEnd = petProp.TryGetProperty("endurance", out var endProp) ? (int)endProp.GetDouble() : 0;
+					int petMaxEnd = petProp.TryGetProperty("maxEndurance", out var maxEndProp) ? (int)maxEndProp.GetDouble() : 100;
+					_companionEndBar.MaxValue = petMaxEnd > 0 ? petMaxEnd : 100;
+					_companionEndBar.Value = Math.Max(0, petEnd);
+					_companionEndLabel.Text = petMaxEnd > 0 ? $"{((double)petEnd / petMaxEnd * 100):F0}%" : "0%";
+
+					// Hate
+					int petHate = petProp.TryGetProperty("hate", out var hateProp) ? (int)hateProp.GetDouble() : 0;
+					_companionHateBar.MaxValue = Math.Max(100, petHate * 1.5); // Just a rough scale
+					_companionHateBar.Value = petHate;
+					_companionHateLabel.Text = $"Hate: {petHate}";
+
 					string stateDisplay = petState switch {
 						"follow" => "Following",
 						"guard" => "Guarding",
@@ -538,6 +688,32 @@ public partial class MainUI
 					if (petTarget != null) stateDisplay += $" → {petTarget}";
 					if (petTaunting) stateDisplay += " [Taunt]";
 					_companionStateLabel.Text = stateDisplay;
+
+					// Buffs
+					if (petProp.TryGetProperty("buffs", out var petBuffs) && petBuffs.ValueKind == JsonValueKind.Array)
+					{
+						int bCount = petBuffs.GetArrayLength();
+						for (int i = 0; i < 24; i++)
+						{
+							if (i < bCount)
+							{
+								var buffObj = petBuffs[i];
+								int iconId = buffObj.TryGetProperty("icon", out var iProp) ? iProp.GetInt32() : 0;
+								_companionBuffIcons[i].Texture = IconManager.Instance.GetSpellIcon(iconId);
+								_companionBuffIcons[i].Visible = true;
+								_companionBuffIcons[i].TooltipText = buffObj.GetProperty("name").GetString();
+							}
+							else
+							{
+								_companionBuffIcons[i].Texture = null;
+								_companionBuffIcons[i].TooltipText = "";
+							}
+						}
+					}
+					else
+					{
+						for (int i = 0; i < 24; i++) { _companionBuffIcons[i].Texture = null; _companionBuffIcons[i].TooltipText = ""; }
+					}
 				}
 			}
 			else

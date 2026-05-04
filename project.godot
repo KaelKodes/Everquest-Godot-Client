@@ -94,3 +94,8 @@ target_prev_friendly={
 
 rendering_device/d3d12/max_resource_descriptors=524288
 rendering_device/driver.windows="d3d12"
+
+[audio]
+
+driver/driver="XAudio2"
+

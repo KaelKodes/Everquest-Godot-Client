@@ -603,14 +603,6 @@ public partial class MainMenu : Control
         _enterWorldButton.Pressed += OnEnterWorldPressed;
         leftCol.AddChild(_enterWorldButton);
 
-        leftCol.AddChild(new HSeparator());
-
-        _quitButton = new Button { Text = "Quit" };
-        _quitButton.CustomMinimumSize = new Vector2(0, 36);
-        _quitButton.AddThemeFontSizeOverride("font_size", 14);
-        _quitButton.Pressed += () => GetTree().Quit();
-        leftCol.AddChild(_quitButton);
-
         hSplit.AddChild(leftCol);
 
         // ════════ RIGHT COLUMN: 3D Preview ════════
@@ -664,6 +656,15 @@ public partial class MainMenu : Control
         _charSelectPreviewContainer.AddChild(_charSelectPreviewViewport);
         bgPanel.AddChild(_charSelectPreviewContainer);
         rightCol.AddChild(bgPanel);
+
+        var quitRow = new HBoxContainer();
+        quitRow.Alignment = BoxContainer.AlignmentMode.End;
+        _quitButton = new Button { Text = "Quit" };
+        _quitButton.CustomMinimumSize = new Vector2(100, 36);
+        _quitButton.AddThemeFontSizeOverride("font_size", 14);
+        _quitButton.Pressed += () => GetTree().Quit();
+        quitRow.AddChild(_quitButton);
+        rightCol.AddChild(quitRow);
 
         hSplit.AddChild(rightCol);
 

@@ -1995,6 +1995,31 @@ public partial class MainUI : Control
 					}
 					break;
 				}
+				case "despawn":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string entityId = root.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+					if (!string.IsNullOrEmpty(entityId))
+					{
+						var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+						if (wm != null) wm.RemoveEntity(entityId);
+					}
+					break;
+				}
+				case "spawn":
+				{
+					// If the entity wasn't in ZONE_STATE, the server sends a generic "spawn".
+					// Currently, gameEngine.js sends full entity state in "spawn"
+					using var doc = JsonDocument.Parse(json);
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) {
+						var singleEntityArrayDoc = JsonDocument.Parse("{\"entities\":[" + json + "]}");
+						var entitiesArray = singleEntityArrayDoc.RootElement.GetProperty("entities");
+						wm.SyncLiveMobs(entitiesArray);
+					}
+					break;
+				}
 				case "TARGET_UPDATE":
 				{
 					using var doc = JsonDocument.Parse(json);

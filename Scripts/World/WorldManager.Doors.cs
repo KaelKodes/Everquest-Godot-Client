@@ -46,8 +46,9 @@ public partial class WorldManager : Node3D
 
             var doorMeshNode = scene.Instantiate<Node3D>();
             
-            // Invisible barrier doors (opentype >= 54) must have collision but no visible mesh
-            if (opentype >= 54)
+            // Invisible barrier doors usually have specific opentypes (53, 54, etc)
+            // Elevators are 58, 59, so >= 54 is too broad and makes lifts invisible!
+            if (opentype == 53 || opentype == 54)
             {
                 doorMeshNode.Visible = false;
             }
@@ -72,7 +73,17 @@ public partial class WorldManager : Node3D
             doorEntity.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
 
             // Is this an elevator? If so, we need an AnimatableBody3D wrapper inside to carry players
-            bool isElevator = modelName.ToUpper().Contains("LEVATOR");
+            string upperName = modelName.ToUpper();
+            
+            // Explicitly exclude known buttons/posts like fele1, fele2
+            bool isElevator = (upperName.Contains("LEVATOR") || upperName.Contains("ELESTEP") || upperName.Contains("LIFT") || upperName.Contains("PLATFORM"));
+            
+            // Buttons that call the elevator often share the name (e.g. lift_btn) but should NOT be unclickable!
+            if (upperName.Contains("BTN") || upperName.Contains("BUTTON") || upperName.Contains("FELE"))
+            {
+                isElevator = false;
+            }
+            
             AnimatableBody3D platformBody = null;
             
             if (isElevator)
@@ -103,12 +114,7 @@ public partial class WorldManager : Node3D
             bool invertState = element.TryGetProperty("invert_state", out var inv) && inv.GetInt32() == 1;
             doorEntity.Setup(modelName, doorId, localDoorId, triggerDoor, doorAabb, doorParam, invertState, opentype, platformBody);
             
-            // Lifts shouldn't be targetable themselves
-            if (isElevator)
-            {
-                doorEntity.IsTargetable = false;
-                SetPickableRecursive(doorMeshNode, false);
-            }
+            // Lifts can be targetable, because in Kelethin, the lift IS the button.
 
             // Connect input events from generated collision shapes to the DoorEntity
             ConnectDoorInputsRecursive(platformBody != null ? platformBody : doorMeshNode, doorEntity);

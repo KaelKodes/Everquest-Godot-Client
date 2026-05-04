@@ -184,8 +184,9 @@ public partial class ZoneObjectPlacer : RefCounted
                 return null;
             }
 
+            bool forceSolid = modelName.ToLower().Contains("step") || modelName.ToLower().Contains("ele") || modelName.ToLower().Contains("ramp") || modelName.ToLower().Contains("plat") || modelName.ToLower().Contains("lift") || modelName.ToLower().Contains("bridge");
             // Generate collision so that objects (e.g. ramps) are solid
-            GenerateCollisionRecursive(scene);
+            GenerateCollisionRecursive(scene, scene, forceSolid);
 
             // Setup animated materials if the animator is available
             if (Animator != null)
@@ -406,7 +407,7 @@ public partial class ZoneObjectPlacer : RefCounted
         return container;
     }
 
-    private void GenerateCollisionRecursive(Node node)
+    private void GenerateCollisionRecursive(Node node, Node root, bool forceSolid = false)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
@@ -430,8 +431,7 @@ public partial class ZoneObjectPlacer : RefCounted
                     {
                         var mat = meshInst.GetActiveMaterial(i);
                         bool isNoCollide = false;
-
-                        if (mat != null)
+                        if (mat != null && !forceSolid)
                         {
                             var stdMat = mat as BaseMaterial3D;
                             if (stdMat != null && stdMat.Transparency != BaseMaterial3D.TransparencyEnum.Disabled)
@@ -441,7 +441,7 @@ public partial class ZoneObjectPlacer : RefCounted
                             else if (!string.IsNullOrEmpty(mat.ResourceName))
                             {
                                 string n = mat.ResourceName.ToLower();
-                                if (n.Contains("invisible") || n.Contains("door") || n == "inv" || n.StartsWith("inv_") || n.Contains("collide") || n.Contains("boundary") || n.Contains("vine") || n.Contains("leaf") || n.Contains("plant") || n.Contains("fern") || n.Contains("bush") || n.Contains("web"))
+                                if (n.Contains("invisible") || n == "inv" || n.StartsWith("inv_") || n.Contains("collide") || n.Contains("boundary") || n.Contains("vine") || n.Contains("leaf") || n.Contains("plant") || n.Contains("fern") || n.Contains("bush") || n.Contains("web") || n.Contains("door"))
                                 {
                                     isNoCollide = true;
                                 }
@@ -480,8 +480,12 @@ public partial class ZoneObjectPlacer : RefCounted
                         colShape.Shape = concaveShape;
 
                         var staticBody = new StaticBody3D { InputRayPickable = false };
-                        staticBody.AddChild(colShape);
                         meshInst.AddChild(staticBody);
+                        staticBody.AddChild(colShape);
+                        
+                        // Critical for PackedScene.Pack() to keep these nodes!
+                        staticBody.Owner = root;
+                        colShape.Owner = root;
                     }
                 }
                 else
@@ -489,9 +493,13 @@ public partial class ZoneObjectPlacer : RefCounted
                     meshInst.CreateTrimeshCollision();
                     foreach (Node child in meshInst.GetChildren())
                     {
-                        if (child is StaticBody3D body)
+                        if (child is StaticBody3D body && body.Owner == null)
                         {
+                            body.Owner = root;
                             body.InputRayPickable = false;
+                            foreach (Node shape in body.GetChildren()) {
+                                shape.Owner = root;
+                            }
                         }
                     }
                 }
@@ -499,7 +507,7 @@ public partial class ZoneObjectPlacer : RefCounted
         }
         foreach (Node child in node.GetChildren())
         {
-            GenerateCollisionRecursive(child);
+            GenerateCollisionRecursive(child, root, forceSolid);
         }
     }
     public Dictionary<string, (string[] frames, float delay)> ParseMaterialList(string file)

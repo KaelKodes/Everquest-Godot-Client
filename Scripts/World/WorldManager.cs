@@ -43,12 +43,13 @@ public partial class WorldManager : Node3D
     [Signal] public delegate void TargetClearedEventHandler();
     
     // Server Syncing
-    [Signal] public delegate void PlayerMovedEventHandler(float x, float y, float z);
+    [Signal] public delegate void PlayerMovedEventHandler(float x, float y, float z, float heading);
     [Signal] public delegate void ZoneLineCrossedEventHandler(string targetZoneId, float targetX, float targetY, float targetZ);
     [Signal] public delegate void SneakToggledEventHandler(bool isSneaking);
     [Signal] public delegate void HideToggledEventHandler(bool isHiding);
     [Signal] public delegate void SyncProgressEventHandler(int current, int total);
     private Vector3 _lastSentPos = Vector3.Zero;
+    private float _lastSentHeading = 0f;
     private double _posSyncTimer = 0.0;
     private Node3D _boundariesContainer;
     private bool _isAutoRunning = false;
@@ -61,8 +62,9 @@ public partial class WorldManager : Node3D
     private bool _isCrouching = false;
     private bool _playerInCombat = false;
     private double _zoneImmunityTimer = 0.0; // Seconds of immunity after teleport
-    private float _teleportFreezeTimer = 0f;
     private bool _teleportSettling = false; // Freeze player physics until terrain collision is confirmed
+    private bool _loadingInitialZone = false; // Flag to distinguish initial login from in-game teleports
+    private double _teleportSafetyTimer = 0.0; // Emergency release if UI fails to signal
     private Node3D _zoneGeometryContainer;
     private Node3D _zoneObjectsContainer; // Placed zone objects (trees, buildings, etc.)
     private ZoneObjectPlacer _objectPlacer;
@@ -84,7 +86,7 @@ public partial class WorldManager : Node3D
     public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget as Node) ? ((Node)_currentTarget).Name : null;
 
     // Range constants (in world units)
-    public const float MELEE_RANGE = 5f;
+    public const float MELEE_RANGE = 9.0f;
     public const float BOW_RANGE = 30f;
     public const float SPELL_RANGE_DEFAULT = 20f;
 
@@ -257,10 +259,15 @@ public partial class WorldManager : Node3D
     public EntityCapsule GetEntityById(string id)
     {
         if (string.IsNullOrEmpty(id)) return null;
-        if (id == "You" || id == "player_self" || (_playerCapsule != null && id == $"player_{_playerCapsule.Name}")) 
+
+        // Check if this matches the local player via common aliases or the specific server-assigned player ID
+        string selfPlayerId = $"player_{GameClient.Instance.CharacterId}";
+        if (id == "You" || id == "player_self" || id == selfPlayerId || (_playerCapsule != null && id == $"player_{_playerCapsule.Name}")) 
             return _playerCapsule;
+
         if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule cap)
             return cap;
+
         return null;
     }
 
@@ -734,17 +741,24 @@ public partial class WorldManager : Node3D
         // zone geometry collision shapes are registered in the physics engine.
         if (_teleportSettling && _playerCapsule != null)
         {
-            _teleportFreezeTimer -= (float)delta;
-            if (_teleportFreezeTimer <= 0)
+            _teleportSafetyTimer += delta;
+            if (_teleportSafetyTimer > 8.0) // 8 second safety timeout
             {
-                _teleportSettling = false;
-                GD.Print("[WORLD] Teleport settle complete — releasing player.");
+                GD.Print("[WORLD] TELEPORT SAFETY TIMEOUT: Forcing unfreeze.");
+                FinalizeTeleport();
+                return;
             }
-            else
-            {
-                _playerCapsule.Velocity = Vector3.Zero;
-                return; // Skip all movement/gravity until terrain is confirmed
-            }
+
+            // Keep player frozen at current placement until FinalizeTeleport is called by UI.
+            _playerCapsule.Velocity = Vector3.Zero;
+            _lastSentPos = _playerCapsule.GlobalPosition; 
+            
+            // Force camera to track the frozen player so they remain visible
+            UpdateCamera();
+
+            // BLOCK INPUT: Prevent movement inputs from being processed while settling.
+            // This stops the player from "walking under the world" during the load.
+            return;
         }
 
         var velocity = _playerCapsule.Velocity;
@@ -964,10 +978,15 @@ public partial class WorldManager : Node3D
         _posSyncTimer += delta;
         if (_posSyncTimer >= 1.0)
         {
-            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f)
+            float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
+            if (currentHeading < 0) currentHeading += 512.0f;
+
+            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f || Mathf.Abs(currentHeading - _lastSentHeading) > 1.0f)
             {
                 _lastSentPos = _playerCapsule.GlobalPosition;
-                EmitSignal(SignalName.PlayerMoved, _lastSentPos.X, _lastSentPos.Y, _lastSentPos.Z);
+                _lastSentHeading = currentHeading;
+                // EQ coords: EQ.X = -Godot.X, EQ.Y = -Godot.Z, EQ.Z = Godot.Y (feet)
+                EmitSignal(SignalName.PlayerMoved, -_lastSentPos.X, -_lastSentPos.Z, _lastSentPos.Y, currentHeading);
             }
             _posSyncTimer = 0.0;
         }

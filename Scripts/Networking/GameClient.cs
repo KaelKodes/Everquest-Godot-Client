@@ -48,6 +48,7 @@ public partial class GameClient : Node
 
     public static GameClient Instance { get; private set; }
     
+    public int CharacterId { get; private set; } = -1;
     public string LastStatusPayload { get; private set; } = "";
     public string LastInventoryPayload { get; private set; } = "";
     public string LastSpellbookPayload { get; private set; } = "";
@@ -103,7 +104,21 @@ public partial class GameClient : Node
             {
                 _connected = true;
                 GD.Print("[NET] WebSocket Connected!");
-                EmitSignal(SignalName.Connected);
+                
+                if (!_handoffInProgress)
+                {
+                    EmitSignal(SignalName.Connected);
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(_handoffToken))
+                    {
+                        GD.Print("[NET] Sending TOKEN_LOGIN...");
+                        SendRaw($"{{\"type\": \"TOKEN_LOGIN\", \"token\": \"{_handoffToken}\"}}");
+                        _handoffToken = null;
+                    }
+                    _handoffInProgress = false;
+                }
             }
 
             while (_socket.GetAvailablePacketCount() > 0)
@@ -119,11 +134,23 @@ public partial class GameClient : Node
             {
                 _connected = false;
                 GD.Print("[NET] WebSocket Closed.");
-                EmitSignal(SignalName.Disconnected);
-                GetTree().CreateTimer(5.0).Timeout += ConnectToServer;
+                if (_isHandoff)
+                {
+                    _isHandoff = false;
+                    ConnectToServer();
+                }
+                else
+                {
+                    EmitSignal(SignalName.Disconnected);
+                    GetTree().CreateTimer(5.0).Timeout += ConnectToServer;
+                }
             }
         }
     }
+
+    private string _handoffToken = null;
+    private bool _isHandoff = false;
+    private bool _handoffInProgress = false;
 
     private void HandleMessage(string message)
     {
@@ -134,6 +161,17 @@ public partial class GameClient : Node
             string type = root.GetProperty("type").GetString();
 
             EmitSignal(SignalName.MessageReceived, type, message);
+
+            if (type == "HANDOFF")
+            {
+                _handoffToken = root.GetProperty("token").GetString();
+                _url = root.GetProperty("url").GetString();
+                GD.Print($"[NET] Received HANDOFF to {_url}");
+                _isHandoff = true;
+                _handoffInProgress = true;
+                _socket.Close();
+                return;
+            }
 
             switch (type)
             {
@@ -153,10 +191,21 @@ public partial class GameClient : Node
                     EmitSignal(SignalName.CharCreateDataReceived, message);
                     break;
                 case "LOGIN_OK":
+                {
                     LastStatusPayload = message;
+                    if (root.TryGetProperty("character", out var charProp) && 
+                        charProp.TryGetProperty("id", out var idProp))
+                    {
+                        CharacterId = idProp.GetInt32();
+                        GD.Print($"[NET] Logged in as Character ID: {CharacterId}");
+                    }
                     EmitSignal(SignalName.LoginOkReceived, message);
                     EmitSignal(SignalName.CharacterStatusReceived, message);
                     EmitSignal(SignalName.InventoryUpdated, message);
+                    break;
+                }
+                case "PING":
+                    SendRaw("{\"type\": \"PONG\"}");
                     break;
                 case "STATUS":
                     LastStatusPayload = message;

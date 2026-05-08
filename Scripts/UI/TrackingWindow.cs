@@ -19,6 +19,7 @@ public partial class TrackingWindow : Window
 
     // Stored list of raw tracking data
     private List<JsonElement> _trackedEntities = new List<JsonElement>();
+    private Vector2I _lastPos;
 
     public override void _Ready()
     {
@@ -27,10 +28,19 @@ public partial class TrackingWindow : Window
         MinSize = new Vector2I(200, 300);
         Exclusive = false;
         Unresizable = false;
+        Transient = true; 
+        AlwaysOnTop = true;
+        WrapControls = true;
+        
+        LoadPosition();
+        _lastPos = Position;
 
         var panel = new PanelContainer();
         panel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         AddChild(panel);
+
+        // Save position when resized
+        SizeChanged += SavePosition;
 
         var margin = new MarginContainer();
         margin.AddThemeConstantOverride("margin_left", 4);
@@ -123,6 +133,15 @@ public partial class TrackingWindow : Window
         AddChild(timer);
     }
 
+    public override void _Process(double delta)
+    {
+        if (Position != _lastPos)
+        {
+            _lastPos = Position;
+            SavePosition();
+        }
+    }
+
     public void UpdateList(JsonElement targetsArray)
     {
         _trackedEntities.Clear();
@@ -194,8 +213,32 @@ public partial class TrackingWindow : Window
         }
     }
 
+    private void SavePosition()
+    {
+        if (!IsInstanceValid(this)) return;
+        var config = new ConfigFile();
+        config.Load("user://ui_layout.cfg");
+        config.SetValue("TrackingWindow", "position", Position);
+        config.SetValue("TrackingWindow", "size", Size);
+        config.Save("user://ui_layout.cfg");
+    }
+
+    private void LoadPosition()
+    {
+        var config = new ConfigFile();
+        if (config.Load("user://ui_layout.cfg") == Error.Ok)
+        {
+            Position = (Vector2I)config.GetValue("TrackingWindow", "position", Position);
+            Size = (Vector2I)config.GetValue("TrackingWindow", "size", Size);
+        }
+    }
+
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+        {
+            SavePosition();
+        }
         base.Dispose(disposing);
         if (disposing && IsInstanceValid(MainUI.Instance))
         {

@@ -15,6 +15,10 @@ run/main_scene="res://Scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
+[audio]
+
+driver/driver="XAudio2"
+
 [autoload]
 
 GameClient="*res://Scripts/Networking/GameClient.cs"
@@ -94,8 +98,3 @@ target_prev_friendly={
 
 rendering_device/d3d12/max_resource_descriptors=524288
 rendering_device/driver.windows="d3d12"
-
-[audio]
-
-driver/driver="XAudio2"
-

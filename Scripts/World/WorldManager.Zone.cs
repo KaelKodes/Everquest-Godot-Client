@@ -7,9 +7,54 @@ public partial class WorldManager : Node3D
     public void FreezeForZoneLoad()
     {
         _teleportSettling = true;
+        _loadingInitialZone = true;
+        _teleportSafetyTimer = 0.0;
         if (_playerCapsule != null)
             _playerCapsule.Velocity = Vector3.Zero;
         GD.Print("[WORLD] Player frozen for zone load.");
+    }
+
+    public void FinalizeTeleport()
+    {
+        _loadingInitialZone = false;
+        if (_playerCapsule == null)
+        {
+            _teleportSettling = false;
+            return;
+        }
+
+        // Perform one final aggressive snap to floor
+        var spaceState = GetWorld3D().DirectSpaceState;
+        // Search from 150 units above to 150 units below to catch all elevation discrepancies
+        var from = _playerCapsule.GlobalPosition + new Vector3(0, 150, 0);
+        var to = _playerCapsule.GlobalPosition + new Vector3(0, -150, 0); 
+        var query = PhysicsRayQueryParameters3D.Create(from, to);
+        query.CollisionMask = 1;
+        
+        var result = spaceState.IntersectRay(query);
+        if (result.Count > 0)
+        {
+            Vector3 hitPos = (Vector3)result["position"];
+            _playerCapsule.GlobalPosition = new Vector3(_playerCapsule.GlobalPosition.X, hitPos.Y + 0.1f, _playerCapsule.GlobalPosition.Z);
+            _lastSentPos = _playerCapsule.GlobalPosition; // Update last sent to prevent immediate sync back of old height
+            GD.Print($"[WORLD] Finalized teleport snap to {hitPos.Y:F2}");
+            
+            // Lock the player to this height for the next few frames to resist network jitters
+            _playerCapsule.Velocity = Vector3.Zero;
+
+            // Immediately inform server of final snapped height (EQ.Z = Godot.Y)
+            float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
+            if (currentHeading < 0) currentHeading += 512.0f;
+            EmitSignal(SignalName.PlayerMoved, -_playerCapsule.GlobalPosition.X, -_playerCapsule.GlobalPosition.Z, _playerCapsule.GlobalPosition.Y, currentHeading);
+        }
+        else
+        {
+            GD.PrintErr("[WORLD] FinalizeTeleport: No floor detected! Releasing player at current height.");
+        }
+
+        _teleportSettling = false;
+        _teleportSafetyTimer = 0.0;
+        _playerCapsule.Velocity = Vector3.Zero;
     }
     public void ClearWorld()
     {

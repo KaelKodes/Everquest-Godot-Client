@@ -538,6 +538,69 @@ public partial class MainUI
 				}
 				break;
 
+			case "/cast":
+				if (string.IsNullOrEmpty(body)) { Log("SYSTEM", "Usage: /cast <slot 1-8>"); break; }
+				if (int.TryParse(body, out int slot))
+				{
+					_client.SendRaw($"{{\"type\": \"CAST_SPELL\", \"slot\": {slot - 1}}}");
+				}
+				break;
+			case "/resetcastbar":
+			{
+				if (_castBarPanel != null)
+				{
+					_castBarPanel.AnchorLeft = 0.5f;
+					_castBarPanel.AnchorRight = 0.5f;
+					_castBarPanel.AnchorTop = 0.55f;
+					_castBarPanel.AnchorBottom = 0.55f;
+					_castBarPanel.OffsetLeft = -100;
+					_castBarPanel.OffsetRight = 100;
+					_castBarPanel.OffsetTop = -15;
+					_castBarPanel.OffsetBottom = 15;
+					_castBarPanel.Show();
+					Log("SYSTEM", "Casting bar has been reset to center screen.");
+				}
+				break;
+			}
+			case "/con":
+			case "/consider":
+				_client.SendRaw("{\"type\": \"CONSIDER\"}");
+				break;
+			case "/sit":
+				_client.SendRaw("{\"type\": \"SIT\"}");
+				break;
+			case "/stand":
+				_client.SendRaw("{\"type\": \"STAND\"}");
+				break;
+			case "/camp":
+				_client.SendRaw("{\"type\": \"CAMP\"}");
+				break;
+			case "/who":
+				_client.SendRaw("{\"type\": \"WHO\"}");
+				break;
+			case "/loc":
+				var wmLoc = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wmLoc != null)
+				{
+					Log("SYSTEM", $"Your location is {wmLoc.PlayerPosition.X:F2}, {wmLoc.PlayerPosition.Z:F2}, {wmLoc.PlayerPosition.Y:F2}");
+				}
+				break;
+			case "/time":
+				_client.SendRaw("{\"type\": \"TIME\"}");
+				break;
+			case "/emote":
+			case "/em":
+			case "/me":
+				if (string.IsNullOrEmpty(body)) { Log("SYSTEM", "Usage: /emote <action>"); break; }
+				_client.SendRaw($"{{\"type\": \"EMOTE\", \"emote\": \"{EscapeJson(body)}\"}}");
+				break;
+			case "/random":
+			case "/roll":
+				int maxRoll = 100;
+				if (!string.IsNullOrEmpty(body) && int.TryParse(body, out int parsedRoll)) maxRoll = parsedRoll;
+				_client.SendRaw($"{{\"type\": \"RANDOM\", \"max\": {maxRoll}}}");
+				break;
+
 			default:
 				_client.SendRaw($"{{\"type\": \"SERVER_COMMAND\", \"command\": \"{EscapeJson(cmd)}\", \"args\": \"{EscapeJson(body)}\"}}");
 				break;

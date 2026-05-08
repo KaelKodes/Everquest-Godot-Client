@@ -29,6 +29,7 @@ public partial class MainUI : Control
 	private Container _buffBar;
 	private Window _songBarWindow;
 	private Container _songBar;
+	private Container _targetBuffBar;
 	private RichTextLabel _combatLog;
 	private Texture2D _spellGemTexture;
 	private Button[] _spellSlotButtons = new Button[8];
@@ -68,7 +69,6 @@ public partial class MainUI : Control
 	private Label _targetNameLabel;
 	private ProgressBar _targetHpBar;
 	private Label _targetHpLabel;
-	private Control _targetBuffBar;
 	
 	// Target's Target Frame
 	private Window _targetsTargetWindow;
@@ -188,6 +188,7 @@ public partial class MainUI : Control
 	public static MainUI Instance { get; private set; }
 	private bool _autoFight = false;
 	private bool _isSitting = false;
+	private bool _isSinging = false;
 	private string _lastPlayerEquipVisuals = "";
 	private bool _isSelfTargeted = false;
 	private Spellbook _spellbookUI;
@@ -681,7 +682,7 @@ public partial class MainUI : Control
 		_targetNameLabel = GetNode<Label>("%TargetName");
 		_targetHpBar = GetNode<ProgressBar>("%TargetHPBar");
 		_targetHpLabel = GetNode<Label>("%TargetHPLabel");
-		_targetBuffBar = GetNode<Control>("%TargetBuffBar");
+		_targetBuffBar = GetNodeOrNull<Container>("%TargetBuffBar");
 
 		// Target's Target Frame
 		_targetsTargetWindow = GetNode<Window>("%TargetsTargetWindow");
@@ -986,6 +987,7 @@ public partial class MainUI : Control
 		_castBarPanel.OffsetRight = 125;
 		_castBarPanel.OffsetTop = -14;
 		_castBarPanel.OffsetBottom = 14;
+		_castBarPanel.ZIndex = 10;
 		_castBarPanel.MouseFilter = Control.MouseFilterEnum.Stop; // Capture clicks for dragging
 
 		// Make cast bar draggable
@@ -1207,10 +1209,10 @@ public partial class MainUI : Control
 		wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 		if (wm != null)
 		{
-			wm.PlayerMoved += (x, y, z) => {
+			wm.PlayerMoved += (x, y, z, heading) => {
 				// Send raw payload to server natively mapping Godot Z to Server Y, negating Godot's axes back to EQ's axes
 				// Godot (-X = East, +Y = Up, -Z = North). EQ (-X = East, +Y = North, +Z = Up).
-				_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {-x}, \"y\": {-z}, \"z\": {y}}}");
+				_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"heading\": {heading}}}");
 			};
 			
 			wm.SneakToggled += (isSneaking) => {
@@ -1225,8 +1227,6 @@ public partial class MainUI : Control
 				if (targetZoneId == _currentZoneId) {
 					// Intra-zone teleport (like Felwithe caster portals)
 					wm.TeleportPlayer(tx, ty, tz);
-					// Inform the server of our new position immediately
-					_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {-tx}, \"y\": {tz}, \"z\": {-ty}}}");
 				} else {
 					_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
 				}
@@ -1606,7 +1606,8 @@ public partial class MainUI : Control
 				bool canCast = _currentMana >= _spells[i].ManaCost 
 					&& _spells[i].CooldownRemaining <= 0
 					&& !_isSitting
-					&& !_isCasting;
+					&& !_isCasting
+					&& !_isSinging;
 				slotBtn.Disabled = !canCast;
 
 				// Show cooldown remaining via a subtle text overlay or just rely on tooltip
@@ -1771,12 +1772,25 @@ public partial class MainUI : Control
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 					if (wm != null)
 					{
-						wm.UpdateEntityEquipVisuals(id, equipVis);
+ 					wm.UpdateEntityEquipVisuals(id, equipVis);
 					}
+					break;
+				}
+				case "SONG_ACTIVE":
+				{
+					GD.Print($"[UI] Received SONG_ACTIVE: {json}");
+					_isSinging = true;
+					break;
+				}
+				case "SONG_STOP":
+				{
+					GD.Print($"[UI] Received SONG_STOP");
+					_isSinging = false;
 					break;
 				}
 				case "CAST_START":
 				{
+					GD.Print($"[UI] Received CAST_START: {json}");
 					using var doc = JsonDocument.Parse(json);
 					var root = doc.RootElement;
 					_castingSpellName = root.TryGetProperty("spellName", out var n) ? n.GetString() : "Casting...";
@@ -1786,6 +1800,7 @@ public partial class MainUI : Control
 					_castBar.Value = 0;
 					_castBarLabel.Text = $"{_castingSpellName} ({_castTimeTotal:F1}s)";
 					_castBarPanel.Show();
+					_castBarPanel.MoveToFront();
 
 					// Trigger casting animation on 3D model
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
@@ -2039,6 +2054,34 @@ public partial class MainUI : Control
 						double pct = tMaxHp > 0 ? ((double)tHp / tMaxHp * 100) : 100;
 						_targetHpLabel.Text = $"{pct:F0}%";
 						
+						// --- Target Buffs ---
+						if (_isSelfTargeted)
+						{
+							RenderBuffsToContainer(_targetBuffBar, _activeBuffs);
+						}
+						else if (tgt.TryGetProperty("buffs", out var buffsProp))
+						{
+							_activeTargetBuffs.Clear();
+							foreach (var buff in buffsProp.EnumerateArray())
+							{
+								string bName = buff.GetProperty("name").GetString();
+								float bDuration = buff.TryGetProperty("duration", out var bDurProp) ? (float)bDurProp.GetDouble() : 0f;
+								float bMaxDuration = buff.TryGetProperty("maxDuration", out var bMaxDurProp) ? (float)bMaxDurProp.GetDouble() : bDuration;
+								bool bBeneficial = buff.TryGetProperty("beneficial", out var bBenProp) ? bBenProp.GetBoolean() : true;
+								int bMemIcon = buff.TryGetProperty("memIcon", out var bMemProp) ? bMemProp.GetInt32() : 0;
+
+								_activeTargetBuffs.Add(new ActiveBuff
+								{
+									Name = bName,
+									DurationMax = bMaxDuration,
+									DurationRemaining = bDuration,
+									IsBeneficial = bBeneficial,
+									MemIcon = bMemIcon
+								});
+							}
+							RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
+						}
+
 						// --- Target's Target Logic ---
 						if (_targetsTargetEnabled && tgt.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
 						{
@@ -2505,15 +2548,35 @@ public partial class MainUI : Control
 		if (windows.TryGetValue(key, out Variant val))
 		{
 			var d = val.AsGodotDictionary();
+			Vector2 viewportSize = GetViewportRect().Size;
+
 			if (panel is Control c) {
-				c.GlobalPosition = new Vector2(d["x"].AsSingle(), d["y"].AsSingle());
+				float x = d["x"].AsSingle();
+				float y = d["y"].AsSingle();
+				float w = d.ContainsKey("w") ? d["w"].AsSingle() : c.Size.X;
+				float h = d.ContainsKey("h") ? d["h"].AsSingle() : c.Size.Y;
+
+				// Clamp to viewport
+				x = Mathf.Clamp(x, 0, Math.Max(0, viewportSize.X - w));
+				y = Mathf.Clamp(y, 0, Math.Max(0, viewportSize.Y - h));
+
+				c.GlobalPosition = new Vector2(x, y);
 				if (d.ContainsKey("w") && d.ContainsKey("h")) {
-					c.Size = new Vector2(d["w"].AsSingle(), d["h"].AsSingle());
+					c.Size = new Vector2(w, h);
 				}
 			} else if (panel is Window w) {
-				w.Position = new Vector2I(d["x"].AsInt32(), d["y"].AsInt32());
+				int x = d["x"].AsInt32();
+				int y = d["y"].AsInt32();
+				int winW = d.ContainsKey("w") ? d["w"].AsInt32() : w.Size.X;
+				int winH = d.ContainsKey("h") ? d["h"].AsInt32() : w.Size.Y;
+
+				// Clamp to viewport
+				x = Mathf.Clamp(x, 0, Math.Max(0, (int)viewportSize.X - winW));
+				y = Mathf.Clamp(y, 30, Math.Max(30, (int)viewportSize.Y - winH)); // 30 offset for titlebars
+
+				w.Position = new Vector2I(x, y);
 				if (d.ContainsKey("w") && d.ContainsKey("h")) {
-					w.Size = new Vector2I(d["w"].AsInt32(), d["h"].AsInt32());
+					w.Size = new Vector2I(winW, winH);
 				}
 			}
 		}
@@ -2645,6 +2708,9 @@ public partial class MainUI : Control
 				{
 					if (_isInitialLoadPending)
 					{
+						// LOCK: Immediately consume the initial load pending flag to prevent parallel execution
+						_isInitialLoadPending = false; 
+
 						_loadingBar.MaxValue = 100;
 						_loadingBar.Value = 10;
 						if (_flavorLabel != null) _flavorLabel.Text = "Checking zone assets...";
@@ -2698,10 +2764,12 @@ public partial class MainUI : Control
 						if (_flavorLabel != null) _flavorLabel.Text = "Generating Terrain Physics...";
 						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 
-						// GLB/Brewall geometry takes 2 physics frames to register collision shapes.
+						// GLB/Brewall geometry takes several physics frames to register collision shapes.
 						// Without this, TeleportPlayer raycasts miss and Mobs fall through the floor!
-						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
-						await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+						// We wait for 5 frames to be extra safe during initial load.
+						for(int i = 0; i < 5; i++) {
+							await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+						}
 
 						_loadingBar.Value = 90;
 						if (_flavorLabel != null) _flavorLabel.Text = "Spawning entities...";
@@ -2713,13 +2781,15 @@ public partial class MainUI : Control
 						wm.SyncLiveMobs(entitiesArray, isDelta, removedArr);
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
-						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnZ, _pendingSpawnY);
+						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnY, _pendingSpawnZ);
 						
 						_loadingBar.Value = 100;
 						if (_flavorLabel != null) _flavorLabel.Text = $"Welcome to {_currentZoneId}!";
 						await ToSignal(GetTree().CreateTimer(0.2f), SceneTreeTimer.SignalName.Timeout);
 
-						_isInitialLoadPending = false;
+						// Final unfreeze and snap once everything is definitely ready
+						wm.FinalizeTeleport();
+
 						if (_loadingLayer != null) 
 						{
 							_loadingLayer.Hide();

@@ -777,8 +777,15 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_isDead)
         {
             velocity.X = 0;
-            velocity.Y = 0;
             velocity.Z = 0;
+            if (!IsOnFloor())
+            {
+                velocity.Y -= gravity * (float)delta;
+            }
+            else
+            {
+                velocity.Y = 0;
+            }
             Velocity = velocity;
             MoveAndSlide();
             return;

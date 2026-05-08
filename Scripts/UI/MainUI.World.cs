@@ -572,6 +572,16 @@ public partial class MainUI
 				}
 			}
 
+			// Sync Skills
+			if (root.TryGetProperty("skillData", out var skillDataProp) && _skillsWindow != null)
+			{
+				_skillsWindow.UpdateSkillsExtended(skillDataProp);
+			}
+			else if (root.TryGetProperty("skills", out var skillsProp) && _skillsWindow != null)
+			{
+				_skillsWindow.UpdateSkills(skillsProp, _charLevel);
+			}
+
 			// Target frame
 			// Self-target overrides server target data
 			if (_isSelfTargeted)
@@ -584,6 +594,9 @@ public partial class MainUI
 				double pct = _maxHp > 0 ? (_currentHp / (double)_maxHp * 100) : 100;
 				_targetHpLabel.Text = $"{pct:F0}%";
 				_targetsTargetWindow.Visible = false;
+
+				// --- Target Buffs (Self) ---
+				RenderBuffsToContainer(_targetBuffBar, _activeBuffs);
 			}
 			else if (character.TryGetProperty("target", out var targetProp) && targetProp.ValueKind != JsonValueKind.Null)
 			{
@@ -599,6 +612,30 @@ public partial class MainUI
 				_targetHpBar.Value = Math.Max(0, targetHp);
 				double pct = targetMaxHp > 0 ? (targetHp / targetMaxHp * 100) : 0;
 				_targetHpLabel.Text = $"{pct:F0}%";
+
+				// --- Target Buffs ---
+				if (targetProp.TryGetProperty("buffs", out var targetBuffsProp))
+				{
+					_activeTargetBuffs.Clear();
+					foreach (var buff in targetBuffsProp.EnumerateArray())
+					{
+						string bName = buff.GetProperty("name").GetString();
+						float bDuration = buff.TryGetProperty("duration", out var bDurProp) ? (float)bDurProp.GetDouble() : 0f;
+						float bMaxDuration = buff.TryGetProperty("maxDuration", out var bMaxDurProp) ? (float)bMaxDurProp.GetDouble() : bDuration;
+						bool bBeneficial = buff.TryGetProperty("beneficial", out var bBenProp) ? bBenProp.GetBoolean() : true;
+						int bMemIcon = buff.TryGetProperty("memIcon", out var bMemProp) ? bMemProp.GetInt32() : 0;
+
+						_activeTargetBuffs.Add(new ActiveBuff
+						{
+							Name = bName,
+							DurationMax = bMaxDuration,
+							DurationRemaining = bDuration,
+							IsBeneficial = bBeneficial,
+							MemIcon = bMemIcon
+						});
+					}
+					RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
+				}
 
 				// ── Target's Target ──
 				if (targetProp.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
@@ -941,8 +978,8 @@ public partial class MainUI
 			if (character.TryGetProperty("spawnPos", out var spawnProp) && spawnProp.ValueKind == JsonValueKind.Object)
 			{
 				_pendingSpawnX = spawnProp.TryGetProperty("x", out var xp) ? xp.GetSingle() : 0f;
-				_pendingSpawnZ = spawnProp.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
-				_pendingSpawnY = spawnProp.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
+				_pendingSpawnY = spawnProp.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
+				_pendingSpawnZ = spawnProp.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
 				_isInitialLoadPending = true;
 
 				// Pass player appearance to WorldManager for correct model
@@ -966,8 +1003,8 @@ public partial class MainUI
 			{
 				// Initial load into scene (e.g. returning from Student Hire Menu) without an explicit teleport
 				_pendingSpawnX = character.TryGetProperty("x", out var xp) ? xp.GetSingle() : 0f;
-				_pendingSpawnZ = character.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
-				_pendingSpawnY = character.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
+				_pendingSpawnY = character.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
+				_pendingSpawnZ = character.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
 
 				// Pass player appearance to WorldManager for correct model
 				int raceId = character.TryGetProperty("raceId", out var ridProp) ? ridProp.GetInt32() : 1;

@@ -584,11 +584,13 @@ public partial class MainMenu : Control
         _deleteCharButton.Pressed += OnDeleteCharPressed;
         leftCol.AddChild(_deleteCharButton);
 
+        /*
         _returnHomeButton = new Button { Text = "Return Home" };
         _returnHomeButton.CustomMinimumSize = new Vector2(0, 36);
         _returnHomeButton.AddThemeFontSizeOverride("font_size", 14);
         _returnHomeButton.Pressed += () => { GameClient.Instance.DisconnectFromServer(); ShowPanel("login"); };
         leftCol.AddChild(_returnHomeButton);
+        */
 
         var resetUIRow = new HBoxContainer();
         resetUIRow.Alignment = BoxContainer.AlignmentMode.Center;
@@ -1948,6 +1950,7 @@ public partial class MainMenu : Control
     private static string Capitalize(string s)
     {
         if (string.IsNullOrEmpty(s)) return s;
+        s = s.Replace("_", " ");
         return char.ToUpper(s[0]) + s.Substring(1);
     }
 

@@ -6,12 +6,24 @@ using System.Linq;
 public partial class SkillsWindow : DraggablePanel
 {
     private VBoxContainer _skillList;
-    private Dictionary<string, int> _currentSkills = new Dictionary<string, int>();
+    private Dictionary<string, (int value, int max)> _currentSkills = new Dictionary<string, (int value, int max)>();
 
     public override void _Ready()
     {
         base._Ready();
         _skillList = GetNode<VBoxContainer>("VBox/Scroll/SkillList");
+    }
+
+    public void UpdateSkillsExtended(JsonElement skillDataObj)
+    {
+        _currentSkills.Clear();
+        foreach (var prop in skillDataObj.EnumerateObject())
+        {
+            int val = prop.Value.GetProperty("value").GetInt32();
+            int max = prop.Value.GetProperty("max").GetInt32();
+            _currentSkills[prop.Name] = (val, max);
+        }
+        RefreshUI();
     }
 
     public void UpdateSkills(JsonElement skillsObj, int playerLevel)
@@ -21,13 +33,14 @@ public partial class SkillsWindow : DraggablePanel
         {
             if (prop.Value.TryGetInt32(out int val))
             {
-                _currentSkills[prop.Name] = val;
+                // Fallback to legacy formula for max if extended data is missing
+                _currentSkills[prop.Name] = (val, (playerLevel * 5) + 5);
             }
         }
-        RefreshUI(playerLevel);
+        RefreshUI();
     }
 
-    public void RefreshUI(int playerLevel)
+    public void RefreshUI()
     {
         if (_skillList == null) return;
 
@@ -43,11 +56,8 @@ public partial class SkillsWindow : DraggablePanel
         foreach (var kvp in sortedSkills)
         {
             string rawKey = kvp.Key;
-            int currentVal = kvp.Value;
-            
-            // Typical max rank formula is (Level * 5) + 5, up to a hard cap, 
-            // but we'll show a simple UI representation.
-            int displayMax = (playerLevel * 5) + 5;
+            int currentVal = kvp.Value.value;
+            int displayMax = kvp.Value.max;
 
             var row = new HBoxContainer();
             row.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -60,9 +70,9 @@ public partial class SkillsWindow : DraggablePanel
             nameLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.75f, 0.6f)); // EQ Gold
 
             var valueLabel = new Label();
-            valueLabel.Text = $"{currentVal}";
+            valueLabel.Text = $"{currentVal} / {displayMax}";
             valueLabel.HorizontalAlignment = HorizontalAlignment.Right;
-            valueLabel.CustomMinimumSize = new Vector2(40, 0);
+            valueLabel.CustomMinimumSize = new Vector2(60, 0);
             valueLabel.AddThemeFontSizeOverride("font_size", 12);
 
             row.AddChild(nameLabel);

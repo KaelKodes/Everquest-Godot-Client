@@ -67,9 +67,14 @@ public partial class WorldManager : Node3D
         // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
         float x = -rawX;
         float z = -rawY;
-        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
+        float y = rawZ; // Godot Y at feet matches EQ Z
 
-        GD.Print($"[WORLD] Spawning Player at Godot({x:F1}, {y:F1}, {z:F1}) (race={_playerRace} gender={_playerGender} face={_playerFace})");
+        // Give a moderate boost to initial height to prevent falling through floor
+        // We use +5.0f (approx matching server boost) to ensure we're definitely above the floor.
+        // The client-side snapping in _PhysicsProcess will bring us down to the floor precisely.
+        y += 5.0f; 
+
+        GD.Print($"[WORLD] Spawning Player at Godot({x:F1}, {y:F1}, {z:F1}) (EQ: {rawX:F1}, {rawY:F1}, {rawZ:F1})");
 
         _playerCapsule = new EntityCapsule();
         _playerCapsule.Name = "Player";
@@ -85,13 +90,51 @@ public partial class WorldManager : Node3D
         {
             _cameraArm.AddExcludedObject(_playerCapsule.GetRid());
         }
+
+        // Keep player physics frozen to prevent gravity-induced clipping through 
+        // geometry that may still be registering in the physics engine.
+        // This state remains until FinalizeTeleport is called by the UI loader.
+        _teleportSettling = true;
+        _teleportSafetyTimer = 0.0;
     }
     public void TeleportPlayer(float rawX, float rawY, float rawZ = 0f)
     {
+        // If we are already in the world and NOT loading the initial zone, 
+        // check if this is a "status sync" teleport (echo from server).
+        // If it's the same position we just snapped to, ignore it to prevent freezing.
+        if (!_loadingInitialZone && _playerCapsule != null)
+        {
+            float dx = Mathf.Abs(-rawX - _playerCapsule.GlobalPosition.X);
+            float dz = Mathf.Abs(-rawY - _playerCapsule.GlobalPosition.Z);
+            float dy = Mathf.Abs(rawZ - _playerCapsule.GlobalPosition.Y);
+            
+            // If horizontal movement is negligible and height is within safety boost range, ignore.
+            if (dx < 0.1f && dz < 0.1f && dy < 5.1f)
+            {
+                GD.Print($"[WORLD] Ignoring redundant TeleportPlayer (likely server echo). EQ: {rawX}, {rawY}, {rawZ}");
+                return;
+            }
+        }
+
+        // If we are currently settling a teleport, ignore external height updates that reset Z to 0.
+        // This prevents the "reset to safety height" runaway loop when the server sends a status update 
+        // with the original (pre-snap) coordinates while we are still loading or just finished.
+        if (_teleportSettling && _playerCapsule != null && rawZ == 0f && Mathf.Abs(_playerCapsule.GlobalPosition.Y) > 5.1f)
+        {
+            GD.Print($"[WORLD] Ignoring TeleportPlayer height reset to 0 while settling. Current Godot Y: {_playerCapsule.GlobalPosition.Y:F2}");
+            // Still update horizontal if needed? Usually we want to stay pinned.
+            return;
+        }
+
         // Map EQ Coords to Godot Coords — same conversion used for mobs/NPCs
         float x = -rawX;
         float z = -rawY;
-        float y = rawZ + 3.1f; // Capsule origin is center (3.1f), so feet touch rawZ exactly
+        float y = rawZ; // Godot Y at feet matches EQ Z
+
+        // Give a moderate boost to height to prevent falling through floor
+        // We use +5.0f (approx matching server boost) to ensure we're definitely above the floor.
+        // The client-side snapping in _PhysicsProcess will bring us down to the floor precisely.
+        y += 5.0f;
 
         GD.Print($"[WORLD] TeleportPlayer: EQ({rawX}, {rawY}, {rawZ}) → Godot({x:F1}, {y:F1}, {z:F1})");
 
@@ -103,16 +146,20 @@ public partial class WorldManager : Node3D
         _playerCapsule.GlobalPosition = new Vector3(x, y, z);
         _playerCapsule.Velocity = Vector3.Zero;
         _lastSentPos = new Vector3(x, y, z);
-        EmitSignal(SignalName.PlayerMoved, x, y, z);
+        
+        // Signal with EQ coordinates: EQ.X = -Godot.X, EQ.Y = -Godot.Z, EQ.Z = Godot.Y (feet)
+        // IMPORTANT: We send rawZ (the original EQ Z), NOT the boosted Y, to prevent runaway height loops.
+        EmitSignal(SignalName.PlayerMoved, rawX, rawY, rawZ, 0f);
 
         // Grant zone immunity so we don't instantly trigger a nearby zoneline
         _zoneImmunityTimer = 5.0;
 
         // Keep player physics frozen to prevent gravity-induced clipping through 
         // geometry that may still be registering in the physics engine.
+        // This state remains until FinalizeTeleport is called by the UI loader.
         _teleportSettling = true;
-        _teleportFreezeTimer = 1.0f; // Freeze for 1 real second
-
+        _teleportSafetyTimer = 0.0;
+        
         // Force camera to immediately snap to new position before loading screen hides
         UpdateCamera();
     }

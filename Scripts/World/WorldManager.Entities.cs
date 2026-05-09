@@ -216,8 +216,10 @@ public partial class WorldManager : Node3D
     {
         if (_activeEntities.TryGetValue(id, out Node3D entity))
         {
-            if (GodotObject.IsInstanceValid(_currentTarget as Node) && entity == (_currentTarget as Node))
-                _currentTarget = null;
+            if (_currentTarget != null && GodotObject.IsInstanceValid(_currentTarget as Node) && entity == (_currentTarget as Node))
+            {
+                SetTarget(null);
+            }
 
             if (GodotObject.IsInstanceValid(entity))
             {

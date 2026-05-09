@@ -104,6 +104,8 @@ public partial class MainMenu : Control
     private Camera3D _previewCamera;
     private float _previewRotation = 0f;
     private float _previewZoom = 12.0f;
+    private float _previewZoomMin = 2.0f;
+    private float _previewZoomMax = 28.0f;
     private float _previewCamHeight = 1.0f;
     private float _previewLookAtY = 0.7f;
     private bool _previewAutoRotate = true;
@@ -112,13 +114,13 @@ public partial class MainMenu : Control
     // Networking
     private bool _waitingForLogin = false;
 
-    // Race data — 14 playable EQ races (Vah Shir disabled: no animation support yet)
+    // Race data — Iksar hidden from creation until full-body skin / face pipeline matches EQ (face slot swaps whole skin).
     private static readonly string[] RaceNames = {
         "Human", "Barbarian", "Erudite", "Wood Elf", "High Elf",
         "Dark Elf", "Half Elf", "Dwarf", "Troll", "Ogre",
-        "Halfling", "Gnome", "Iksar"
+        "Halfling", "Gnome"
     };
-    private static readonly int[] RaceIds = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 128 };
+    private static readonly int[] RaceIds = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
 
     // All 16 classes (display names → keys)
     private static readonly Dictionary<int, string> ClassDisplayNames = new() {
@@ -1905,7 +1907,19 @@ public partial class MainMenu : Control
 
             if (raceId == 9 || raceId == 10) scale = 0.7f;
             else if (raceId == 2) scale = 0.85f;
-            else if (raceId == 11 || raceId == 12) scale = 1.4f;
+            else if (raceId == 8)
+            {
+                zoom = 18.0f;
+                lookAtY = 0.52f;
+                camHeight = 0.88f;
+            }
+            else if (raceId == 11 || raceId == 12)
+            {
+                scale = 1.0f;
+                zoom = 19.0f;
+                lookAtY = 0.5f;
+                camHeight = 0.85f;
+            }
 
             if (raceId == 128)
             {
@@ -2236,10 +2250,26 @@ public partial class MainMenu : Control
             _previewCamHeight = 1.0f;
             _previewLookAtY = 0.7f;
             _previewZoom = 12.0f;
+            _previewZoomMin = 2.0f;
+            _previewZoomMax = 28.0f;
 
             if (raceId == 9 || raceId == 10) scale = 0.7f;
             else if (raceId == 2) scale = 0.85f;
-            else if (raceId == 11 || raceId == 12) scale = 1.4f;
+            else if (raceId == 8)
+            {
+                _previewZoom = 18.0f;
+                _previewLookAtY = 0.52f;
+                _previewCamHeight = 0.88f;
+                _previewZoomMax = 36.0f;
+            }
+            else if (raceId == 11 || raceId == 12)
+            {
+                scale = 1.0f;
+                _previewZoom = 19.0f;
+                _previewLookAtY = 0.5f;
+                _previewCamHeight = 0.85f;
+                _previewZoomMax = 36.0f;
+            }
 
             if (raceId == 128)
             {
@@ -2687,12 +2717,12 @@ public partial class MainMenu : Control
             {
                 if (mb.ButtonIndex == MouseButton.WheelUp)
                 {
-                    _previewZoom = Mathf.Max(2.0f, _previewZoom - 0.5f);
+                    _previewZoom = Mathf.Max(_previewZoomMin, _previewZoom - 0.5f);
                     GetViewport().SetInputAsHandled();
                 }
                 else if (mb.ButtonIndex == MouseButton.WheelDown)
                 {
-                    _previewZoom = Mathf.Min(12.0f, _previewZoom + 0.5f);
+                    _previewZoom = Mathf.Min(_previewZoomMax, _previewZoom + 0.5f);
                     GetViewport().SetInputAsHandled();
                 }
             }

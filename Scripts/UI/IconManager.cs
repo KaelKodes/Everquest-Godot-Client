@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using System.IO;
 
 public partial class IconManager : Node
 {
@@ -11,6 +12,57 @@ public partial class IconManager : Node
 	public override void _Ready()
 	{
 		Instance = this;
+		ClientLocalSettings.Load();
+	}
+
+	/// <summary>Clears cached sheets/atlas slices after the user changes the dragitem folder in Options.</summary>
+	public void InvalidateItemIconCaches()
+	{
+		_sheetCache.Clear();
+		_iconCache.Clear();
+	}
+
+	private static string NormalizeFsPath(string path) => path.Replace('\\', '/');
+
+	private static Texture2D LoadTextureFromAbsolutePath(string absolutePath)
+	{
+		string p = NormalizeFsPath(absolutePath);
+		if (!Godot.FileAccess.FileExists(p)) return null;
+		var image = new Image();
+		if (image.Load(p) != Error.Ok) return null;
+		return ImageTexture.CreateFromImage(image);
+	}
+
+	private Texture2D LoadDragItemSheet(int sheetIndex)
+	{
+		if (_sheetCache.TryGetValue(sheetIndex, out var cached))
+			return cached;
+
+		Texture2D sheetTex = null;
+		string folder = ClientLocalSettings.DragItemIconsFolder;
+		if (!string.IsNullOrWhiteSpace(folder))
+		{
+			string basePath = folder.Trim().TrimEnd('/', '\\');
+			foreach (var ext in new[] { ".dds", ".tga" })
+			{
+				string combined = NormalizeFsPath(Path.Combine(basePath, $"dragitem{sheetIndex}{ext}"));
+				sheetTex = LoadTextureFromAbsolutePath(combined);
+				if (sheetTex != null) break;
+			}
+		}
+
+		if (sheetTex == null)
+		{
+			string pathDds = $"res://Assets/UI/ClassicUI/dragitem{sheetIndex}.dds";
+			string pathTga = $"res://Assets/UI/ClassicUI/dragitem{sheetIndex}.tga";
+			if (ResourceLoader.Exists(pathDds))
+				sheetTex = GD.Load<Texture2D>(pathDds);
+			else if (ResourceLoader.Exists(pathTga))
+				sheetTex = GD.Load<Texture2D>(pathTga);
+		}
+
+		_sheetCache[sheetIndex] = sheetTex;
+		return sheetTex;
 	}
 
 	/// <summary>
@@ -31,22 +83,8 @@ public partial class IconManager : Node
 
 		int sheetIndex = (iconId / 36) + 1;
 		int localIndex = iconId % 36;
-		
-		string pathDds = $"res://Assets/UI/ClassicUI/dragitem{sheetIndex}.dds";
-		string pathTga = $"res://Assets/UI/ClassicUI/dragitem{sheetIndex}.tga";
-		
-		if (!_sheetCache.TryGetValue(sheetIndex, out var sheetTex))
-		{
-			if (ResourceLoader.Exists(pathDds))
-				sheetTex = GD.Load<Texture2D>(pathDds);
-			else if (ResourceLoader.Exists(pathTga))
-				sheetTex = GD.Load<Texture2D>(pathTga);
-			else
-				return null; // Missing asset
-				
-			_sheetCache[sheetIndex] = sheetTex;
-		}
 
+		var sheetTex = LoadDragItemSheet(sheetIndex);
 		if (sheetTex == null) return null;
 
 		// EQ sprite sheets are packed vertically (top-to-bottom, then left-to-right)
@@ -80,12 +118,19 @@ public partial class IconManager : Node
 		string path = $"res://Assets/UI/ClassicUI/gemicons{sheetStr}.tga";
 		
 		int sheetKey = -2000 - sheetIndex;
-		if (!_sheetCache.TryGetValue(sheetKey, out var sheetTex))
+		if (_sheetCache.TryGetValue(sheetKey, out var sheetTex))
+		{
+            // Valid cache
+		}
+        else
 		{
 			if (ResourceLoader.Exists(path))
 				sheetTex = GD.Load<Texture2D>(path);
 			else
+            {
+                _sheetCache[sheetKey] = null;
 				return null;
+            }
 				
 			_sheetCache[sheetKey] = sheetTex;
 		}
@@ -125,12 +170,19 @@ public partial class IconManager : Node
 		string path = $"res://Assets/UI/ClassicUI/spells{sheetStr}.tga";
 		
 		int sheetKey = -3000 - sheetIndex;
-		if (!_sheetCache.TryGetValue(sheetKey, out var sheetTex))
+		if (_sheetCache.TryGetValue(sheetKey, out var sheetTex))
+		{
+            // Valid cache
+		}
+        else
 		{
 			if (ResourceLoader.Exists(path))
 				sheetTex = GD.Load<Texture2D>(path);
 			else
+            {
+                _sheetCache[sheetKey] = null;
 				return null;
+            }
 				
 			_sheetCache[sheetKey] = sheetTex;
 		}

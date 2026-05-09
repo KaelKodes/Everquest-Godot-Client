@@ -214,12 +214,14 @@ public partial class MainUI
 				kvp.Value.Text = kvp.Key;
 				kvp.Value.Icon = null;
 				kvp.Value.TooltipText = kvp.Key;
+				SetInventorySlotStackOverlay(kvp.Value, 1);
 			}
 			for (int i = 0; i < 8; i++) {
 				if (_petInvSlots[i] != null) {
 					_petInvSlots[i].Text = "";
 					_petInvSlots[i].Icon = null;
 					_petInvSlots[i].TooltipText = "Empty";
+					SetInventorySlotStackOverlay(_petInvSlots[i], 1);
 				}
 			}
 
@@ -249,7 +251,6 @@ public partial class MainUI
 	private void PopulatePetBtn(Button btn, JsonElement item, IconManager iconMgr) {
 		string name = item.TryGetProperty("itemName", out var n) ? n.GetString() : "Item";
 		int iconId = item.TryGetProperty("icon", out var iProp) ? iProp.GetInt32() : 0;
-		string statText = BuildItemStatText(item);
 
 		Texture2D iconTex = null;
 		if (iconId > 0 && iconMgr != null) iconTex = iconMgr.GetItemIcon(iconId);
@@ -260,7 +261,8 @@ public partial class MainUI
 			btn.ExpandIcon = true;
 			btn.IconAlignment = HorizontalAlignment.Center;
 		}
-		btn.TooltipText = $"{name}\n{statText}";
+		btn.TooltipText = name;
+		SetInventorySlotStackOverlay(btn, ReadItemStackCount(item));
 		_petSlotItemData[btn] = item.Clone();
 	}
 }

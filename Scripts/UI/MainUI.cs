@@ -62,7 +62,15 @@ public partial class MainUI : Control
 	private double _rightClickTimer = -1;
 	private Button _rightClickTarget = null;
 	private JsonElement? _rightClickItemData = null;
+	private int _rightClickSlotId = -1;
 	private readonly Dictionary<Button, JsonElement> _slotItemData = new(); // map button â†’ item JSON
+
+	private Window _splitStackWindow;
+	private HSlider _splitStackSlider;
+	private Label _splitStackHintLabel;
+	private int _splitPendingFrom;
+	private int _splitPendingTo;
+	private int _splitHeldQuantity;
 
 	// Target Frame
 	private Window _targetWindow;
@@ -80,6 +88,7 @@ public partial class MainUI : Control
 	private Window _targetListWindow;
 	private TrackingWindow _trackingWindow;
 	public void ClearTrackingWindow() { _trackingWindow = null; }
+	private LootWindow _lootWindow;
 	private BankWindow _bankWindow;
 	private Button[] _extendedTargetBtns = new Button[10];
 
@@ -319,6 +328,8 @@ public partial class MainUI : Control
 	private int _maxFps = 0; // 0 = unlimited
 	
 	private Panel _optionsPanel;
+	private LineEdit _optDragItemPathEdit;
+	private FileDialog _optDragItemFolderDialog;
 	private CopyLayoutWindow _copyLayoutWindow;
 	private AudioPlayerWindow _audioPlayerWindow;
 
@@ -1227,6 +1238,13 @@ public partial class MainUI : Control
 				if (targetZoneId == _currentZoneId) {
 					// Intra-zone teleport (like Felwithe caster portals)
 					wm.TeleportPlayer(tx, ty, tz);
+					var settleTimer = GetTree().CreateTimer(0.12f);
+					settleTimer.Timeout += () =>
+					{
+						var w2 = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+						if (w2 != null && IsInstanceValid(w2))
+							w2.FinishTeleportPlacement();
+					};
 				} else {
 					_client.SendRaw($"{{\"type\": \"ZONE\", \"zoneId\": \"{targetZoneId}\"}}");
 				}
@@ -1372,6 +1390,11 @@ public partial class MainUI : Control
 
 	public override void _Input(InputEvent @event)
 	{
+		if (@event is InputEventMouseButton mbR && mbR.ButtonIndex == MouseButton.Right && !mbR.Pressed)
+		{
+			TryFinishBagRightClickToggle();
+		}
+
 		if (@event is InputEventKey k && k.Pressed && !k.Echo)
 		{
 			// Enter key: toggle chat input focus
@@ -1698,6 +1721,7 @@ public partial class MainUI : Control
 				_rightClickTimer = -1;
 				_rightClickTarget = null;
 				_rightClickItemData = null;
+				_rightClickSlotId = -1;
 			}
 		}
 
@@ -1753,6 +1777,27 @@ public partial class MainUI : Control
 
 
 
+	/// <summary>Parse JSON number or numeric string (spell data sometimes serializes animType as a string).</summary>
+	private static int GetJsonInt32(JsonElement el, int defaultValue)
+	{
+		return el.ValueKind switch
+		{
+			JsonValueKind.Number => el.TryGetInt32(out int i) ? i : defaultValue,
+			JsonValueKind.String => int.TryParse(el.GetString(), out int j) ? j : defaultValue,
+			_ => defaultValue
+		};
+	}
+
+	private static float GetJsonSingle(JsonElement el, float defaultValue)
+	{
+		return el.ValueKind switch
+		{
+			JsonValueKind.Number => (float)el.GetDouble(),
+			JsonValueKind.String => float.TryParse(el.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f) ? f : defaultValue,
+			_ => defaultValue
+		};
+	}
+
 	/// <summary>
 	/// Handle cast events (CAST_START, CAST_COMPLETE, CAST_INTERRUPTED)
 	/// </summary>
@@ -1794,7 +1839,7 @@ public partial class MainUI : Control
 					using var doc = JsonDocument.Parse(json);
 					var root = doc.RootElement;
 					_castingSpellName = root.TryGetProperty("spellName", out var n) ? n.GetString() : "Casting...";
-					_castTimeTotal = root.TryGetProperty("castTime", out var ct) ? (float)ct.GetDouble() : 1.5f;
+					_castTimeTotal = root.TryGetProperty("castTime", out var ct) ? GetJsonSingle(ct, 1.5f) : 1.5f;
 					_castTimeElapsed = 0;
 					_isCasting = true;
 					_castBar.Value = 0;
@@ -1806,7 +1851,7 @@ public partial class MainUI : Control
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 					if (wm != null) 
 					{
-						int animType = root.TryGetProperty("animType", out var at) ? at.GetInt32() : 44;
+						int animType = root.TryGetProperty("animType", out var at) ? GetJsonInt32(at, 44) : 44;
 						int castType = animType switch
 						{
 							42 => 1, // Heal/Regen -> Cast 1
@@ -1898,76 +1943,72 @@ public partial class MainUI : Control
 					{
 						npcId = idProp.ValueKind == JsonValueKind.Number ? idProp.GetInt32().ToString() : idProp.GetString();
 					}
-					int animId = root.TryGetProperty("anim", out var animProp) ? animProp.GetInt32() : -1;
+					string animCode = null;
+					if (root.TryGetProperty("anim", out var animProp))
+					{
+						if (animProp.ValueKind == JsonValueKind.String)
+						{
+							animCode = animProp.GetString();
+						}
+						else if (animProp.ValueKind == JsonValueKind.Number && animProp.TryGetInt32(out int animId))
+						{
+							animCode = animId switch
+							{
+								1 => "c01",
+								2 => "c02",
+								3 => "c03",
+								4 => "c04",
+								5 => "c05",
+								6 => "c06",
+								7 => "c07",
+								8 => "c08",
+								9 => "c09",
+								10 => "c10",
+								11 => "c11",
+								12 => "d01",
+								13 => "d02",
+								14 => "d04",
+								15 => "d05",
+								16 => "l01",
+								17 => "l02",
+								18 => "l03",
+								19 => "l04",
+								20 => "l05",
+								21 => "l06",
+								22 => "l07",
+								23 => "l08",
+								24 => "l09",
+								25 => "o01",
+								26 => "p01",
+								27 => "p02",
+								28 => "p03",
+								29 => "s03",
+								30 => "p05",
+								31 => "p06",
+								35 => "s01",
+								36 => "s02",
+								38 => "s04",
+								42 => "t04",
+								43 => "t05",
+								44 => "t06",
+								45 => "t02",
+								46 => "t03",
+								47 => "t07",
+								48 => "t08",
+								49 => "t09",
+								_ => null
+							};
+						}
+					}
 
-					if (!string.IsNullOrEmpty(npcId) && animId >= 0)
+					if (!string.IsNullOrEmpty(npcId) && !string.IsNullOrEmpty(animCode))
 					{
 						var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 						if (wm != null)
 						{
 							var entity = wm.GetEntityById(npcId);
 							if (entity != null)
-							{
-								// Map EQ doanim() numeric IDs to animation codes
-								// Reference: EQEmu Animation enum
-								string animCode = animId switch
-								{
-									// Combat (c-prefix)
-									1 => "c01",   // Kick
-									2 => "c02",   // 1H Pierce
-									3 => "c03",   // 2H Slash
-									4 => "c04",   // 2H Blunt
-									5 => "c05",   // 1H Slash
-									6 => "c06",   // 1H Slash Offhand
-									7 => "c07",   // Bash
-									8 => "c08",   // Hand to Hand
-									9 => "c09",   // Archery
-									10 => "c10",  // Swimming 1
-									11 => "c11",  // Roundhouse Kick
-									// Damage (d-prefix)
-									12 => "d01",  // Minor Damage
-									13 => "d02",  // Heavy Damage
-									14 => "d04",  // Drowning
-									15 => "d05",  // Death
-									// Locomotion (l-prefix)
-									16 => "l01",  // Walking
-									17 => "l02",  // Running
-									18 => "l03",  // Running Jump
-									19 => "l04",  // Stationary Jump
-									20 => "l05",  // Falling
-									21 => "l06",  // Duck Walking
-									22 => "l07",  // Ladder Climbing
-									23 => "l08",  // Duck Down
-									24 => "l09",  // Swimming Stationary
-									// Poses (p/o-prefix)
-									25 => "o01",  // Idle 2
-									26 => "p01",  // Idle 1
-									27 => "p02",  // Sit Down
-									28 => "p03",  // Shuffle Rotate
-									29 => "s03",  // Wave
-									30 => "p05",  // Loot
-									31 => "p06",  // Swimming 2
-									// Social (s-prefix)
-									35 => "s01",  // Cheer
-									36 => "s02",  // Disappointed
-									38 => "s04",  // Rude
-									// Technique (t-prefix)
-									42 => "t04",  // Cast 1
-									43 => "t05",  // Cast 2
-									44 => "t06",  // Cast 3
-									45 => "t02",  // Stringed Instrument
-									46 => "t03",  // Woodwind Instrument
-									47 => "t07",  // Flying Kick
-									48 => "t08",  // Tiger Strike
-									49 => "t09",  // Dragon Punch
-									_ => null
-								};
-
-								if (animCode != null)
-								{
-									entity.PlayEmote(animCode);
-								}
-							}
+								entity.PlayEmote(animCode);
 						}
 					}
 					break;
@@ -2191,13 +2232,58 @@ public partial class MainUI : Control
 							AddChild(_trackingWindow);
 						}
 						_trackingWindow.UpdateList(targetsProp);
-						_trackingWindow.Show();
+ 					_trackingWindow.Show();
 					}
+					break;
+				}
+				case "LOOT_CORPSE_OPEN":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					
+					if (root.TryGetProperty("corpseId", out var cIdProp) && 
+						root.TryGetProperty("corpseName", out var cNameProp) &&
+						root.TryGetProperty("items", out var itemsProp))
+					{
+						string cId = cIdProp.GetString();
+						string cName = cNameProp.GetString();
+						var items = itemsProp.Deserialize<List<LootItemData>>();
+
+						// Always create a fresh window: Init() builds the full node tree and must not run twice on the same instance.
+						if (_lootWindow != null && IsInstanceValid(_lootWindow))
+						{
+							_lootWindow.QueueFree();
+							_lootWindow = null;
+						}
+						_lootWindow = new LootWindow();
+						AddChild(_lootWindow);
+						_lootWindow.Init(cId, cName, items);
+						_lootWindow.Show();
+					}
+					break;
+				}
+				case "LOOT_CORPSE_UPDATE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("items", out var itemsProp))
+					{
+						var items = itemsProp.Deserialize<List<LootItemData>>();
+						if (_lootWindow != null && IsInstanceValid(_lootWindow))
+						{
+							_lootWindow.UpdateItems(items);
+						}
+					}
+					break;
+				}
+				case "LOOT_COIN":
+				{
+					// Play coin sound? 
 					break;
 				}
 			}
 		}
-		catch (Exception ex) { GD.PrintErr($"[UI] Cast event error: {ex.Message}"); }
+		catch (Exception ex) { GD.PrintErr($"[UI] Message handler error ({type}): {ex.Message}"); }
 	}
 
 	/// <summary>
@@ -2222,6 +2308,19 @@ public partial class MainUI : Control
 			BuildOptionsPanel();
 
 		_optionsPanel.Visible = !_optionsPanel.Visible;
+		if (_optionsPanel.Visible && _optDragItemPathEdit != null)
+		{
+			ClientLocalSettings.Load();
+			_optDragItemPathEdit.Text = ClientLocalSettings.DragItemIconsFolder;
+		}
+	}
+
+	private void ApplyDragItemIconsFolder()
+	{
+		if (_optDragItemPathEdit == null) return;
+		ClientLocalSettings.SaveDragItemIconsFolder(_optDragItemPathEdit.Text);
+		IconManager.Instance?.InvalidateItemIconCaches();
+		Log("SYSTEM", "[color=gray]Item icon folder saved. UI will reload icons from the new dragitem sheets.[/color]");
 	}
 
 	private void ToggleAudioPlayer()
@@ -2248,11 +2347,20 @@ public partial class MainUI : Control
 		_audioPlayerWindow.Visible = !_audioPlayerWindow.Visible;
 	}
 
+	public void TakeLootItem(string corpseId, int lootIndex)
+	{
+		SendNetworkMessage("TAKE_LOOT_ITEM", new Dictionary<string, object>
+		{
+			{ "corpseId", corpseId },
+			{ "lootIndex", lootIndex }
+		});
+	}
+
 	private void BuildOptionsPanel()
 	{
 		_optionsPanel = new Panel();
-		_optionsPanel.CustomMinimumSize = new Vector2(280, 380);
-		_optionsPanel.Size = new Vector2(280, 380);
+		_optionsPanel.CustomMinimumSize = new Vector2(320, 500);
+		_optionsPanel.Size = new Vector2(320, 500);
 
 		// Center on screen
 		var screenSize = GetViewport().GetVisibleRect().Size;
@@ -2311,6 +2419,39 @@ public partial class MainUI : Control
 			if (wm != null) wm.SetPlayerNameVisible(_showPlayerName);
 		};
 		vbox.AddChild(nameCheck);
+
+		// ── EverQuest dragitem sheets (all item icons: inventory, loot, merchants, cursor, …) ──
+		vbox.AddChild(new HSeparator());
+		var dragHint = new Label();
+		dragHint.Text = "Item icons: folder with dragitem1.dds through dragitem178.dds (your EQ client’s uifiles/default). Leave empty to use built-in copies under res://Assets/UI/ClassicUI/.";
+		dragHint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		dragHint.AddThemeFontSizeOverride("font_size", 11);
+		dragHint.AddThemeColorOverride("font_color", new Color(0.75f, 0.72f, 0.6f));
+		vbox.AddChild(dragHint);
+
+		ClientLocalSettings.Load();
+		var dragRow = new HBoxContainer();
+		dragRow.AddThemeConstantOverride("separation", 6);
+		_optDragItemPathEdit = new LineEdit();
+		_optDragItemPathEdit.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		_optDragItemPathEdit.Text = ClientLocalSettings.DragItemIconsFolder;
+		_optDragItemPathEdit.PlaceholderText = @"D:/everquest_rof2/everquest_rof2/uifiles/default";
+		_optDragItemPathEdit.AddThemeFontSizeOverride("font_size", 11);
+		var dragBrowse = new Button { Text = "Browse…" };
+		dragBrowse.Pressed += () => _optDragItemFolderDialog?.PopupCentered(new Vector2I(800, 480));
+		var dragApply = new Button { Text = "Apply" };
+		dragApply.Pressed += ApplyDragItemIconsFolder;
+		dragRow.AddChild(_optDragItemPathEdit);
+		dragRow.AddChild(dragBrowse);
+		dragRow.AddChild(dragApply);
+		vbox.AddChild(dragRow);
+
+		_optDragItemFolderDialog = new FileDialog();
+		_optDragItemFolderDialog.FileMode = FileDialog.FileModeEnum.OpenDir;
+		_optDragItemFolderDialog.Access = FileDialog.AccessEnum.Filesystem;
+		_optDragItemFolderDialog.Title = "Select folder containing dragitem1.dds";
+		_optDragItemFolderDialog.DirSelected += (dir) => { if (_optDragItemPathEdit != null) _optDragItemPathEdit.Text = dir; };
+		AddChild(_optDragItemFolderDialog);
 
 		// Dynamic Shadows checkbox
 		var shadowCheck = new CheckBox();
@@ -2782,13 +2923,17 @@ public partial class MainUI : Control
 
 						GD.Print("[UI] Initial entities hydrated. Spawning player...");
 						wm.TeleportPlayer(_pendingSpawnX, _pendingSpawnY, _pendingSpawnZ);
+
+						// CHECK: let physics register the capsule at the new XZ before comparing to authoritative EQ
+						for (int settle = 0; settle < 2; settle++)
+							await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
 						
 						_loadingBar.Value = 100;
 						if (_flavorLabel != null) _flavorLabel.Text = $"Welcome to {_currentZoneId}!";
-						await ToSignal(GetTree().CreateTimer(0.2f), SceneTreeTimer.SignalName.Timeout);
+						await ToSignal(GetTree().CreateTimer(0.05f), SceneTreeTimer.SignalName.Timeout);
 
-						// Final unfreeze and snap once everything is definitely ready
-						wm.FinalizeTeleport();
+						// ADJUST (authoritative EQ vs client) + floor snap + RELEASE
+						wm.FinishTeleportPlacement();
 
 						if (_loadingLayer != null) 
 						{

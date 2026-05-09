@@ -65,6 +65,11 @@ public partial class WorldManager : Node3D
     private bool _teleportSettling = false; // Freeze player physics until terrain collision is confirmed
     private bool _loadingInitialZone = false; // Flag to distinguish initial login from in-game teleports
     private double _teleportSafetyTimer = 0.0; // Emergency release if UI fails to signal
+    /// <summary>Last server-authoritative EQ position from TeleportPlayer (x,y horizontal; z = height).</summary>
+    private float _authSpawnEqX;
+    private float _authSpawnEqY;
+    private float _authSpawnEqZ;
+    private bool _authSpawnEqValid;
     private Node3D _zoneGeometryContainer;
     private Node3D _zoneObjectsContainer; // Placed zone objects (trees, buildings, etc.)
     private ZoneObjectPlacer _objectPlacer;
@@ -83,7 +88,7 @@ public partial class WorldManager : Node3D
     private string _lastFootstepState = "idle"; // idle, walk, run, swim
 
     // Expose the current target ID for the attack system
-    public string CurrentTargetId => GodotObject.IsInstanceValid(_currentTarget as Node) ? ((Node)_currentTarget).Name : null;
+    public string CurrentTargetId => (_currentTarget != null && GodotObject.IsInstanceValid(_currentTarget as Node)) ? ((Node)_currentTarget).Name : null;
 
     // Range constants (in world units)
     public const float MELEE_RANGE = 9.0f;

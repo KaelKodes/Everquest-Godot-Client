@@ -601,9 +601,9 @@ public partial class MainUI
 			else if (character.TryGetProperty("target", out var targetProp) && targetProp.ValueKind != JsonValueKind.Null)
 			{
 				_targetWindow.Visible = true;
-				string targetName = targetProp.GetProperty("name").GetString();
-				double targetHp = targetProp.GetProperty("hp").GetDouble();
-				double targetMaxHp = targetProp.GetProperty("maxHp").GetDouble();
+				string targetName = targetProp.TryGetProperty("name", out var tnProp) ? tnProp.GetString() : "Unknown";
+				double targetHp = targetProp.TryGetProperty("hp", out var thpProp) ? thpProp.GetDouble() : 0;
+				double targetMaxHp = targetProp.TryGetProperty("maxHp", out var tmhpProp) ? tmhpProp.GetDouble() : 100;
 				int targetLevel = targetProp.TryGetProperty("level", out var lvlProp) ? lvlProp.GetInt32() : 0;
 				string targetId = targetProp.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
 
@@ -619,7 +619,7 @@ public partial class MainUI
 					_activeTargetBuffs.Clear();
 					foreach (var buff in targetBuffsProp.EnumerateArray())
 					{
-						string bName = buff.GetProperty("name").GetString();
+						string bName = buff.TryGetProperty("name", out var bnProp) ? bnProp.GetString() : "Unknown Buff";
 						float bDuration = buff.TryGetProperty("duration", out var bDurProp) ? (float)bDurProp.GetDouble() : 0f;
 						float bMaxDuration = buff.TryGetProperty("maxDuration", out var bMaxDurProp) ? (float)bMaxDurProp.GetDouble() : bDuration;
 						bool bBeneficial = buff.TryGetProperty("beneficial", out var bBenProp) ? bBenProp.GetBoolean() : true;
@@ -636,14 +636,19 @@ public partial class MainUI
 					}
 					RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
 				}
+				else
+				{
+					_activeTargetBuffs.Clear();
+					RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
+				}
 
 				// ── Target's Target ──
 				if (targetProp.TryGetProperty("targetTarget", out var ttProp) && ttProp.ValueKind != JsonValueKind.Null)
 				{
 					_targetsTargetWindow.Visible = true;
-					string ttName = ttProp.GetProperty("name").GetString();
-					double ttHp = ttProp.GetProperty("hp").GetDouble();
-					double ttMaxHp = ttProp.GetProperty("maxHp").GetDouble();
+					string ttName = ttProp.TryGetProperty("name", out var ttnProp) ? ttnProp.GetString() : "Unknown";
+					double ttHp = ttProp.TryGetProperty("hp", out var tthpProp) ? tthpProp.GetDouble() : 0;
+					double ttMaxHp = ttProp.TryGetProperty("maxHp", out var ttmhpProp) ? ttmhpProp.GetDouble() : 100;
 
 					_targetsTargetNameLabel.Text = ttName;
 					_targetsTargetHpBar.MaxValue = ttMaxHp;

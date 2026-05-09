@@ -113,10 +113,10 @@ public partial class TrackingWindow : Window
         vbox.AddChild(trackBtn);
 
         var cancelBtn = new Button { Text = "Cancel" };
-        cancelBtn.Pressed += () => { QueueFree(); };
+        cancelBtn.Pressed += () => { if (GodotObject.IsInstanceValid(this)) QueueFree(); };
         vbox.AddChild(cancelBtn);
 
-        CloseRequested += () => { QueueFree(); };
+        CloseRequested += () => { if (GodotObject.IsInstanceValid(this)) QueueFree(); };
 
         // Initial request
         MainUI.Instance.GetClient().SendRaw("{\"type\": \"ABILITY\", \"ability\": \"tracking\"}");

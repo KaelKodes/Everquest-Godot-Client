@@ -14,6 +14,48 @@ public partial class WorldManager : Node3D
         GD.Print("[WORLD] Player frozen for zone load.");
     }
 
+    /// <summary>
+    /// After the world and collision are ready, nudge horizontal EQ position (X/Y) to match the
+    /// last authoritative TeleportPlayer. Vertical (EQ Z) is left to <see cref="FinalizeTeleport"/> raycast
+    /// plus authoritative clamp so we do not fight the +5 spawn boost before the floor snap.
+    /// </summary>
+    public void RefineSpawnPlacementToAuthoritativeEq()
+    {
+        if (!_authSpawnEqValid || _playerCapsule == null || !GodotObject.IsInstanceValid(_playerCapsule))
+            return;
+
+        // Client "EQ feet" from Godot: EQ.X = -godot.X, EQ.Y = -godot.Z, EQ.Z = godot.Y
+        float curEqX = -_playerCapsule.GlobalPosition.X;
+        float curEqY = -_playerCapsule.GlobalPosition.Z;
+
+        float dEqX = _authSpawnEqX - curEqX;
+        float dEqY = _authSpawnEqY - curEqY;
+
+        const float Epsilon = 0.002f;
+        if (Mathf.Abs(dEqX) < Epsilon && Mathf.Abs(dEqY) < Epsilon)
+            return;
+
+        // Horizontal only: godot += (-dEqX, 0, -dEqY) — same XZ map as TeleportPlayer; Y handled in FinalizeTeleport.
+        Vector3 correction = new Vector3(-dEqX, 0f, -dEqY);
+        const float MaxCorrection = 50f;
+        if (correction.Length() > MaxCorrection)
+        {
+            GD.PrintErr($"[WORLD] RefineSpawn: horizontal correction {correction.Length():F1} clamped to {MaxCorrection} (auth EQ {_authSpawnEqX:F1},{_authSpawnEqY:F1} vs cur {curEqX:F1},{curEqY:F1})");
+            correction = correction.Normalized() * MaxCorrection;
+        }
+
+        _playerCapsule.GlobalPosition += correction;
+        _lastSentPos = _playerCapsule.GlobalPosition;
+        GD.Print($"[WORLD] RefineSpawn: applied EQ horizontal delta ({dEqX:F3},{dEqY:F3}) → Godot Δ({correction.X:F3},{correction.Y:F3},{correction.Z:F3})");
+    }
+
+    /// <summary>Authoritative EQ alignment + floor raycast + unfreeze (use after a short post-teleport delay if not in initial zone load).</summary>
+    public void FinishTeleportPlacement()
+    {
+        RefineSpawnPlacementToAuthoritativeEq();
+        FinalizeTeleport();
+    }
+
     public void FinalizeTeleport()
     {
         _loadingInitialZone = false;
@@ -32,24 +74,45 @@ public partial class WorldManager : Node3D
         query.CollisionMask = 1;
         
         var result = spaceState.IntersectRay(query);
+        bool positioned = false;
         if (result.Count > 0)
         {
             Vector3 hitPos = (Vector3)result["position"];
-            _playerCapsule.GlobalPosition = new Vector3(_playerCapsule.GlobalPosition.X, hitPos.Y + 0.1f, _playerCapsule.GlobalPosition.Z);
-            _lastSentPos = _playerCapsule.GlobalPosition; // Update last sent to prevent immediate sync back of old height
-            GD.Print($"[WORLD] Finalized teleport snap to {hitPos.Y:F2}");
-            
-            // Lock the player to this height for the next few frames to resist network jitters
-            _playerCapsule.Velocity = Vector3.Zero;
+            float floorY = hitPos.Y + 0.1f;
+            // If mesh collision disagrees badly with server EQ.Z (Godot Y), trust authority — avoids
+            // UPDATE_POS rubberband → TELEPORT feedback loops when GLB origin/ceiling hits are wrong.
+            const float MaxAuthVsRaycast = 4f;
+            if (_authSpawnEqValid && Mathf.Abs(floorY - _authSpawnEqZ) > MaxAuthVsRaycast)
+            {
+                GD.Print($"[WORLD] FinalizeTeleport: raycast Y {floorY:F2} vs authoritative EQ.Z {_authSpawnEqZ:F2} — using server height.");
+                floorY = _authSpawnEqZ + 0.1f;
+            }
 
-            // Immediately inform server of final snapped height (EQ.Z = Godot.Y)
-            float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
-            if (currentHeading < 0) currentHeading += 512.0f;
-            EmitSignal(SignalName.PlayerMoved, -_playerCapsule.GlobalPosition.X, -_playerCapsule.GlobalPosition.Z, _playerCapsule.GlobalPosition.Y, currentHeading);
+            _playerCapsule.GlobalPosition = new Vector3(_playerCapsule.GlobalPosition.X, floorY, _playerCapsule.GlobalPosition.Z);
+            _lastSentPos = _playerCapsule.GlobalPosition;
+            GD.Print($"[WORLD] Finalized teleport snap (feet Y={floorY:F2})");
+            positioned = true;
         }
         else
         {
-            GD.PrintErr("[WORLD] FinalizeTeleport: No floor detected! Releasing player at current height.");
+            GD.PrintErr("[WORLD] FinalizeTeleport: No floor detected! Using authoritative height if available.");
+            if (_authSpawnEqValid)
+            {
+                _playerCapsule.GlobalPosition = new Vector3(
+                    _playerCapsule.GlobalPosition.X,
+                    _authSpawnEqZ + 0.1f,
+                    _playerCapsule.GlobalPosition.Z);
+                _lastSentPos = _playerCapsule.GlobalPosition;
+                positioned = true;
+            }
+        }
+
+        if (positioned)
+        {
+            _playerCapsule.Velocity = Vector3.Zero;
+            float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
+            if (currentHeading < 0) currentHeading += 512.0f;
+            EmitSignal(SignalName.PlayerMoved, -_playerCapsule.GlobalPosition.X, -_playerCapsule.GlobalPosition.Z, _playerCapsule.GlobalPosition.Y, currentHeading);
         }
 
         _teleportSettling = false;

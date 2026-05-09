@@ -11,6 +11,11 @@ public partial class ItemDetailsWindow : PanelContainer
     private RichTextLabel _augmentsText;
     private TextureRect _itemIcon;
     private Button _closeButton;
+    private HSeparator _sepBeforeAugments;
+    private Button _inscriptionToggle;
+    private TextEdit _noteReadout;
+    private bool _detailShowInscription;
+    private bool _detailHasAugments;
 
     private bool _isDragging = false;
     private Vector2 _dragOffset;
@@ -92,6 +97,13 @@ public partial class ItemDetailsWindow : PanelContainer
         var sep1 = new HSeparator();
         contentVBox.AddChild(sep1);
 
+        _inscriptionToggle = new Button();
+        _inscriptionToggle.Text = "Read inscription";
+        _inscriptionToggle.Visible = false;
+        _inscriptionToggle.FocusMode = FocusModeEnum.None;
+        _inscriptionToggle.Pressed += OnInscriptionTogglePressed;
+        contentVBox.AddChild(_inscriptionToggle);
+
         // Stats Text
         _statsText = new RichTextLabel();
         _statsText.BbcodeEnabled = true;
@@ -99,8 +111,16 @@ public partial class ItemDetailsWindow : PanelContainer
         _statsText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         contentVBox.AddChild(_statsText);
 
-        var sep2 = new HSeparator();
-        contentVBox.AddChild(sep2);
+        _noteReadout = new TextEdit();
+        _noteReadout.Editable = false;
+        _noteReadout.WrapMode = TextEdit.LineWrappingMode.Boundary;
+        _noteReadout.CustomMinimumSize = new Vector2(0, 220);
+        _noteReadout.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _noteReadout.Visible = false;
+        contentVBox.AddChild(_noteReadout);
+
+        _sepBeforeAugments = new HSeparator();
+        contentVBox.AddChild(_sepBeforeAugments);
 
         // Augments Text
         _augmentsText = new RichTextLabel();
@@ -161,6 +181,19 @@ public partial class ItemDetailsWindow : PanelContainer
         string nameColor = magic != "" ? "#00ff00" : "#ffffff";
         _headerText.AppendText($"[color={nameColor}]{name}[/color]\n");
         if (flags != "") _headerText.AppendText($"[color=#dddddd]{flags}[/color]\n");
+
+        int qty = item.TryGetProperty("quantity", out var qtyProp) ? SafeInt(qtyProp) : 1;
+        if (qty < 1) qty = 1;
+        if (qty > 1)
+            _headerText.AppendText($"[color=#cccccc]Quantity: {qty}[/color]\n");
+
+        int baseValue = item.TryGetProperty("value", out var valProp) ? SafeInt(valProp) : 0;
+        if (baseValue > 0)
+            _headerText.AppendText($"[color=#cccccc]Value: {baseValue} cp[/color]\n");
+
+        int sellVal = item.TryGetProperty("sellValue", out var svProp) ? SafeInt(svProp) : 0;
+        if (sellVal > 0)
+            _headerText.AppendText($"[color=#cccccc]Est. merchant: {sellVal} cp[/color]\n");
         
         int playerClassMask = MainUI.Instance != null ? MainUI.Instance.GetPlayerClassMask() : 1;
         int playerRaceMask = MainUI.Instance != null ? MainUI.Instance.GetPlayerRaceMask() : 1;
@@ -270,13 +303,20 @@ public partial class ItemDetailsWindow : PanelContainer
         if (cha != 0) _statsText.AppendText($"[cell]Charisma: {cha}[/cell][cell][/cell]");
         _statsText.AppendText("[/table]");
 
-        if (item.TryGetProperty("bookText", out var bookTextProp)) {
-            string txt = bookTextProp.GetString();
-            if (!string.IsNullOrEmpty(txt) && txt != "MISSING ITEM TEXT") {
-                _statsText.AppendText("\n\n[color=#eebb22]--- Note ---[/color]\n");
-                _statsText.AppendText(txt.Replace("`", "\n").Replace("^", ""));
-            }
+        string noteBody = "";
+        if (item.TryGetProperty("bookText", out var bookTextProp))
+        {
+            noteBody = bookTextProp.ValueKind == JsonValueKind.String
+                ? (bookTextProp.GetString() ?? "")
+                : SafeStr(bookTextProp);
+            if (noteBody == "MISSING ITEM TEXT") noteBody = "";
         }
+        noteBody = noteBody.Replace("`", "\n").Replace("^", "");
+        bool hasNote = !string.IsNullOrWhiteSpace(noteBody);
+        _noteReadout.Text = hasNote ? noteBody : "";
+        _inscriptionToggle.Visible = hasNote;
+        _inscriptionToggle.Text = "Read inscription";
+        _detailShowInscription = false;
 
         // Augments
         _augmentsText.Clear();
@@ -291,19 +331,40 @@ public partial class ItemDetailsWindow : PanelContainer
             }
         }
         
-        if (!hasAugs) {
-            _augmentsText.GetParent<Control>().GetChild<Control>(2).Visible = false; // Hide separator 2
-            _augmentsText.Visible = false;
-        } else {
-            _augmentsText.GetParent<Control>().GetChild<Control>(2).Visible = true;
-            _augmentsText.Visible = true;
-        }
+        _detailHasAugments = hasAugs;
+        ApplyDetailViewMode();
 
         if (!LoadPosition()) {
             GlobalPosition = pos;
         }
         MoveToFront();
         Visible = true;
+    }
+
+    private void OnInscriptionTogglePressed()
+    {
+        _detailShowInscription = !_detailShowInscription;
+        ApplyDetailViewMode();
+    }
+
+    private void ApplyDetailViewMode()
+    {
+        bool hasNote = _inscriptionToggle.Visible;
+        if (!hasNote)
+        {
+            _statsText.Visible = true;
+            _noteReadout.Visible = false;
+            _sepBeforeAugments.Visible = _detailHasAugments;
+            _augmentsText.Visible = _detailHasAugments;
+            return;
+        }
+
+        _inscriptionToggle.Text = _detailShowInscription ? "Show item stats" : "Read inscription";
+        _statsText.Visible = !_detailShowInscription;
+        _noteReadout.Visible = _detailShowInscription;
+        bool showAugLine = !_detailShowInscription && _detailHasAugments;
+        _sepBeforeAugments.Visible = showAugLine;
+        _augmentsText.Visible = showAugLine;
     }
 
     private (string Text, bool Meets) GetClassString(int mask, int playerMask)

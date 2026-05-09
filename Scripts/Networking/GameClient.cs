@@ -62,6 +62,13 @@ public partial class GameClient : Node
     private bool _connected = false;
     public bool IsSocketConnected => _connected;
 
+    /// <summary>Drop identical TELEPORT spam from rubberbanding before client/server Z agree.</summary>
+    private float _teleportDebounceX;
+    private float _teleportDebounceY;
+    private float _teleportDebounceZ;
+    private ulong _teleportDebounceTickMsec;
+    private const ulong TeleportDebounceWindowMsec = 500;
+
     public override void _EnterTree()
     {
         Instance = this;
@@ -311,10 +318,40 @@ public partial class GameClient : Node
                     float tx = root.TryGetProperty("x", out var txp) ? txp.GetSingle() : 0f;
                     float ty = root.TryGetProperty("y", out var typ) ? typ.GetSingle() : 0f;
                     float tz = root.TryGetProperty("z", out var tzp) ? tzp.GetSingle() : 0f;
+
+                    ulong now = Time.GetTicksMsec();
+                    const float te = 0.04f;
+                    if (Mathf.Abs(tx - _teleportDebounceX) < te &&
+                        Mathf.Abs(ty - _teleportDebounceY) < te &&
+                        Mathf.Abs(tz - _teleportDebounceZ) < te &&
+                        now - _teleportDebounceTickMsec < TeleportDebounceWindowMsec)
+                    {
+                        break;
+                    }
+
+                    _teleportDebounceX = tx;
+                    _teleportDebounceY = ty;
+                    _teleportDebounceZ = tz;
+                    _teleportDebounceTickMsec = now;
+
                     GD.Print($"[NET] Teleport to EQ ({tx}, {ty}, {tz})");
-                    var wm = GetTree().Root.GetNodeOrNull<WorldManager>("MainUI/ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+                    var tree = GetTree();
+                    if (tree == null) break;
+
+                    var wm = tree.Root.GetNodeOrNull<WorldManager>("MainUI/ViewPortPanel/SubViewportContainer/SubViewport/World3D");
                     if (wm != null)
+                    {
                         wm.TeleportPlayer(tx, ty, tz);
+                        var settleTimer = tree.CreateTimer(0.12f);
+                        settleTimer.Timeout += () =>
+                        {
+                            var t2 = GetTree();
+                            if (t2 == null) return;
+                            var w2 = t2.Root.GetNodeOrNull<WorldManager>("MainUI/ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+                            if (w2 != null && GodotObject.IsInstanceValid(w2))
+                                w2.FinishTeleportPlacement();
+                        };
+                    }
                     break;
                 }
                 case "WELCOME":

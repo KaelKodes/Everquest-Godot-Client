@@ -601,6 +601,27 @@ public partial class MainUI
 				_client.SendRaw($"{{\"type\": \"RANDOM\", \"max\": {maxRoll}}}");
 				break;
 
+			case "/corpse":
+			case "/dragcorpse":
+				_client.SendRaw("{\"type\": \"CORPSE_DRAG\"}");
+				break;
+			case "/consent":
+				if (string.IsNullOrEmpty(body))
+				{
+					Log("SYSTEM", "Usage: /consent <name>, /consent group, /consent list");
+					break;
+				}
+				_client.SendRaw($"{{\"type\": \"CORPSE_CONSENT\", \"targetName\": \"{EscapeJson(body)}\"}}");
+				break;
+			case "/deny":
+				if (string.IsNullOrEmpty(body))
+				{
+					Log("SYSTEM", "Usage: /deny <name>, /deny group, /deny all");
+					break;
+				}
+				_client.SendRaw($"{{\"type\": \"CORPSE_DENY\", \"targetName\": \"{EscapeJson(body)}\"}}");
+				break;
+
 			default:
 				_client.SendRaw($"{{\"type\": \"SERVER_COMMAND\", \"command\": \"{EscapeJson(cmd)}\", \"args\": \"{EscapeJson(body)}\"}}");
 				break;

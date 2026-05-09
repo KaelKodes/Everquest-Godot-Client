@@ -5,29 +5,78 @@ using System.Collections.Generic;
 
 public partial class MainUI
 {
+	/// <summary>Keyed by the bag item&apos;s instance id (<c>item_id</c>), not inventory slot — multiple bags can share slot ranges on the server.</summary>
 	private Dictionary<int, BagWindow> _openBags = new Dictionary<int, BagWindow>();
 
-	public void CloseBag(int slotId)
+	/// <summary>EQ <c>bagslots</c> from the item definition (items table / server payload). Not a UI default.</summary>
+	private static int ReadBagSlotCount(JsonElement item)
 	{
-		if (_openBags.TryGetValue(slotId, out var win)) {
-			if (IsInstanceValid(win)) {
-				win.QueueFree();
-			}
-			_openBags.Remove(slotId);
+		if (!item.TryGetProperty("bagslots", out var bs))
+			return 0;
+		if (bs.ValueKind == JsonValueKind.Number)
+			return Math.Max(0, bs.GetInt32());
+		if (bs.ValueKind == JsonValueKind.String && int.TryParse(bs.GetString(), out int n))
+			return Math.Max(0, n);
+		return 0;
+	}
+
+	/// <summary>EQ bags are identified by <c>bagslots</c> &gt; 0 on the item (same as live item data).</summary>
+	private static bool ItemIsOpenableContainer(JsonElement item) => ReadBagSlotCount(item) > 0;
+
+	/// <summary>Completes a short right-click on an inventory/control slot (press was handled in <see cref="HandleSlotInput"/>).
+	/// Also invoked from <see cref="MainUI._Input"/> so release is seen even when the button never gets <c>gui_input</c> for release.</summary>
+	private void TryFinishBagRightClickToggle()
+	{
+		if (_rightClickSlotId < 0) return;
+		double t = _rightClickTimer;
+		var bagData = _rightClickItemData;
+		int slot = _rightClickSlotId;
+
+		_rightClickSlotId = -1;
+		_rightClickTimer = -1;
+		_rightClickTarget = null;
+		_rightClickItemData = null;
+
+		if (t < 0 || t >= 1.0 || !bagData.HasValue) return;
+		if (!ItemIsOpenableContainer(bagData.Value)) return;
+		if (!bagData.Value.TryGetProperty("item_id", out var instP)) return;
+		int iid = instP.GetInt32();
+		if (!_openBags.ContainsKey(iid))
+			OpenBag(slot, bagData.Value);
+		else
+			CloseBag(iid);
+	}
+
+	public void CloseBag(int hostItemInstanceId)
+	{
+		if (!_openBags.TryGetValue(hostItemInstanceId, out var win))
+			return;
+		_openBags.Remove(hostItemInstanceId);
+		if (IsInstanceValid(win))
+		{
+			BagLayoutStore.Save(win.ParentSlotId, win.GlobalPosition);
+			win.Hide();
+			win.QueueFree();
 		}
 	}
 
 	public void OpenBag(int slotId, JsonElement itemData)
 	{
-		if (_openBags.ContainsKey(slotId)) return;
-		
-		int bagslots = itemData.TryGetProperty("bagslots", out var bsProp) ? bsProp.GetInt32() : 8;
+		if (!itemData.TryGetProperty("item_id", out var instProp))
+			return;
+		int hostInstId = instProp.GetInt32();
+		if (_openBags.ContainsKey(hostInstId)) return;
+
+		int bagslots = ReadBagSlotCount(itemData);
+		if (bagslots <= 0) return;
+
 		string bagName = itemData.TryGetProperty("itemName", out var nProp) ? nProp.GetString() : "Bag";
 		
+		int cascadeIdx = _openBags.Count;
 		var bagWin = new BagWindow();
 		AddChild(bagWin);
-		bagWin.Init(slotId, bagslots, bagName);
-		_openBags[slotId] = bagWin;
+		bagWin.Init(slotId, hostInstId, bagslots, bagName, cascadeIdx);
+		_openBags[hostInstId] = bagWin;
 		
 		// Refresh inventory to populate bag contents
 		_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
@@ -45,9 +94,9 @@ public partial class MainUI
 			
 			if (_slotItemData.TryGetValue(btn, out var itemData))
 			{
-				if (itemData.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1)
+				if (ItemIsOpenableContainer(itemData) && itemData.TryGetProperty("item_id", out var ib))
 				{
-					if (!_openBags.ContainsKey(slotId))
+					if (!_openBags.ContainsKey(ib.GetInt32()))
 					{
 						anyBagClosed = true;
 						break;
@@ -64,7 +113,7 @@ public partial class MainUI
 				var btn = _invSlots[idx];
 				if (_slotItemData.TryGetValue(btn, out var itemData))
 				{
-					if (itemData.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1)
+					if (ItemIsOpenableContainer(itemData))
 					{
 						OpenBag(slotId, itemData);
 					}
@@ -73,14 +122,44 @@ public partial class MainUI
 		}
 		else
 		{
-			var slotsToClose = new List<int>();
-			foreach (var slotId in _openBags.Keys)
+			var toClose = new List<int>();
+			foreach (var kvp in _openBags)
 			{
-				if (slotId >= 22 && slotId <= 29) slotsToClose.Add(slotId);
+				if (kvp.Value != null && IsInstanceValid(kvp.Value)
+					&& kvp.Value.ParentSlotId >= 22 && kvp.Value.ParentSlotId <= 29)
+					toClose.Add(kvp.Key);
 			}
-			foreach (var slotId in slotsToClose) CloseBag(slotId);
+			foreach (var hostId in toClose) CloseBag(hostId);
 		}
 	}
+
+	/// <summary>Place an item into whichever open bag window owns this <paramref name="slotId"/> (by <see cref="BagWindow.BaseBagSlot"/> range).</summary>
+	private bool TryApplyItemToOpenBagWindows(int slotId, JsonElement item, string name, Texture2D iconTex)
+	{
+		foreach (var kvp in _openBags)
+		{
+			var win = kvp.Value;
+			if (win == null || !IsInstanceValid(win)) continue;
+			int bs = win.BaseBagSlot;
+			int n = win.Slots.Length;
+			if (slotId < bs || slotId >= bs + n) continue;
+			int internalIdx = slotId - bs;
+			var btn = win.Slots[internalIdx];
+			btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
+			if (iconTex != null)
+			{
+				btn.Icon = iconTex;
+				btn.ExpandIcon = true;
+				btn.IconAlignment = HorizontalAlignment.Center;
+			}
+			btn.TooltipText = name;
+			SetInventorySlotStackOverlay(btn, ReadItemStackCount(item));
+			_slotItemData[btn] = item.Clone();
+			return true;
+		}
+		return false;
+	}
+
 	private void OnInventoryUpdated(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -109,6 +188,7 @@ public partial class MainUI
 				kvp.Value.Text = disp;
 				kvp.Value.Icon = null;
 				kvp.Value.TooltipText = kvp.Key;
+				SetInventorySlotStackOverlay(kvp.Value, 1);
 			}
 
 			foreach (var kvp in _openBags) {
@@ -117,6 +197,7 @@ public partial class MainUI
 						btn.Text = "";
 						btn.Icon = null;
 						btn.TooltipText = "Empty";
+						SetInventorySlotStackOverlay(btn, 1);
 						_slotItemData.Remove(btn);
 					}
 				}
@@ -127,12 +208,14 @@ public partial class MainUI
 					btn.Text = "";
 					btn.Icon = null;
 					btn.TooltipText = "Empty";
+					SetInventorySlotStackOverlay(btn, 1);
 					_slotItemData.Remove(btn);
 				}
 				foreach (var btn in _bankWindow.SharedBankSlots) {
 					btn.Text = "";
 					btn.Icon = null;
 					btn.TooltipText = "Empty";
+					SetInventorySlotStackOverlay(btn, 1);
 					_slotItemData.Remove(btn);
 				}
 			}
@@ -143,6 +226,7 @@ public partial class MainUI
 					_invSlots[i].Text = "";
 					_invSlots[i].Icon = null;
 					_invSlots[i].TooltipText = "Empty";
+					SetInventorySlotStackOverlay(_invSlots[i], 1);
 				}
 			}
 
@@ -161,7 +245,6 @@ public partial class MainUI
 				string name = item.GetProperty("itemName").GetString();
 				int equipped = item.GetProperty("equipped").GetInt32();
 				int iconId = item.TryGetProperty("icon", out var iProp) ? iProp.GetInt32() : 0;
-				string statText = BuildItemStatText(item);
 
 				Texture2D iconTex = null;
 				if (iconId > 0 && iconMgr != null) {
@@ -177,62 +260,11 @@ public partial class MainUI
 							slotBtn.ExpandIcon = true;
 							slotBtn.IconAlignment = HorizontalAlignment.Center;
 						}
-						slotBtn.TooltipText = $"{name}\n{statText}";
+						slotBtn.TooltipText = name;
+						SetInventorySlotStackOverlay(slotBtn, ReadItemStackCount(item));
 						_slotItemData[slotBtn] = item.Clone();
 					}
-				} else if (slotId >= 251 && slotId <= 330) {
-					int bagIdx = (slotId - 251) / 10;
-					int parentSlotId = 22 + bagIdx;
-					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
-						int internalIdx = slotId - (251 + (bagIdx * 10));
-						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
-							var btn = win.Slots[internalIdx];
-							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
-							if (iconTex != null) {
-								btn.Icon = iconTex;
-								btn.ExpandIcon = true;
-								btn.IconAlignment = HorizontalAlignment.Center;
-							}
-							int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
-							string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
-							btn.TooltipText = $"{name}\n{statText}{sellText}";
-							_slotItemData[btn] = item.Clone();
-						}
-					}
-				} else if (slotId >= 2531 && slotId <= 2770) {
-					int bagIdx = (slotId - 2531) / 10;
-					int parentSlotId = 2000 + bagIdx;
-					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
-						int internalIdx = slotId - (2531 + (bagIdx * 10));
-						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
-							var btn = win.Slots[internalIdx];
-							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
-							if (iconTex != null) {
-								btn.Icon = iconTex;
-								btn.ExpandIcon = true;
-								btn.IconAlignment = HorizontalAlignment.Center;
-							}
-							btn.TooltipText = $"{name}\n{statText}";
-							_slotItemData[btn] = item.Clone();
-						}
-					}
-				} else if (slotId >= 2511 && slotId <= 2590) {
-					int bagIdx = (slotId - 2511) / 10;
-					int parentSlotId = 2500 + bagIdx;
-					if (_openBags.TryGetValue(parentSlotId, out var win) && IsInstanceValid(win)) {
-						int internalIdx = slotId - (2511 + (bagIdx * 10));
-						if (internalIdx >= 0 && internalIdx < win.Slots.Length) {
-							var btn = win.Slots[internalIdx];
-							btn.Text = iconTex != null ? "" : (name.Length > 12 ? name[..12] + ".." : name);
-							if (iconTex != null) {
-								btn.Icon = iconTex;
-								btn.ExpandIcon = true;
-								btn.IconAlignment = HorizontalAlignment.Center;
-							}
-							btn.TooltipText = $"{name}\n{statText}";
-							_slotItemData[btn] = item.Clone();
-						}
-					}
+				} else if (TryApplyItemToOpenBagWindows(slotId, item, name, iconTex)) {
 				} else if (slotId >= 2000 && slotId <= 2023) {
 					if (_bankWindow != null && IsInstanceValid(_bankWindow)) {
 						int idx = slotId - 2000;
@@ -244,7 +276,8 @@ public partial class MainUI
 								btn.ExpandIcon = true;
 								btn.IconAlignment = HorizontalAlignment.Center;
 							}
-							btn.TooltipText = $"{name}\n{statText}";
+							btn.TooltipText = name;
+							SetInventorySlotStackOverlay(btn, ReadItemStackCount(item));
 							_slotItemData[btn] = item.Clone();
 						}
 					}
@@ -259,7 +292,8 @@ public partial class MainUI
 								btn.ExpandIcon = true;
 								btn.IconAlignment = HorizontalAlignment.Center;
 							}
-							btn.TooltipText = $"{name}\n{statText}";
+							btn.TooltipText = name;
+							SetInventorySlotStackOverlay(btn, ReadItemStackCount(item));
 							_slotItemData[btn] = item.Clone();
 						}
 					}
@@ -275,9 +309,8 @@ public partial class MainUI
 								btn.IconAlignment = HorizontalAlignment.Center;
 							}
 							
-							int sellVal = item.TryGetProperty("sellValue", out var svProp) ? svProp.GetInt32() : 0;
-							string sellText = sellVal > 0 ? $"\nSell: {FormatCurrency(sellVal)}" : "";
-							btn.TooltipText = $"{name}\n{statText}{sellText}";
+							btn.TooltipText = name;
+							SetInventorySlotStackOverlay(btn, ReadItemStackCount(item));
 							_slotItemData[btn] = item.Clone();
 						}
 					}
@@ -445,7 +478,7 @@ public partial class MainUI
 
 				if (_heldItem.HasValue) {
 					// Place held item into this slot
-					PlaceHeldItem(slotId, btn);
+					PlaceHeldItem(slotId, btn, mb.ShiftPressed);
 				} else if (_slotItemData.TryGetValue(btn, out var itemData)) {
 					// Pick up item from this slot
 					PickUpItem(itemData, slotId, btn);
@@ -466,20 +499,9 @@ public partial class MainUI
 					_rightClickTimer = 0;
 					_rightClickTarget = btn;
 					_rightClickItemData = itemData;
-				} else if (!mb.Pressed) {
-					if (_rightClickTimer >= 0 && _rightClickTimer < 1.0) {
-						// Short right-click — open bag
-						if (_rightClickItemData.HasValue && _rightClickItemData.Value.TryGetProperty("itemtype", out var itProp) && itProp.GetInt32() == 1) {
-							// Open bag window if it's a container
-							if (!_openBags.ContainsKey(slotId)) {
-								OpenBag(slotId, _rightClickItemData.Value);
-							} else {
-								CloseBag(slotId);
-							}
-						}
-					}
-					_rightClickTimer = -1;
-					_rightClickTarget = null;
+					_rightClickSlotId = slotId;
+				} else if (!mb.Pressed && mb.ButtonIndex == MouseButton.Right) {
+					TryFinishBagRightClickToggle();
 				}
 			}
 		}
@@ -496,7 +518,7 @@ public partial class MainUI
 		sourceBtn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f); // dim the source
 	}
 
-	private void PlaceHeldItem(int targetSlotId, Button targetBtn)
+	private void PlaceHeldItem(int targetSlotId, Button targetBtn, bool shiftPressed = false)
 	{
 		if (!_heldItem.HasValue) return;
 		int fromSlot = _heldFromSlotId;
@@ -525,6 +547,13 @@ public partial class MainUI
 			int itemId = _heldItem.Value.GetProperty("item_id").GetInt32();
 			_client.SendRaw($"{{\"type\": \"UNEQUIP_ITEM\", \"itemId\": {itemId}, \"slot\": {targetSlotId}}}");
 		} else if (!targetIsEquipSlot && !sourceIsEquipSlot) {
+			int qty = ReadItemStackCount(_heldItem.Value);
+			if (shiftPressed && qty > 1 && fromSlot != targetSlotId
+				&& IsSplittableContainerSlot(fromSlot) && IsSplittableContainerSlot(targetSlotId))
+			{
+				ShowSplitStackDialog(fromSlot, targetSlotId, qty);
+				return;
+			}
 			// Moving between inventory slots
 			_client.SendRaw($"{{\"type\": \"MOVE_ITEM\", \"fromSlot\": {fromSlot}, \"toSlot\": {targetSlotId}}}");
 		} else {
@@ -534,6 +563,112 @@ public partial class MainUI
 		}
 
 		CancelHeldItem();
+	}
+
+	private static bool IsSplittableContainerSlot(int slot)
+	{
+		if (slot >= 22 && slot <= 29) return true;
+		// Bank / shared bank main grid (same slot ids as BankWindow)
+		if (slot >= 2000 && slot <= 2023) return true;
+		if (slot >= 2500 && slot <= 2507) return true;
+		if (slot >= 251 && slot <= 330) return true;
+		if (slot >= 2511 && slot <= 2590) return true;
+		if (slot >= 2531 && slot <= 2770) return true;
+		return false;
+	}
+
+	private void EnsureSplitStackWindow()
+	{
+		if (_splitStackWindow != null && GodotObject.IsInstanceValid(_splitStackWindow)) return;
+
+		_splitStackWindow = new Window
+		{
+			Title = "Split stack",
+			Unresizable = true,
+			Size = new Vector2I(360, 168),
+			Exclusive = true,
+			PopupWindow = true,
+		};
+		_splitStackWindow.CloseRequested += () => { _splitStackWindow.Hide(); };
+		AddChild(_splitStackWindow);
+
+		var margin = new MarginContainer();
+		margin.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+		margin.AddThemeConstantOverride("margin_left", 12);
+		margin.AddThemeConstantOverride("margin_right", 12);
+		margin.AddThemeConstantOverride("margin_top", 12);
+		margin.AddThemeConstantOverride("margin_bottom", 12);
+		_splitStackWindow.AddChild(margin);
+
+		var vbox = new VBoxContainer();
+		vbox.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+		vbox.AddThemeConstantOverride("separation", 10);
+		margin.AddChild(vbox);
+
+		_splitStackHintLabel = new Label();
+		_splitStackHintLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		_splitStackHintLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		vbox.AddChild(_splitStackHintLabel);
+
+		_splitStackSlider = new HSlider();
+		_splitStackSlider.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		_splitStackSlider.Step = 1;
+		_splitStackSlider.ValueChanged += _ => UpdateSplitStackHint();
+		vbox.AddChild(_splitStackSlider);
+
+		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
+		row.AddThemeConstantOverride("separation", 8);
+		vbox.AddChild(row);
+
+		var cancelBtn = new Button { Text = "Cancel" };
+		cancelBtn.FocusMode = FocusModeEnum.None;
+		cancelBtn.Pressed += OnSplitStackCancelPressed;
+		row.AddChild(cancelBtn);
+
+		var okBtn = new Button { Text = "Split" };
+		okBtn.FocusMode = FocusModeEnum.None;
+		okBtn.Pressed += OnSplitStackConfirmPressed;
+		row.AddChild(okBtn);
+	}
+
+	private void UpdateSplitStackHint()
+	{
+		if (_splitStackHintLabel == null || _splitStackSlider == null) return;
+		int move = (int)Math.Round(_splitStackSlider.Value);
+		int remain = _splitHeldQuantity - move;
+		if (remain < 1) remain = 1;
+		if (move < 1) move = 1;
+		_splitStackHintLabel.Text =
+			$"Amount moving to the other slot: {move}  —  {remain} remain in the source stack.";
+	}
+
+	private void ShowSplitStackDialog(int fromSlot, int toSlot, int quantity)
+	{
+		EnsureSplitStackWindow();
+		_splitPendingFrom = fromSlot;
+		_splitPendingTo = toSlot;
+		_splitHeldQuantity = quantity;
+		_splitStackSlider.MinValue = 1;
+		_splitStackSlider.MaxValue = quantity - 1;
+		_splitStackSlider.Value = 1;
+		UpdateSplitStackHint();
+		_splitStackWindow.PopupCentered();
+	}
+
+	private void OnSplitStackConfirmPressed()
+	{
+		if (_splitStackWindow == null || !_splitStackWindow.Visible) return;
+		int n = (int)Math.Round(_splitStackSlider.Value);
+		if (n < 1 || n >= _splitHeldQuantity) return;
+		_client.SendRaw($"{{\"type\": \"SPLIT_MOVE_ITEM\", \"fromSlot\": {_splitPendingFrom}, \"toSlot\": {_splitPendingTo}, \"count\": {n}}}");
+		_splitStackWindow.Hide();
+		CancelHeldItem();
+	}
+
+	private void OnSplitStackCancelPressed()
+	{
+		if (_splitStackWindow != null && _splitStackWindow.Visible)
+			_splitStackWindow.Hide();
 	}
 
 	private void CancelHeldItem()
@@ -566,6 +701,56 @@ public partial class MainUI
 		_itemDetailPopup.ShowItem(item, pos);
 	}
 
+	/// <summary>Server sends stack count as <c>quantity</c> (EQEmu charges).</summary>
+	private static int ReadItemStackCount(JsonElement item)
+	{
+		if (item.TryGetProperty("quantity", out var q))
+		{
+			if (q.ValueKind == JsonValueKind.Number)
+			{
+				int n = q.GetInt32();
+				return n < 1 ? 1 : n;
+			}
+			if (q.ValueKind == JsonValueKind.String && int.TryParse(q.GetString(), out int parsed))
+				return parsed < 1 ? 1 : parsed;
+		}
+		return 1;
+	}
+
+	/// <summary>Small count in the bottom-right of a slot; hidden when <paramref name="quantity"/> &lt;= 1.</summary>
+	private static void SetInventorySlotStackOverlay(Button btn, int quantity)
+	{
+		if (btn == null || !GodotObject.IsInstanceValid(btn)) return;
+		var stackLbl = btn.GetNodeOrNull<Label>("StackQty");
+		if (quantity <= 1)
+		{
+			if (stackLbl != null) stackLbl.Visible = false;
+			return;
+		}
+		if (stackLbl == null)
+		{
+			stackLbl = new Label { Name = "StackQty" };
+			stackLbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+			stackLbl.AddThemeFontSizeOverride("font_size", 10);
+			stackLbl.AddThemeColorOverride("font_color", new Color(1f, 1f, 0.92f, 1f));
+			stackLbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+			stackLbl.AddThemeConstantOverride("outline_size", 3);
+			stackLbl.HorizontalAlignment = HorizontalAlignment.Right;
+			stackLbl.VerticalAlignment = VerticalAlignment.Bottom;
+			btn.AddChild(stackLbl);
+			stackLbl.AnchorLeft = 1;
+			stackLbl.AnchorTop = 1;
+			stackLbl.AnchorRight = 1;
+			stackLbl.AnchorBottom = 1;
+			stackLbl.OffsetLeft = -28;
+			stackLbl.OffsetTop = -16;
+			stackLbl.OffsetRight = -2;
+			stackLbl.OffsetBottom = -2;
+		}
+		stackLbl.Text = quantity.ToString();
+		stackLbl.Visible = true;
+	}
+
 	private string GetSlotDescription(int bitmask)
 	{
 		var slotNames = new List<string>();
@@ -576,35 +761,6 @@ public partial class MainUI
 			if ((bitmask & (1 << i)) != 0) slotNames.Add(names[i]);
 		}
 		return slotNames.Count > 0 ? string.Join(", ", slotNames) : "None";
-	}
-
-	private string BuildItemStatText(JsonElement item)
-	{
-		var parts = new List<string>();
-		if (item.TryGetProperty("damage", out var dmg) && dmg.GetInt32() > 0) parts.Add($"Dmg: {dmg.GetInt32()}");
-		if (item.TryGetProperty("delay", out var delay) && delay.GetInt32() > 0) parts.Add($"Dly: {delay.GetInt32()}");
-		if (item.TryGetProperty("ac", out var ac) && ac.GetInt32() > 0) parts.Add($"AC: {ac.GetInt32()}");
-		if (item.TryGetProperty("hp", out var hp) && hp.GetInt32() > 0) parts.Add($"HP:+{hp.GetInt32()}");
-		if (item.TryGetProperty("mana", out var mana) && mana.GetInt32() > 0) parts.Add($"Mana:+{mana.GetInt32()}");
-		if (item.TryGetProperty("str", out var str) && str.GetInt32() != 0) parts.Add($"STR:+{str.GetInt32()}");
-		if (item.TryGetProperty("sta", out var sta) && sta.GetInt32() != 0) parts.Add($"STA:+{sta.GetInt32()}");
-		if (item.TryGetProperty("agi", out var agi) && agi.GetInt32() != 0) parts.Add($"AGI:+{agi.GetInt32()}");
-		if (item.TryGetProperty("dex", out var dex) && dex.GetInt32() != 0) parts.Add($"DEX:+{dex.GetInt32()}");
-		if (item.TryGetProperty("wis", out var wis) && wis.GetInt32() != 0) parts.Add($"WIS:+{wis.GetInt32()}");
-		if (item.TryGetProperty("int", out var intel) && intel.GetInt32() != 0) parts.Add($"INT:+{intel.GetInt32()}");
-		if (item.TryGetProperty("cha", out var cha) && cha.GetInt32() != 0) parts.Add($"CHA:+{cha.GetInt32()}");
-		
-		string stats = parts.Count > 0 ? string.Join(" | ", parts) : "";
-		
-		if (item.TryGetProperty("bookText", out var bookTextProp)) {
-			string txt = bookTextProp.GetString();
-			if (!string.IsNullOrEmpty(txt) && txt != "MISSING ITEM TEXT") {
-				if (!string.IsNullOrEmpty(stats)) stats += "\n\n";
-				stats += $"[Note]\n{txt.Replace("`", "\n").Replace("^", "")}";
-			}
-		}
-		
-		return stats;
 	}
 
 	private void BuildEquipmentGrid()

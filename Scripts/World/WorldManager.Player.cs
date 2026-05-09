@@ -76,6 +76,11 @@ public partial class WorldManager : Node3D
 
         GD.Print($"[WORLD] Spawning Player at Godot({x:F1}, {y:F1}, {z:F1}) (EQ: {rawX:F1}, {rawY:F1}, {rawZ:F1})");
 
+        _authSpawnEqX = rawX;
+        _authSpawnEqY = rawY;
+        _authSpawnEqZ = rawZ;
+        _authSpawnEqValid = true;
+
         _playerCapsule = new EntityCapsule();
         _playerCapsule.Name = "Player";
         _playerCapsule.Position = new Vector3(x, y, z);
@@ -137,6 +142,11 @@ public partial class WorldManager : Node3D
         y += 5.0f;
 
         GD.Print($"[WORLD] TeleportPlayer: EQ({rawX}, {rawY}, {rawZ}) → Godot({x:F1}, {y:F1}, {z:F1})");
+
+        _authSpawnEqX = rawX;
+        _authSpawnEqY = rawY;
+        _authSpawnEqZ = rawZ;
+        _authSpawnEqValid = true;
 
         if (_playerCapsule == null)
         {

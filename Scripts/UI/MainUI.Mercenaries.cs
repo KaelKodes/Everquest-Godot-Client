@@ -8,6 +8,7 @@ public partial class MainUI : Control
 	{
 		try
 		{
+			if (!IsInsideTree()) return;
 			string json = data.AsString();
 			using var doc = JsonDocument.Parse(json);
 			_mercenariesData = doc.RootElement.Clone();
@@ -21,19 +22,22 @@ public partial class MainUI : Control
 
 	private void UpdateMercenariesUI()
 	{
+		if (!IsInsideTree()) return;
 		EnsureMercenariesManagerWindow();
 
 		if (_mercenariesData.ValueKind != JsonValueKind.Object || !_mercenariesData.TryGetProperty("mercenaries", out var mercArray) || mercArray.ValueKind != JsonValueKind.Array)
 		{
 			for (int i = 0; i < 2; i++)
 			{
-				if (_mercSlotButtons[i] != null) _mercSlotButtons[i].Text = "---";
+				if (_mercSlotButtons[i] != null && IsInstanceValid(_mercSlotButtons[i]))
+					_mercSlotButtons[i].Text = "---";
 			}
 			return;
 		}
 
 		for (int i = 0; i < 2; i++)
 		{
+			if (_mercSlotButtons[i] == null || !IsInstanceValid(_mercSlotButtons[i])) continue;
 			if (i < mercArray.GetArrayLength())
 			{
 				var merc = mercArray[i];
@@ -42,11 +46,11 @@ public partial class MainUI : Control
 					string name = merc.TryGetProperty("name", out var n) ? n.GetString() : "Unknown";
 					string race = merc.TryGetProperty("race", out var r) ? r.GetString() : "Human";
 					string cls = merc.TryGetProperty("class", out var c) ? c.GetString() : "Warrior";
-					if (_mercSlotButtons[i] != null) _mercSlotButtons[i].Text = $"{name} {race}/{cls}";
+					_mercSlotButtons[i].Text = $"{name} {race}/{cls}";
 					continue;
 				}
 			}
-			if (_mercSlotButtons[i] != null) _mercSlotButtons[i].Text = "---";
+			_mercSlotButtons[i].Text = "---";
 		}
 	}
 

@@ -33,7 +33,7 @@ public partial class WorldManager : Node3D
             GD.PrintErr($"[WORLD] ProcessMobMove parsing error: {ex.Message}");
         }
     }
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f, float size = 6f)
+    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f, float size = 6f, bool wantsHeldLanternLight = false, int lightPharosVariant = -1)
     {
         if (_activeEntities.ContainsKey(id)) return;
 
@@ -46,7 +46,16 @@ public partial class WorldManager : Node3D
         _activeEntities[id] = instance;
 
         try {
+            if (lightPharosVariant >= 0)
+                instance.PrepareLightPharosVariantForSpawn(lightPharosVariant);
+            // Before Setup so AttachWeapons(..., equip) sees _hasLightSource and wires handheld omni to lantern.
+            if (wantsHeldLanternLight)
+                instance.SetLightSource(true);
             instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson, size);
+            if (wantsHeldLanternLight)
+                instance.SetLightSource(true);
+            if (lightPharosVariant >= 0)
+                instance.SetLightPharosVariant(lightPharosVariant);
             // Apply current vision effects
             if (_currentVisionStyle == "infravision")
                 instance.SetInfravision(true);
@@ -100,6 +109,10 @@ public partial class WorldManager : Node3D
             // No reflection or offsets are needed!
             float size = ent.TryGetProperty("size", out var sizeProp) ? (float)sizeProp.GetDouble() : 6f;
             float godotYaw = (rawHeading / 512f) * 360f;
+            bool wantsHeldLanternLight = ent.TryGetProperty("hasLightSource", out var hlProp) && hlProp.GetBoolean();
+            int lightPharosVariant = -1;
+            if (ent.TryGetProperty("lightPharosVariant", out var lpv) && lpv.ValueKind == System.Text.Json.JsonValueKind.Number)
+                lightPharosVariant = lpv.GetInt32();
 
             incomingIds.Add(id);
 
@@ -107,7 +120,7 @@ public partial class WorldManager : Node3D
             {
                 // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw, size);
+                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw, size, wantsHeldLanternLight, lightPharosVariant);
             }
             else
             {
@@ -139,6 +152,11 @@ public partial class WorldManager : Node3D
                             ec.TargetYaw = godotYaw;
                         }
                     }
+
+                    if (ent.TryGetProperty("hasLightSource", out var hlUpdate))
+                        ec.SetLightSource(hlUpdate.GetBoolean());
+                    if (lightPharosVariant >= 0)
+                        ec.SetLightPharosVariant(lightPharosVariant);
                 }
             }
             

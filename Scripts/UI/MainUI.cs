@@ -105,6 +105,8 @@ public partial class MainUI : Control
 	private Label _zoneLabel;
 	private HBoxContainer _zoneConnections;
 	private string _currentZoneId = "";
+	/// <summary>Optional .s3d basename from server STATUS when it differs from <see cref="_currentZoneId"/> (PEQ short_name).</summary>
+	private string _lanternArchiveBase = null;
 	
 	// Map
 	private MudMap _mudMap;
@@ -315,6 +317,17 @@ public partial class MainUI : Control
 	private Label _castBarLabel;
 	private Panel _castBarPanel;
 
+	// Scroll scribing (server-timed)
+	private bool _isScribing = false;
+	private float _scribeTimeTotal = 0;
+	private float _scribeTimeElapsed = 0;
+	private string _scribingSpellName = "";
+	private ProgressBar _scribeBar;
+	private Label _scribeBarLabel;
+	private Panel _scribeBarPanel;
+	private int _scribeRightLastSlot = -1;
+	private ulong _scribeRightLastMs = 0;
+
 	// Options state
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
@@ -425,6 +438,7 @@ public partial class MainUI : Control
 		_client.CampComplete += OnCampComplete;
 		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.SpellAnimationReceived += OnSpellAnimationReceived;
+		_client.ScribeScrollReceived += OnScribeScrollReceived;
 		_client.MessageReceived += OnGenericMessage;
 
 		// ── Connection Recovery ──
@@ -1075,6 +1089,62 @@ public partial class MainUI : Control
 		AddChild(_castBarPanel);
 		_castBarPanel.Hide();
 
+		// ── Scribe progress (below cast bar) ──
+		_scribeBarPanel = new Panel();
+		_scribeBarPanel.CustomMinimumSize = new Vector2(250, 26);
+		_scribeBarPanel.AnchorLeft = 0.5f;
+		_scribeBarPanel.AnchorRight = 0.5f;
+		_scribeBarPanel.AnchorTop = 0.60f;
+		_scribeBarPanel.AnchorBottom = 0.60f;
+		_scribeBarPanel.OffsetLeft = -125;
+		_scribeBarPanel.OffsetRight = 125;
+		_scribeBarPanel.OffsetTop = -13;
+		_scribeBarPanel.OffsetBottom = 13;
+		_scribeBarPanel.ZIndex = 10;
+		_scribeBarPanel.MouseFilter = Control.MouseFilterEnum.Ignore;
+		var scribePanelStyle = new StyleBoxFlat();
+		scribePanelStyle.BgColor = new Color(0.08f, 0.12f, 0.18f, 0.88f);
+		scribePanelStyle.SetBorderWidthAll(1);
+		scribePanelStyle.BorderColor = new Color(0.35f, 0.55f, 0.85f, 0.9f);
+		scribePanelStyle.CornerRadiusBottomLeft = 3;
+		scribePanelStyle.CornerRadiusBottomRight = 3;
+		scribePanelStyle.CornerRadiusTopLeft = 3;
+		scribePanelStyle.CornerRadiusTopRight = 3;
+		_scribeBarPanel.AddThemeStyleboxOverride("panel", scribePanelStyle);
+
+		_scribeBar = new ProgressBar();
+		_scribeBar.AnchorRight = 1;
+		_scribeBar.AnchorBottom = 1;
+		_scribeBar.OffsetLeft = 4;
+		_scribeBar.OffsetRight = -4;
+		_scribeBar.OffsetTop = 4;
+		_scribeBar.OffsetBottom = -4;
+		_scribeBar.MinValue = 0;
+		_scribeBar.MaxValue = 100;
+		_scribeBar.ShowPercentage = false;
+		_scribeBar.MouseFilter = Control.MouseFilterEnum.Ignore;
+		var scribeFill = new StyleBoxFlat();
+		scribeFill.BgColor = new Color(0.25f, 0.45f, 0.85f, 0.92f);
+		scribeFill.SetCornerRadiusAll(2);
+		_scribeBar.AddThemeStyleboxOverride("fill", scribeFill);
+		var scribeBg = new StyleBoxFlat();
+		scribeBg.BgColor = new Color(0.05f, 0.05f, 0.08f, 0.8f);
+		_scribeBar.AddThemeStyleboxOverride("background", scribeBg);
+		_scribeBarPanel.AddChild(_scribeBar);
+
+		_scribeBarLabel = new Label();
+		_scribeBarLabel.AnchorRight = 1;
+		_scribeBarLabel.AnchorBottom = 1;
+		_scribeBarLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		_scribeBarLabel.VerticalAlignment = VerticalAlignment.Center;
+		_scribeBarLabel.AddThemeFontSizeOverride("font_size", 11);
+		_scribeBarLabel.AddThemeColorOverride("font_color", Colors.White);
+		_scribeBarLabel.MouseFilter = Control.MouseFilterEnum.Ignore;
+		_scribeBarPanel.AddChild(_scribeBarLabel);
+
+		AddChild(_scribeBarPanel);
+		_scribeBarPanel.Hide();
+
 		// Connect buttons
 		if (_sitStandBtn != null) _sitStandBtn.Pressed += OnSitStandPressed;
 		if (_autoFightBtn != null) _autoFightBtn.Pressed += OnAutoFightPressed;
@@ -1589,10 +1659,12 @@ public partial class MainUI : Control
 			_client.ChatReceived -= OnChatReceived;
 			_client.CampComplete -= OnCampComplete;
 			_client.SpellAnimationReceived -= OnSpellAnimationReceived;
+			_client.ScribeScrollReceived -= OnScribeScrollReceived;
 			_client.MessageReceived -= OnGenericMessage;
 			_client.Connected -= OnClientConnected;
 			_client.Disconnected -= OnClientDisconnected;
 			_client.AccountOkReceived -= OnAccountOkReceived;
+			_client.MercenariesUpdated -= OnMercenariesUpdated;
 		}
 		base._ExitTree();
 	}
@@ -1653,6 +1725,15 @@ public partial class MainUI : Control
 			if (_castTimeTotal > 0)
 				_castBar.Value = (_castTimeElapsed / _castTimeTotal) * 100.0;
 			_castBarLabel.Text = $"{_castingSpellName} ({(_castTimeTotal - _castTimeElapsed):F1}s)";
+		}
+
+		if (_isScribing)
+		{
+			_scribeTimeElapsed += dt;
+			if (_scribeTimeTotal > 0)
+				_scribeBar.Value = Math.Min(100.0, (_scribeTimeElapsed / _scribeTimeTotal) * 100.0);
+			float rem = Math.Max(0, _scribeTimeTotal - _scribeTimeElapsed);
+			_scribeBarLabel.Text = $"Scribing: {_scribingSpellName} ({rem:F1}s)";
 		}
 
 		// Tick buff durations
@@ -2281,6 +2362,14 @@ public partial class MainUI : Control
 					// Play coin sound? 
 					break;
 				}
+				case "MESSAGE":
+				{
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					if (root.TryGetProperty("text", out var tp))
+						Log("SYSTEM", tp.GetString());
+					break;
+				}
 			}
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Message handler error ({type}): {ex.Message}"); }
@@ -2867,7 +2956,7 @@ public partial class MainUI : Control
 							var extractor = LanternExtractorRunner.Instance;
 							if (extractor.IsAvailable)
 							{
-								bool extracted = await extractor.ExtractZone(_currentZoneId);
+								bool extracted = await extractor.ExtractZone(_currentZoneId, _lanternArchiveBase);
 								if (extracted)
 									GD.Print($"[UI] Zone '{_currentZoneId}' extracted successfully.");
 								else
@@ -3004,6 +3093,48 @@ public partial class MainUI : Control
 		catch (Exception ex)
 		{
 			GD.PrintErr($"[UI] OnMobMoveReceived error: {ex.Message}");
+		}
+	}
+
+	private void OnScribeScrollReceived(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			using var doc = System.Text.Json.JsonDocument.Parse(data.ToString());
+			var root = doc.RootElement;
+			string type = root.GetProperty("type").GetString();
+			if (type == "SCRIBE_STARTED")
+			{
+				_scribingSpellName = root.TryGetProperty("spellName", out var sn) ? sn.GetString() : "Spell";
+				int durationMs = root.TryGetProperty("durationMs", out var dm) ? dm.GetInt32() : 5000;
+				_scribeTimeTotal = durationMs / 1000f;
+				_scribeTimeElapsed = 0;
+				_scribeBar.Value = 0;
+				_isScribing = true;
+				if (_scribeBarPanel != null) _scribeBarPanel.Show();
+			}
+			else if (type == "SCRIBE_REJECTED")
+			{
+				_spellbookUI?.ClearScribingStatus();
+				CancelHeldItem();
+				SyncInventorySlotsWithGiveNPC();
+				if (!_isScribing && _scribeBarPanel != null) _scribeBarPanel.Hide();
+			}
+			else if (type == "SCRIBE_COMPLETE" || type == "SCRIBE_CANCELLED")
+			{
+				_isScribing = false;
+				_scribeTimeTotal = 0;
+				_scribeTimeElapsed = 0;
+				_spellbookUI?.ClearScribingStatus();
+				CancelHeldItem();
+				SyncInventorySlotsWithGiveNPC();
+				if (_scribeBarPanel != null) _scribeBarPanel.Hide();
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[UI] OnScribeScrollReceived error: {ex.Message}");
 		}
 	}
 

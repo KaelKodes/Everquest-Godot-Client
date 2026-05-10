@@ -81,6 +81,14 @@ public partial class WorldManager : Node3D
     private bool _f6Held = false;
     private bool _f4Held = false;
 
+    // DM handheld omni tuner (F3 toggle, F2 snapshot — logs lantern-local torch offset for EntityCapsule)
+    private bool _dmLanternTuneActive = false;
+    private bool _f3DmHeld = false;
+    private bool _f2DmHeld = false;
+    private bool _f1DmHeld = false;
+    private bool _dmLanternSnapValid = false;
+    private Vector3 _dmLanternSnapStart;
+
     // Footstep sound system
     private AudioStreamPlayer _footstepPlayer;
     private double _footstepTimer = 0;
@@ -766,6 +774,14 @@ public partial class WorldManager : Node3D
             return;
         }
 
+        bool isTyping = MainUI.Instance != null && MainUI.Instance.IsChatFocused;
+        HandleDmLanternKeys(isTyping);
+        if (_dmLanternTuneActive && !isTyping)
+        {
+            RunDmLanternTuneFrame((float)delta);
+            return;
+        }
+
         var velocity = _playerCapsule.Velocity;
         float baseSpeed = 10.0f * SpeedModifier;
         if (_isCrouching) baseSpeed = 5.0f * SpeedModifier;
@@ -786,8 +802,6 @@ public partial class WorldManager : Node3D
         if (_flyMode) speed *= 5f; // Admin fly mode gets 5x speed
         float gravity = 50f;
 
-        bool isTyping = MainUI.Instance != null && MainUI.Instance.IsChatFocused;
-        
         // Manual movement cancels autorun
         if (!isTyping && (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back"))) {
             _isAutoRunning = false;
@@ -1118,8 +1132,8 @@ public partial class WorldManager : Node3D
 
         if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo)
         {
-            // Toggle Crouch / Sneak
-            if (keyEvent.Keycode == Key.Ctrl)
+            // Toggle Crouch / Sneak (Ctrl is vertical-down in DM light tuner — don’t toggle crouch there)
+            if (keyEvent.Keycode == Key.Ctrl && !_dmLanternTuneActive)
             {
                 _isCrouching = !_isCrouching;
 
@@ -1482,6 +1496,189 @@ public partial class WorldManager : Node3D
             }
         }
         return data;
+    }
+
+    private void HandleDmLanternKeys(bool isTyping)
+    {
+        if (isTyping) return;
+
+        if (Input.IsPhysicalKeyPressed(Key.F3) && !_f3DmHeld)
+        {
+            _f3DmHeld = true;
+            _dmLanternTuneActive = !_dmLanternTuneActive;
+            GD.Print(_dmLanternTuneActive
+                ? "[DM-LIGHT] ON — WASD vs facing, Space up / Ctrl down (no crouch), [ smaller / ] larger range, F1 = reset pos+range, F2 = snap, F3 = off."
+                : "[DM-LIGHT] OFF");
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F3)) _f3DmHeld = false;
+
+        if (_dmLanternTuneActive && Input.IsPhysicalKeyPressed(Key.F1) && !_f1DmHeld)
+        {
+            _f1DmHeld = true;
+            _playerCapsule?.DmTuneResetTorchLightToDefaults();
+            GD.Print("[DM-LIGHT] Reset torch position (code defaults) + OmniRange default.");
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F1)) _f1DmHeld = false;
+
+        if (Input.IsPhysicalKeyPressed(Key.F2) && !_f2DmHeld)
+        {
+            _f2DmHeld = true;
+            DmLanternLogSnapshot();
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F2)) _f2DmHeld = false;
+    }
+
+    private void DmLanternLogSnapshot()
+    {
+        if (_playerCapsule == null) return;
+        if (!_playerCapsule.TryDmTuneGetTorchLightState(out Node3D lantern, out Vector3 offsetLocal))
+        {
+            GD.Print("[DM-LIGHT] Need lit lantern + torch — equip lantern, ensure hasLightSource, refresh gear.");
+            return;
+        }
+
+        string idfile = lantern.Name.ToString();
+        if (idfile.StartsWith("equip_", StringComparison.OrdinalIgnoreCase))
+            idfile = idfile["equip_".Length..];
+
+        GD.Print($"[DM-LIGHT] lantern-local omni offset=({offsetLocal.X:F4}, {offsetLocal.Y:F4}, {offsetLocal.Z:F4})  (idfile={idfile})");
+
+        if (!_dmLanternSnapValid)
+        {
+            _dmLanternSnapStart = offsetLocal;
+            _dmLanternSnapValid = true;
+            GD.Print("[DM-LIGHT] START stored. Nudge omni with F3 mode, then F2 again for delta + copy-paste line.");
+        }
+        else
+        {
+            Vector3 d = offsetLocal - _dmLanternSnapStart;
+            GD.Print($"[DM-LIGHT] Delta from START = ({d.X:F4}, {d.Y:F4}, {d.Z:F4})");
+            GD.Print($"[DM-LIGHT] Paste into EntityCapsule s_torchLightOffsetInLanternLocal [\"{idfile}\"]: new Vector3({offsetLocal.X:F4}f, {offsetLocal.Y:F4}f, {offsetLocal.Z:F4}f),");
+            _dmLanternSnapValid = false;
+        }
+    }
+
+    private void ProcessDmLanternTuning(float delta)
+    {
+        if (_playerCapsule == null) return;
+        if (!_playerCapsule.TryDmTuneGetTorchLightState(out _, out _)) return;
+
+        const float unitsPerSec = 5f;
+        float step = unitsPerSec * delta;
+
+        Vector3 fwd = -_playerCapsule.GlobalTransform.Basis.Z;
+        fwd.Y = 0;
+        if (fwd.LengthSquared() > 1e-6f) fwd = fwd.Normalized();
+        Vector3 right = _playerCapsule.GlobalTransform.Basis.X;
+        right.Y = 0;
+        if (right.LengthSquared() > 1e-6f) right = right.Normalized();
+
+        Vector3 world = Vector3.Zero;
+        if (Input.IsPhysicalKeyPressed(Key.W)) world += fwd * step;
+        if (Input.IsPhysicalKeyPressed(Key.S)) world -= fwd * step;
+        if (Input.IsPhysicalKeyPressed(Key.A)) world -= right * step;
+        if (Input.IsPhysicalKeyPressed(Key.D)) world += right * step;
+        if (Input.IsPhysicalKeyPressed(Key.Space)) world += Vector3.Up * step;
+        if (Input.IsPhysicalKeyPressed(Key.Ctrl)) world += Vector3.Down * step;
+
+        const float omniRangeSpeed = 10f;
+        // Godot C# Key enum uses Bracketleft / Bracketright (not BracketLeft/Right).
+        if (Input.IsPhysicalKeyPressed(Key.Bracketleft))
+            _playerCapsule.DmTuneAdjustTorchOmniRange(-omniRangeSpeed, delta);
+        if (Input.IsPhysicalKeyPressed(Key.Bracketright))
+            _playerCapsule.DmTuneAdjustTorchOmniRange(omniRangeSpeed, delta);
+
+        if (world == Vector3.Zero) return;
+        _playerCapsule.DmTuneApplyTorchLightWorldDelta(world);
+    }
+
+    private void RunDmLanternTuneFrame(float delta)
+    {
+        ProcessDmLanternTuning(delta);
+
+        var velocity = _playerCapsule.Velocity;
+        float gravity = 50f;
+        if (_playerCapsule.IsInWater)
+            velocity.Y = 0;
+        else if (!_playerCapsule.IsOnFloor())
+            velocity.Y -= gravity * delta;
+        else
+            velocity.Y = 0;
+
+        velocity.X = 0;
+        velocity.Z = 0;
+        _playerCapsule.Velocity = velocity;
+        _playerCapsule.MoveAndSlide();
+
+        _playerCapsule.UpdateAnimationFromVelocity(
+            _playerCapsule.Velocity,
+            _playerCapsule.IsOnFloor(),
+            _playerInCombat,
+            false,
+            _isCrouching);
+        UpdateFootstepSounds(_playerCapsule.Velocity, _playerCapsule.IsOnFloor(), false, delta);
+
+        _posSyncTimer += delta;
+        if (_posSyncTimer >= 1.0)
+        {
+            float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
+            if (currentHeading < 0) currentHeading += 512.0f;
+
+            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f || Mathf.Abs(currentHeading - _lastSentHeading) > 1.0f)
+            {
+                _lastSentPos = _playerCapsule.GlobalPosition;
+                _lastSentHeading = currentHeading;
+                EmitSignal(SignalName.PlayerMoved, -_lastSentPos.X, -_lastSentPos.Z, _lastSentPos.Y, currentHeading);
+            }
+            _posSyncTimer = 0.0;
+        }
+
+        if (Input.IsPhysicalKeyPressed(Key.F5) && !_f5Held)
+        {
+            _f5Held = true;
+            _flyMode = !_flyMode;
+            GD.Print($"[WORLD] Fly mode: {(_flyMode ? "ON (noclip)" : "OFF")}");
+            if (_playerCapsule != null)
+            {
+                _playerCapsule.CollisionLayer = _flyMode ? 0u : 1u;
+                _playerCapsule.CollisionMask = _flyMode ? 0u : 1u;
+            }
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F5)) _f5Held = false;
+
+        if (Input.IsPhysicalKeyPressed(Key.F6) && !_f6Held)
+        {
+            _f6Held = true;
+            var gPos = _playerCapsule.GlobalPosition;
+            float eqX = -gPos.X;
+            float eqY = -gPos.Z;
+            float eqZ = gPos.Y;
+            GD.Print($"[LOC] Godot: ({gPos.X:F1}, {gPos.Y:F1}, {gPos.Z:F1}) | EQ: ({eqX:F1}, {eqY:F1}, {eqZ:F1})");
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F6)) _f6Held = false;
+
+        if (Input.IsPhysicalKeyPressed(Key.F4) && !_f4Held)
+        {
+            _f4Held = true;
+            GD.Print("[WORLD] Admin Succor requested (F4)");
+            var client = GetNodeOrNull<GameClient>("/root/GameClient");
+            if (client != null)
+                client.SendRaw("{\"type\": \"SUCCOR\"}");
+        }
+        if (!Input.IsPhysicalKeyPressed(Key.F4)) _f4Held = false;
+
+        if (Input.IsActionJustPressed("target_self"))
+            TargetSelf();
+        if (Input.IsActionJustPressed("target_next_enemy"))
+            CycleTarget("enemy", 1);
+        if (Input.IsActionJustPressed("target_prev_enemy"))
+            CycleTarget("enemy", -1);
+        if (Input.IsActionJustPressed("target_next_friendly"))
+            CycleTarget("friendly", 1);
+        if (Input.IsActionJustPressed("target_prev_friendly"))
+            CycleTarget("friendly", -1);
+
+        UpdateCamera();
     }
 
 }

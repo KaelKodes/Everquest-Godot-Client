@@ -38,13 +38,76 @@ public partial class MainUI
 		_rightClickItemData = null;
 
 		if (t < 0 || t >= 1.0 || !bagData.HasValue) return;
-		if (!ItemIsOpenableContainer(bagData.Value)) return;
-		if (!bagData.Value.TryGetProperty("item_id", out var instP)) return;
-		int iid = instP.GetInt32();
-		if (!_openBags.ContainsKey(iid))
-			OpenBag(slot, bagData.Value);
-		else
-			CloseBag(iid);
+
+		if (ItemIsOpenableContainer(bagData.Value))
+		{
+			if (!bagData.Value.TryGetProperty("item_id", out var instP)) return;
+			int iid = instP.GetInt32();
+			if (!_openBags.ContainsKey(iid))
+				OpenBag(slot, bagData.Value);
+			else
+				CloseBag(iid);
+			return;
+		}
+
+		// Double short right-click on a spell scroll (non-bag): sit, open book, scribe to first free slot
+		if (slot >= 22 && ItemIsScribeScroll(bagData.Value))
+		{
+			ulong now = Time.GetTicksMsec();
+			if (slot == _scribeRightLastSlot && (now - _scribeRightLastMs) < 450)
+			{
+				_scribeRightLastSlot = -1;
+				StartScribeShortcutFromInventorySlot(slot);
+			}
+			else
+			{
+				_scribeRightLastSlot = slot;
+				_scribeRightLastMs = now;
+			}
+		}
+	}
+
+	/// <summary>Uses server <c>clicky</c> (scroll / spell effect id); not a container.</summary>
+	private static bool ItemIsScribeScroll(JsonElement item)
+	{
+		if (ItemIsOpenableContainer(item)) return false;
+		int clicky = item.TryGetProperty("clicky", out var c) ? c.GetInt32() : 0;
+		return clicky > 0;
+	}
+
+	private void StartScribeShortcutFromInventorySlot(int invSlot)
+	{
+		_client.SendRaw("{\"type\":\"SIT\"}");
+		if (_spellbookUI != null)
+		{
+			_spellbookUI.Visible = true;
+			var screenSize = GetViewport().GetVisibleRect().Size;
+			_spellbookUI.GlobalPosition = (screenSize - _spellbookUI.Size) / 2;
+		}
+		GetTree().CreateTimer(0.06f).Timeout += () =>
+		{
+			if (!IsInstanceValid(this)) return;
+			_client.SendRaw($"{{\"type\":\"BEGIN_SCRIBE_SCROLL\",\"slot\":{invSlot}}}");
+		};
+	}
+
+	/// <summary>Drop a held spell scroll onto an empty spellbook slot (sitting + book open).</summary>
+	public bool TryDropHeldScrollOnBookSlot(int bookSlot)
+	{
+		if (!_heldItem.HasValue || _heldFromSlotId < 22) return false;
+		if (!ItemIsScribeScroll(_heldItem.Value)) return false;
+		if (_spellbookUI == null || !_spellbookUI.Visible) return false;
+		if (_spellbookUI.IsBookSlotOccupied(bookSlot)) return false;
+
+		int invSlot = _heldFromSlotId;
+		CancelHeldItem();
+		_client.SendRaw("{\"type\":\"SIT\"}");
+		GetTree().CreateTimer(0.06f).Timeout += () =>
+		{
+			if (!IsInstanceValid(this)) return;
+			_client.SendRaw($"{{\"type\":\"BEGIN_SCRIBE_SCROLL\",\"slot\":{invSlot},\"bookSlot\":{bookSlot}}}");
+		};
+		return true;
 	}
 
 	public void CloseBag(int hostItemInstanceId)
@@ -679,6 +742,10 @@ public partial class MainUI
 				string slotName = MapSlotToName(_heldFromSlotId);
 				if (slotName != null && _equipSlots.TryGetValue(slotName, out var btn))
 					btn.Modulate = Colors.White;
+			} else if (_heldFromSlotId >= 22 && _heldFromSlotId <= 29) {
+				int idx = _heldFromSlotId - 22;
+				if (idx >= 0 && idx < _invSlots.Length && _invSlots[idx] != null)
+					_invSlots[idx].Modulate = Colors.White;
 			} else if (_heldFromSlotId == -100 && _heldPetSource != null) {
 				// Restore pet button appearance
 				if (_heldPetSource.Value.type == "equip") {
@@ -687,6 +754,17 @@ public partial class MainUI
 				} else {
 					if (int.TryParse(_heldPetSource.Value.slot, out int invIdx) && invIdx >= 0 && invIdx < 8)
 						if (_petInvSlots[invIdx] != null) _petInvSlots[invIdx].Modulate = Colors.White;
+				}
+			} else {
+				foreach (var kvp in _openBags) {
+					var win = kvp.Value;
+					if (win == null || !IsInstanceValid(win)) continue;
+					int bs = win.BaseBagSlot;
+					int n = win.Slots.Length;
+					if (_heldFromSlotId < bs || _heldFromSlotId >= bs + n) continue;
+					var b = win.Slots[_heldFromSlotId - bs];
+					if (b != null) b.Modulate = Colors.White;
+					break;
 				}
 			}
 		}

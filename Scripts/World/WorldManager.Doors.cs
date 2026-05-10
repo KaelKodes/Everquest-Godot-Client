@@ -8,11 +8,13 @@ public partial class WorldManager : Node3D
     {
         int totalDoors = doorsArray.GetArrayLength();
         GD.Print($"[WORLD] Processing {totalDoors} doors...");
-        
-        if (_objectPlacer == null) 
+
+        // PlaceZoneObjects normally creates this when a zone GLB loads; extraction failure / fallback path can skip it.
+        if (_objectPlacer == null)
         {
-            GD.PrintErr("[WORLD] _objectPlacer is null! Cannot process doors.");
-            return;
+            _objectPlacer = new ZoneObjectPlacer();
+            _objectPlacer.ShadowsEnabled = DynamicShadowsEnabled;
+            _objectPlacer.Animator = _materialAnimator;
         }
         string objectsDir = $"{EQAssetCache.Instance.CacheRoot}/zones/{_currentZoneId.ToLower()}/Objects";
 

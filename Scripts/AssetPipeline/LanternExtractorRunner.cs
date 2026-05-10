@@ -21,6 +21,7 @@ public partial class LanternExtractorRunner : RefCounted
     
     private readonly System.Threading.SemaphoreSlim _extractLock = new System.Threading.SemaphoreSlim(1, 1);
 
+    /// <summary>PEQ short_name → on-disk .s3d basename. Keep in sync with <c>LANTERN_ARCHIVE_ALIASES</c> in <c>server/eqemu_db.js</c>.</summary>
     private static readonly System.Collections.Generic.Dictionary<string, string> _zoneAliases = new()
     {
         { "steamfontmts", "steamfont" },
@@ -29,8 +30,32 @@ public partial class LanternExtractorRunner : RefCounted
         { "kithforest", "kithicor" },
         { "neriakd", "neriakc" },
         { "oldhighpass", "highpass" },
-        { "befallenb", "befallen" }
+        { "befallenb", "befallen" },
+        { "fayrtrt", "qrg" },
+        // RoF2 / atlas may use toxxulia; classic zone mesh is still tox.s3d
+        { "toxxulia", "tox" },
     };
+
+    /// <summary>When STATUS still sends <c>zone_95100</c> (numeric PEQ id), map to logical short_name for cache + GLB paths. Keep in sync with <c>ZONES_NUM_FALLBACK</c> in server <c>eqemu_db.js</c>.</summary>
+    private static readonly System.Collections.Generic.Dictionary<int, string> s_zoneIdNumberToShort = new()
+    {
+        [95100] = "fayrtrt",
+    };
+
+    /// <summary>PEQ numeric id form <c>zone_95100</c> → short_name for cache paths and extraction. Call from UI when applying STATUS.</summary>
+    public static string NormalizeZoneId(string zoneId)
+    {
+        if (string.IsNullOrWhiteSpace(zoneId)) return zoneId;
+        var z = zoneId.Trim().ToLowerInvariant();
+        const string prefix = "zone_";
+        if (z.StartsWith(prefix, StringComparison.Ordinal) && z.Length > prefix.Length)
+        {
+            var tail = z[prefix.Length..];
+            if (int.TryParse(tail, out int n) && s_zoneIdNumberToShort.TryGetValue(n, out var sn))
+                return sn;
+        }
+        return z;
+    }
 
     public LanternExtractorRunner()
     {
@@ -67,9 +92,10 @@ public partial class LanternExtractorRunner : RefCounted
 
     /// <summary>
     /// Extract a single zone from the EQ installation to the session cache.
+    /// <paramref name="lanternArchiveBase"/> overrides the .s3d basename when the server sends <c>zoneArchiveBase</c> (DB short_name may differ from file name).
     /// Returns true on success.
     /// </summary>
-    public async Task<bool> ExtractZone(string zoneId)
+    public async Task<bool> ExtractZone(string zoneId, string lanternArchiveBase = null)
     {
         await _extractLock.WaitAsync();
         try
@@ -94,13 +120,41 @@ public partial class LanternExtractorRunner : RefCounted
             return true;
         }
 
-        string zone = zoneId.ToLower();
-        string extractTarget = _zoneAliases.TryGetValue(zone, out string alias) ? alias : zone;
+        string zone = NormalizeZoneId(zoneId);
+        string extractTarget;
+        if (!string.IsNullOrWhiteSpace(lanternArchiveBase))
+            extractTarget = lanternArchiveBase.Trim().ToLowerInvariant();
+        else if (_zoneAliases.TryGetValue(zone, out string alias))
+            extractTarget = alias;
+        else
+            extractTarget = zone;
 
-        // Write settings.txt to configure LanternExtractor
-        WriteSettings(config.EQPath);
+        string s3dPath = config.FindZoneS3dPath(extractTarget);
+        string eqDirForLantern = config.EQPath;
+        if (s3dPath != null)
+        {
+            eqDirForLantern = Path.GetDirectoryName(s3dPath) ?? config.EQPath;
+            if (!string.Equals(eqDirForLantern, config.EQPath, StringComparison.OrdinalIgnoreCase))
+                GD.Print($"[Lantern] Zone archive for '{extractTarget}': {s3dPath}");
+        }
+        else
+        {
+            if (extractTarget == "cshome")
+            {
+                GD.PrintErr($"[Lantern] No 'cshome.s3d' found. Sunset Home is an admin zone that may be missing from your EQ installation. Try searching for it in a Titanium or Live client and copy it to {config.EQPath}.");
+            }
+            else
+            {
+                GD.PrintErr($"[Lantern] No '{extractTarget}.s3d' found under EQ path(s): {config.FormatZoneSearchRootsForDiagnostics()}. " +
+                    "Point eqPath at the folder that contains eqgame.exe and the zone .s3d files together, or add a \"zoneSearchPaths\" array in user://eq_config.json if archives live elsewhere. " +
+                    "A partial install (only a few zones) will break every other zone the same way.");
+            }
+            return false;
+        }
 
-        GD.Print($"[Lantern] Extracting zone: {extractTarget} (mapped from {zone})...");
+        WriteSettings(eqDirForLantern);
+
+        GD.Print($"[Lantern] Extracting zone: {extractTarget} (logical zone '{zone}', EQ dir for Lantern: {eqDirForLantern})...");
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         bool success = await RunExtractor(extractTarget);
@@ -132,7 +186,19 @@ public partial class LanternExtractorRunner : RefCounted
             {
                 string oldGlb = Path.Combine(zoneDir, $"{extractTarget}.glb");
                 string newGlb = Path.Combine(zoneDir, $"{zone}.glb");
-                if (File.Exists(oldGlb)) File.Move(oldGlb, newGlb);
+                if (File.Exists(oldGlb))
+                {
+                    try
+                    {
+                        if (File.Exists(newGlb))
+                            File.Delete(newGlb);
+                        File.Move(oldGlb, newGlb);
+                    }
+                    catch (IOException ex)
+                    {
+                        GD.PrintErr($"[Lantern] Could not rename mesh '{oldGlb}' -> '{newGlb}': {ex.Message}");
+                    }
+                }
             }
         }
 

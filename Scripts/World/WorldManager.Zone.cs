@@ -4,6 +4,19 @@ using System.Collections.Generic;
 
 public partial class WorldManager : Node3D
 {
+    // Set true for the duration of LoadZoneGlbFromDisk when we have baked corrected normals
+    // into the zone meshes. Tells FixZoneMaterials to skip the legacy "BacklightEnabled"
+    // back-face fill hack (which only existed to compensate for the inverted normals).
+    private bool _zoneNormalsCorrectedThisLoad = false;
+
+    /// <summary>
+    /// True while the currently loaded zone uses the LanternExtractor-normal-flip lighting
+    /// fix (see <see cref="BakeFlippedNormalsRecursive"/>). Read by EntityCapsule so that
+    /// character / weapon meshes loaded into this zone get the same correction — otherwise
+    /// the world looks correct but every character is still lit from the wrong side.
+    /// </summary>
+    public static bool LightFixActiveForCurrentZone { get; private set; } = false;
+
     public void FreezeForZoneLoad()
     {
         _teleportSettling = true;
@@ -402,6 +415,10 @@ public partial class WorldManager : Node3D
         ClearWorld();
         
         _currentZoneId = zoneId;
+        // Reset light-fix state before every load so failed GLB loads / fallback maps
+        // cannot leak the previous zone's setting into this one.
+        LightFixActiveForCurrentZone = false;
+        _zoneNormalsCorrectedThisLoad = false;
         ApplyTimeOfDayVisuals(); // Instantly apply indoor/outdoor sky logic
 
         if (_zoneGeometryContainer == null)
@@ -471,10 +488,25 @@ public partial class WorldManager : Node3D
 
         // --- Fallback: Brewall line-based map ---
         LoadZoneBrewall(zoneId);
+
+        // If we had GLB from the *previous* zone, RebuildZoneBoundaries skipped creating a
+        // PhysicalFloor for the *new* zoneId — then we clear GLB above and may end with no
+        // terrain (e.g. cshome has no .s3d / no Brewall JSON). Add a walkable slab so
+        // FinalizeTeleport and NPCs are not left in the void.
+        bool hasTerrainMesh = _zoneGeometryContainer != null && _zoneGeometryContainer.GetChildCount() > 0;
+        var physFloor = _boundariesContainer?.GetNodeOrNull<StaticBody3D>("PhysicalFloor");
+        if (!hasTerrainMesh && physFloor == null)
+        {
+            float fallbackSize = (zoneId.ToLower() == "cshome") ? 4000f : 2000f;
+            GD.PrintErr($"[WORLD] No GLB/Brewall terrain for '{zoneId}' — adding emergency floor ({fallbackSize}x{fallbackSize}) (link EQ + extract, or add Data/Maps/{zoneId}_map.json).");
+            RebuildFloorForMap(0f, 0f, fallbackSize, fallbackSize);
+        }
+
         PlayZoneMusic(zoneId);
     }
     private bool LoadZoneGlbFromDisk(string zoneId, string absolutePath)
     {
+        _zoneNormalsCorrectedThisLoad = false;
         try
         {
             var gltfDoc = new GltfDocument();
@@ -510,6 +542,34 @@ public partial class WorldManager : Node3D
             );
             zoneRoot.AddChild(scene);
             _zoneGeometryContainer.AddChild(zoneRoot);
+
+            // === LIGHTING FIX (zone normal correction) ===
+            // LanternExtractor bakes a node transform with scale=(-0.1,-0.1,-0.1) (negative
+            // uniform scale = a reflection). Combined with the parent transform we apply
+            // above, the overall determinant is negative — so Godot's normal transform
+            // (M^-T) flips every vertex normal in world space. That is the real reason
+            // omni / point lights have always looked wrong on zone geometry: they compute
+            // diffuse against an inverted surface normal. The legacy workaround was
+            // BacklightEnabled in FixZoneMaterials, which only papered over directional
+            // sun lighting and actively fights local point lights.
+            //
+            // Fix: walk the freshly-loaded zone scene and bake corrected normals (and
+            // matching reversed winding) directly into the mesh data. After this, each
+            // surface's stored normals point outward in world space, so omnis behave
+            // correctly and the BacklightEnabled hack can be turned off.
+            //
+            // LanternExtractor's baked negative-scale transform is not zone-specific:
+            // apply the normal correction to every extracted GLB zone.
+            bool useLightFix = true;
+            LightFixActiveForCurrentZone = useLightFix;
+            if (useLightFix)
+            {
+                int meshCountFixed = 0;
+                int surfaceCountFixed = 0;
+                BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals: true);
+                _zoneNormalsCorrectedThisLoad = true;
+                GD.Print($"[WORLD][LIGHT-FIX] '{zoneId}': flipped outward normals on {surfaceCountFixed} zone surface(s) across {meshCountFixed} mesh(es). Backlight hack disabled for this zone.");
+            }
 
             // Register Animated Materials for the zone
             string cachePath = EQAssetCache.Instance.GetZonePath(zoneId);
@@ -561,12 +621,16 @@ public partial class WorldManager : Node3D
     {
         _objectPlacer ??= new ZoneObjectPlacer();
         _objectPlacer.ShadowsEnabled = DynamicShadowsEnabled;
+        // World runtime should spawn local object lights (torches/lanterns/fires).
+        // Main menu preview can still override this independently.
+        _objectPlacer.DisableLights = false;
         _objectPlacer.Animator = _materialAnimator;
 
         if (_zoneGeometryContainer == null) return;
 
         _zoneObjectsContainer = _objectPlacer.PlaceObjects(zoneId, cachePath, _zoneGeometryContainer);
         _objectPlacer.PlaceLights(zoneId, cachePath, _zoneGeometryContainer);
+
     }
     public void PlayZoneMusic(string zoneId)
     {
@@ -817,11 +881,21 @@ public partial class WorldManager : Node3D
                         mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                     }
                     
-                    // UNIVERSAL BACKLIGHT FIX: 
-                    // This forces the polygon to receive light from BOTH SIDES.
-                    // This fixes the "half-black room" issue caused by flipped normals in the map.
-                    mat.BacklightEnabled = true;
-                    mat.Backlight = new Color(1, 1, 1);
+                    // Legacy "fake fill on back-faces" hack to compensate for the inverted zone
+                    // normals coming out of LanternExtractor. When we have already baked outward
+                    // normals into the mesh data (see BakeFlippedNormalsRecursive), this hack is
+                    // wrong — it adds a constant secondary light contribution that fights every
+                    // local omni / spot light. Skip it when normals are corrected.
+                    if (_zoneNormalsCorrectedThisLoad)
+                    {
+                        mat.BacklightEnabled = false;
+                    }
+                    else
+                    {
+                        mat.BacklightEnabled = true;
+                        mat.Backlight = new Color(0.32f, 0.32f, 0.32f);
+                    }
+
                 }
             }
 
@@ -860,10 +934,16 @@ public partial class WorldManager : Node3D
                     // Disabling culling on solids caused inward-facing developer textures (like zone lines or "GOTO" walls)
                     // to become visible from the outside, appearing inside-out. Default Godot culling (Back) hides them properly.
                     
-                    // Apply backlight to surface overrides too
-                    newMat.BacklightEnabled = true;
-                    newMat.Backlight = new Color(1, 1, 1);
-                    
+                    if (_zoneNormalsCorrectedThisLoad)
+                    {
+                        newMat.BacklightEnabled = false;
+                    }
+                    else
+                    {
+                        newMat.BacklightEnabled = true;
+                        newMat.Backlight = new Color(0.32f, 0.32f, 0.32f);
+                    }
+
                     meshInst.SetSurfaceOverrideMaterial(i, newMat);
                     }
                 }
@@ -875,6 +955,158 @@ public partial class WorldManager : Node3D
             FixZoneMaterials(child, animData);
         }
     }
+
+    /// <summary>
+    /// Walk a freshly-loaded zone scene and overwrite each MeshInstance3D's mesh with a
+    /// version whose vertex normals have been negated.
+    ///
+    /// Why: LanternExtractor zone GLBs ship with a baked node transform of
+    /// scale=(-0.1,-0.1,-0.1) — a reflection (negative determinant). Godot's renderer
+    /// auto-flips cull order for negative-determinant transforms (so triangles still
+    /// render the correct side; that's why the world has always been *visible*), but
+    /// it does NOT auto-correct normals. It still transforms vertex normals by M^-T,
+    /// which inverts them in world space. That is exactly why:
+    ///   - The pre-existing FixZoneMaterials code had to set BacklightEnabled and
+    ///     comment "flipped zone normals" to avoid the world looking pitch black.
+    ///   - Local omni / spot lights light the wrong side of the player and reflect
+    ///     fill onto nearby objects (the surface normals they're computing diffuse
+    ///     against are pointing the wrong way).
+    ///
+    /// Fix (minimal, surgical): negate every stored normal. The renderer's M^-T then
+    /// produces a world-space normal that matches the surface's geometric outward
+    /// direction. Do NOT touch winding — Godot already handles cull flipping for the
+    /// negative-scale transform; reversing winding here would double-flip and turn
+    /// every front-face into a culled back-face (i.e. invisible floors / inside-out world).
+    /// Tangent .W (handedness) gets flipped too so that any material using a normal
+    /// map keeps a consistent TBN basis.
+    /// </summary>
+    public const string LightFixFlipMetaKey = "_lightfix_normals_flipped";
+
+    public static void BakeFlippedNormalsRecursive(Node node, ref int meshCountFixed, ref int surfaceCountFixed, bool recomputeNormals = false)
+    {
+        if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
+        {
+            // Per-node idempotency: if we've already flipped this MeshInstance3D, skip.
+            // Re-applying would double-flip and put the lighting back to broken.
+            if (!meshInst.HasMeta(LightFixFlipMetaKey))
+            {
+                var src = meshInst.Mesh;
+                int surfaceCount = src.GetSurfaceCount();
+                if (surfaceCount > 0)
+                {
+                    var dst = new ArrayMesh();
+                    for (int s = 0; s < surfaceCount; s++)
+                    {
+                        var arrays = src.SurfaceGetArrays(s);
+
+                        // Rebuild normals from triangle geometry first. Some Lantern-exported
+                        // surfaces carry broken/misaligned normal streams (especially terrain),
+                        // which causes omni lights to look hemispheric on the ground only.
+                        // Recomputing from vertices+winding gives consistent per-vertex normals.
+                        if (recomputeNormals && 0 < arrays.Count && arrays[0].VariantType == Variant.Type.PackedVector3Array)
+                        {
+                            var vertices = (Vector3[])arrays[0];
+                            int[] indices = null;
+                            if (12 < arrays.Count && arrays[12].VariantType == Variant.Type.PackedInt32Array)
+                                indices = (int[])arrays[12];
+                            arrays[1] = RecalculateNormals(vertices, indices);
+                        }
+
+                        // Negate normals after recompute (or import) to compensate the negative-
+                        // determinant transform chain from Lantern export + zone basis mapping.
+                        if (1 < arrays.Count && arrays[1].VariantType == Variant.Type.PackedVector3Array)
+                        {
+                            var normals = (Vector3[])arrays[1];
+                            for (int i = 0; i < normals.Length; i++)
+                                normals[i] = -normals[i];
+                            arrays[1] = normals;
+                        }
+
+                        // Flip tangent handedness only — XYZ stay the same, only .W sign
+                        // changes — so normal-mapped TBN remains consistent with the
+                        // negated normals. (Godot ARRAY_TANGENT = 2, PackedFloat32Array,
+                        // 4 floats per vertex: x,y,z,w.)
+                        if (2 < arrays.Count && arrays[2].VariantType == Variant.Type.PackedFloat32Array)
+                        {
+                            var tangents = (float[])arrays[2];
+                            for (int i = 3; i < tangents.Length; i += 4)
+                                tangents[i] = -tangents[i];
+                            arrays[2] = tangents;
+                        }
+
+                        // IMPORTANT: do NOT reverse triangle winding. Godot auto-flips cull
+                        // order for negative-determinant node transforms, so the original
+                        // winding still produces correct front/back face culling. Reversing
+                        // winding here would invert visibility — floors disappear, you see
+                        // through the world, etc.
+
+                        var mat = src.SurfaceGetMaterial(s);
+                        dst.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+                        if (mat != null) dst.SurfaceSetMaterial(s, mat);
+                        surfaceCountFixed++;
+                    }
+
+                    meshInst.Mesh = dst;
+                    meshInst.SetMeta(LightFixFlipMetaKey, true);
+                    meshCountFixed++;
+                }
+            }
+        }
+        foreach (var child in node.GetChildren())
+        {
+            BakeFlippedNormalsRecursive(child, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals);
+        }
+    }
+
+    private static Vector3[] RecalculateNormals(Vector3[] vertices, int[] indices)
+    {
+        if (vertices == null || vertices.Length == 0)
+            return vertices ?? Array.Empty<Vector3>();
+
+        var normals = new Vector3[vertices.Length];
+
+        if (indices != null && indices.Length >= 3)
+        {
+            for (int i = 0; i + 2 < indices.Length; i += 3)
+            {
+                int i0 = indices[i];
+                int i1 = indices[i + 1];
+                int i2 = indices[i + 2];
+                if ((uint)i0 >= (uint)vertices.Length || (uint)i1 >= (uint)vertices.Length || (uint)i2 >= (uint)vertices.Length)
+                    continue;
+
+                Vector3 e1 = vertices[i1] - vertices[i0];
+                Vector3 e2 = vertices[i2] - vertices[i0];
+                Vector3 face = e1.Cross(e2);
+                normals[i0] += face;
+                normals[i1] += face;
+                normals[i2] += face;
+            }
+        }
+        else
+        {
+            for (int i = 0; i + 2 < vertices.Length; i += 3)
+            {
+                Vector3 e1 = vertices[i + 1] - vertices[i];
+                Vector3 e2 = vertices[i + 2] - vertices[i];
+                Vector3 face = e1.Cross(e2);
+                normals[i] += face;
+                normals[i + 1] += face;
+                normals[i + 2] += face;
+            }
+        }
+
+        for (int i = 0; i < normals.Length; i++)
+        {
+            if (normals[i].LengthSquared() > 0.000001f)
+                normals[i] = normals[i].Normalized();
+            else
+                normals[i] = Vector3.Up;
+        }
+
+        return normals;
+    }
+
     private void CalculateAabbRecursive(Node node, ref Aabb combined, ref bool first)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)

@@ -971,7 +971,15 @@ public partial class MainUI
 			// Zone connections â€” rebuild buttons only when zone changes
 			if (character.TryGetProperty("zoneId", out var zoneIdProp))
 			{
-				string zoneId = zoneIdProp.GetString();
+				string zoneId = LanternExtractorRunner.NormalizeZoneId(zoneIdProp.GetString());
+				if (character.TryGetProperty("zoneArchiveBase", out var zArch) && zArch.ValueKind == JsonValueKind.String)
+				{
+					string zb = zArch.GetString();
+					_lanternArchiveBase = string.IsNullOrWhiteSpace(zb) ? null : zb.Trim();
+				}
+				else
+					_lanternArchiveBase = null;
+
 				if (zoneId != _currentZoneId)
 				{
 					_currentZoneId = zoneId;

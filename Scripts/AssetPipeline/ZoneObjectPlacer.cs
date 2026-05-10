@@ -42,6 +42,24 @@ public partial class ZoneObjectPlacer : RefCounted
                 GD.PrintErr($"Failed to load object_lights.json: {e.Message}");
             }
         }
+        else
+        {
+            using var doc = JsonDocument.Parse(@"
+{
+  ""models"": {},
+  ""campfire"":   { ""energy"": 18.0, ""range"": 20.0, ""position"": [0.0, 1.0, 0.0], ""color"": [1.00, 0.62, 0.32], ""sound"": ""fire1.wav"", ""soundVolume"": 0.60 },
+  ""brazier"":    { ""energy"": 16.0, ""range"": 16.0, ""position"": [0.0, 1.6, 0.0], ""color"": [1.00, 0.58, 0.28], ""sound"": ""fire1.wav"", ""soundVolume"": 0.55 },
+  ""torch"":      { ""energy"": 13.0, ""range"": 11.0, ""position"": [0.0, 1.4, 0.0], ""color"": [1.00, 0.64, 0.36], ""sound"": ""torch_lp.wav"", ""soundVolume"": 0.45 },
+  ""lantern"":    { ""energy"": 10.0, ""range"": 10.0, ""position"": [0.0, 1.2, 0.0], ""color"": [1.00, 0.73, 0.48], ""sound"": ""torch_lp.wav"", ""soundVolume"": 0.35 },
+  ""forge"":      { ""energy"": 20.0, ""range"": 18.0, ""position"": [0.0, 1.2, 0.0], ""color"": [1.00, 0.50, 0.22], ""sound"": ""fire1.wav"", ""soundVolume"": 0.70 },
+  ""candelabra"": { ""energy"": 8.0,  ""range"": 8.5,  ""position"": [0.0, 1.0, 0.0], ""color"": [1.00, 0.78, 0.58], ""sound"": ""torch_lp.wav"", ""soundVolume"": 0.25 },
+  ""chandelier"": { ""energy"": 12.0, ""range"": 13.0, ""position"": [0.0, 1.8, 0.0], ""color"": [1.00, 0.74, 0.52], ""sound"": ""torch_lp.wav"", ""soundVolume"": 0.40 },
+  ""otherfire"":  { ""energy"": 12.0, ""range"": 12.0, ""position"": [0.0, 1.0, 0.0], ""color"": [1.00, 0.60, 0.30], ""sound"": ""fire1.wav"", ""soundVolume"": 0.45 }
+}
+");
+            _lightConfigs = doc.RootElement.Clone();
+            GD.Print("[ObjectPlacer] Data/object_lights.json not found; using built-in light defaults.");
+        }
     }
 
     public static Vector3 EQToGodot(float x, float y, float z)
@@ -78,6 +96,7 @@ public partial class ZoneObjectPlacer : RefCounted
         int placed = 0;
         int skipped = 0;
         var lines = File.ReadAllLines(instancesFile);
+        var pendingLights = new System.Collections.Generic.List<(Node3D Instance, string ModelName)>();
 
         foreach (var line in lines)
         {
@@ -125,9 +144,8 @@ public partial class ZoneObjectPlacer : RefCounted
                 );
                 instance.Scale = new Vector3(scaleX, scaleY, scaleZ);
 
-                AddLightIfSource(instance, modelName, container, worldPos.X, worldPos.Y, worldPos.Z);
-
                 container.AddChild(instance);
+                pendingLights.Add((instance, modelName));
                 placed++;
             }
             catch (Exception ex)
@@ -137,7 +155,11 @@ public partial class ZoneObjectPlacer : RefCounted
             }
         }
 
+        // Parent under zone geometry FIRST so GlobalTransform / ToGlobal match in-world coords.
         parent.AddChild(container);
+        foreach (var (inst, mdl) in pendingLights)
+            AddLightIfSource(inst, mdl, container, 0f, 0f, 0f);
+
         GD.Print($"[ObjectPlacer] Placed {placed} objects in '{zoneId}' ({skipped} skipped)");
 
         return container;
@@ -183,6 +205,13 @@ public partial class ZoneObjectPlacer : RefCounted
                 _objectSceneCache[modelName] = null;
                 return null;
             }
+
+            // Lantern object GLBs are exported with the same negative-scale basis issue as
+            // zones/characters, so flip baked normals once here to make omni/spot lighting
+            // behave consistently across props.
+            int meshCountFixed = 0;
+            int surfaceCountFixed = 0;
+            WorldManager.BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed);
 
             bool forceSolid = modelName.ToLower().Contains("step") || modelName.ToLower().Contains("ele") || modelName.ToLower().Contains("ramp") || modelName.ToLower().Contains("plat") || modelName.ToLower().Contains("lift") || modelName.ToLower().Contains("bridge");
             // Generate collision so that objects (e.g. ramps) are solid
@@ -272,7 +301,10 @@ public partial class ZoneObjectPlacer : RefCounted
         
         string configKey = null;
         if (lowerName.Contains("cfi") || lowerName.Contains("campfire")) configKey = "campfire";
-        else if (lowerName.Contains("bfi") || lowerName.Contains("brazier")) configKey = "brazier";
+        // "brazier" covers faybrazier; "braz" covers kelbraz and similar without the full word.
+        else if (lowerName.Contains("bfi") || lowerName.Contains("brazier") || lowerName.Contains("braz")) configKey = "brazier";
+        // Floor / fire grates (e.g. grate) — tune per-zone in object_lights.json models.grate if needed.
+        else if (lowerName.Contains("grate")) configKey = "otherfire";
         else if (lowerName.Contains("tfi") || lowerName.Contains("torch") || lowerName.Contains("sconce") || lowerName.Contains("wfi")) configKey = "torch";
         else if (lowerName.Contains("lfi") || lowerName.Contains("lantern") || lowerName.Contains("lamp") || lowerName.Contains("mistlamp") || lowerName.Contains("ogglantern")) configKey = "lantern";
         else if (lowerName.Contains("ffi") || lowerName.Contains("forge")) configKey = "forge";
@@ -280,40 +312,341 @@ public partial class ZoneObjectPlacer : RefCounted
         else if (lowerName.Contains("chandelier") || lowerName.Contains("chndlr") || lowerName.Contains("chand")) configKey = "chandelier";
         else if (lowerName.Contains("fire") || lowerName.EndsWith("fi") || lowerName.Contains("fi_act") || lowerName.StartsWith("pfi")) configKey = "otherfire";
 
-        if (configKey != null && _lightConfigs.ValueKind != JsonValueKind.Undefined && _lightConfigs.TryGetProperty(configKey, out var config))
+        JsonElement typeConfig = default;
+        bool hasTypeConfig = configKey != null &&
+                             _lightConfigs.ValueKind != JsonValueKind.Undefined &&
+                             _lightConfigs.TryGetProperty(configKey, out typeConfig);
+
+        JsonElement modelConfig = default;
+        bool hasModelConfig = TryGetModelLightConfig(lowerName, out modelConfig);
+
+        if (hasTypeConfig || hasModelConfig)
         {
-            if (config.TryGetProperty("sound", out var sndProp))
+            string soundName = GetConfigString(modelConfig, "sound", typeConfig, null);
+            if (!string.IsNullOrEmpty(soundName))
             {
-                float vol = config.TryGetProperty("soundVolume", out var volProp) ? volProp.GetSingle() : 1.0f;
-                AttachAudio(instance, sndProp.GetString(), vol);
+                float vol = GetConfigFloat(modelConfig, "soundVolume", typeConfig, 1.0f);
+                AttachAudio(instance, soundName, vol);
             }
             
             if (!DisableLights)
             {
                 var light = new OmniLight3D();
-                light.ShadowEnabled = false; 
-                
-                light.LightEnergy = config.TryGetProperty("energy", out var energy) ? energy.GetSingle() : 25.0f;
-                light.OmniRange = config.TryGetProperty("range", out var range) ? range.GetSingle() : 10.0f;
-                
-                if (config.TryGetProperty("position", out var pos) && pos.GetArrayLength() >= 3)
-                {
-                    light.Position = new Vector3(pos[0].GetSingle(), pos[1].GetSingle(), pos[2].GetSingle());
-                }
-                
-                if (config.TryGetProperty("color", out var color) && color.GetArrayLength() >= 3)
-                {
+                light.Name = $"{instance.Name}_Omni";
+
+                light.LightEnergy = GetConfigFloat(modelConfig, "energy", typeConfig, 25.0f);
+                light.OmniRange = GetConfigFloat(modelConfig, "range", typeConfig, 10.0f);
+
+                Vector3 localOffset = Vector3.Zero;
+                if (TryGetConfigArray3(modelConfig, "position", typeConfig, out var pos))
+                    localOffset = new Vector3(pos[0].GetSingle(), pos[1].GetSingle(), pos[2].GetSingle());
+
+                if (TryGetConfigArray3(modelConfig, "color", typeConfig, out var color))
                     light.LightColor = new Color(color[0].GetSingle(), color[1].GetSingle(), color[2].GetSingle());
+
+                // Torch/lantern shadows were globally disabled, which is why standing between
+                // two torches only produced one "real" shadow source (usually the sun/moon).
+                // Keep this tied to runtime graphics settings.
+                bool castShadows = ShadowsEnabled;
+                if (TryGetConfigBool(modelConfig, "castShadows", typeConfig, out var castShadowsProp) &&
+                    castShadowsProp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    castShadows = castShadowsProp.GetBoolean() && ShadowsEnabled;
+                }
+                light.ShadowEnabled = castShadows;
+                // Omni cube shadows are heavier, but they are much more stable for nearby paired
+                // torch setups (doorways, halls) than dual-paraboloid and reduce one-sided misses.
+                light.OmniShadowMode = OmniLight3D.ShadowMode.Cube;
+                light.ShadowBias = 0.05f;
+                light.ShadowNormalBias = 1.0f;
+
+                // Omni under a MeshInstance3D root only lights that mesh sensibly on one local axis (inverted
+                // spill on the player, etc.). Parent to the same node that holds the object instance instead.
+                container.AddChild(light);
+                light.GlobalPosition = ComputeWorldLightAnchor(instance, configKey) + new Vector3(localOffset.X, localOffset.Y, localOffset.Z);
+
+                if (castShadows)
+                {
+                    // By default, the source model itself (flame cards, helper nodes, torch mesh)
+                    // should NOT shadow its own light; this is the common cause of "half-omni"
+                    // artifacts. Allow opt-in per type/model via sourceCastsShadow=true.
+                    bool sourceCastsShadow = GetConfigBoolValue(modelConfig, "sourceCastsShadow", typeConfig, false);
+                    if (!sourceCastsShadow)
+                    {
+                        DisableShadowCastingRecursive(instance);
+                    }
+                    else
+                    {
+                        DisableFlameLikeShadowCastersRecursive(instance);
+                        DisableNearLightOriginShadowCastersRecursive(instance, light.GlobalPosition, GetSelfOcclusionRadius(configKey));
+                    }
                 }
 
-                // If flicker is true, the EntityCapsule will handle it if we mark it or attach a script.
-                // In our Godot WorldManager we don't have a specific flicker manager, but ZoneObjectPlacer
-                // adds lights to static objects. Let's not worry about flickering static objects yet,
-                // but the light tunable is available.
-                
-                instance.AddChild(light);
+                bool pairedOmni = GetConfigBoolValue(modelConfig, "pairedOmni", typeConfig, false);
+                if (castShadows && pairedOmni)
+                {
+                    // Mitigate hemispheric omni-shadow seam artifacts by adding a second omni
+                    // with opposite orientation and split energy.
+                    light.LightEnergy *= 0.5f;
+
+                    var lightB = new OmniLight3D();
+                    lightB.Name = $"{instance.Name}_OmniB";
+                    lightB.LightColor = light.LightColor;
+                    lightB.LightEnergy = light.LightEnergy;
+                    lightB.OmniRange = light.OmniRange;
+                    lightB.ShadowEnabled = true;
+                    lightB.OmniShadowMode = light.OmniShadowMode;
+                    lightB.ShadowBias = light.ShadowBias;
+                    lightB.ShadowNormalBias = light.ShadowNormalBias;
+                    lightB.RotationDegrees = new Vector3(0f, 180f, 0f);
+                    container.AddChild(lightB);
+                    lightB.GlobalPosition = light.GlobalPosition;
+                }
             }
         }
+    }
+
+    private static float GetSelfOcclusionRadius(string configKey)
+    {
+        return configKey switch
+        {
+            "torch" => 0.95f,
+            "lantern" => 0.85f,
+            "chandelier" => 1.1f,
+            "campfire" => 0.8f,
+            "brazier" => 0.9f,
+            "forge" => 1.0f,
+            "candelabra" => 0.75f,
+            _ => 0.85f
+        };
+    }
+
+    private bool TryGetModelLightConfig(string lowerModelName, out JsonElement modelConfig)
+    {
+        modelConfig = default;
+        if (_lightConfigs.ValueKind == JsonValueKind.Undefined)
+            return false;
+
+        if (!_lightConfigs.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Object)
+            return false;
+
+        return models.TryGetProperty(lowerModelName, out modelConfig);
+    }
+
+    private static float GetConfigFloat(JsonElement primary, string key, JsonElement fallback, float defaultValue)
+    {
+        if (primary.ValueKind != JsonValueKind.Undefined &&
+            primary.TryGetProperty(key, out var pVal) &&
+            pVal.ValueKind == JsonValueKind.Number)
+        {
+            return pVal.GetSingle();
+        }
+
+        if (fallback.ValueKind != JsonValueKind.Undefined &&
+            fallback.TryGetProperty(key, out var fVal) &&
+            fVal.ValueKind == JsonValueKind.Number)
+        {
+            return fVal.GetSingle();
+        }
+
+        return defaultValue;
+    }
+
+    private static string GetConfigString(JsonElement primary, string key, JsonElement fallback, string defaultValue)
+    {
+        if (primary.ValueKind != JsonValueKind.Undefined &&
+            primary.TryGetProperty(key, out var pVal) &&
+            pVal.ValueKind == JsonValueKind.String)
+        {
+            return pVal.GetString();
+        }
+
+        if (fallback.ValueKind != JsonValueKind.Undefined &&
+            fallback.TryGetProperty(key, out var fVal) &&
+            fVal.ValueKind == JsonValueKind.String)
+        {
+            return fVal.GetString();
+        }
+
+        return defaultValue;
+    }
+
+    private static bool TryGetConfigArray3(JsonElement primary, string key, JsonElement fallback, out JsonElement arr)
+    {
+        arr = default;
+        if (primary.ValueKind != JsonValueKind.Undefined &&
+            primary.TryGetProperty(key, out var pVal) &&
+            pVal.ValueKind == JsonValueKind.Array &&
+            pVal.GetArrayLength() >= 3)
+        {
+            arr = pVal;
+            return true;
+        }
+
+        if (fallback.ValueKind != JsonValueKind.Undefined &&
+            fallback.TryGetProperty(key, out var fVal) &&
+            fVal.ValueKind == JsonValueKind.Array &&
+            fVal.GetArrayLength() >= 3)
+        {
+            arr = fVal;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetConfigBool(JsonElement primary, string key, JsonElement fallback, out JsonElement value)
+    {
+        value = default;
+        if (primary.ValueKind != JsonValueKind.Undefined &&
+            primary.TryGetProperty(key, out var pVal) &&
+            pVal.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            value = pVal;
+            return true;
+        }
+
+        if (fallback.ValueKind != JsonValueKind.Undefined &&
+            fallback.TryGetProperty(key, out var fVal) &&
+            fVal.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            value = fVal;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool GetConfigBoolValue(JsonElement primary, string key, JsonElement fallback, bool defaultValue)
+    {
+        if (TryGetConfigBool(primary, key, fallback, out var value))
+            return value.GetBoolean();
+        return defaultValue;
+    }
+
+    private static Vector3 ComputeWorldLightAnchor(Node3D instance, string configKey)
+    {
+        // Use mesh bounds (world-space) so wall torches anchor near the flame region,
+        // not at arbitrary/potentially inverted local origins.
+        if (TryGetWorldAabb(instance, out var worldAabb))
+        {
+            float x = worldAabb.Position.X + worldAabb.Size.X * 0.5f;
+            float z = worldAabb.Position.Z + worldAabb.Size.Z * 0.5f;
+            float yBias = configKey switch
+            {
+                "torch" => 0.82f,
+                "lantern" => 0.72f,
+                "chandelier" => 0.74f,
+                "campfire" => 0.45f,
+                "brazier" => 0.56f,
+                "forge" => 0.52f,
+                "candelabra" => 0.66f,
+                _ => 0.62f
+            };
+            float y = worldAabb.Position.Y + worldAabb.Size.Y * yBias;
+            return new Vector3(x, y, z);
+        }
+
+        return instance.GlobalPosition;
+    }
+
+    private static bool TryGetWorldAabb(Node node, out Aabb worldAabb)
+    {
+        bool first = true;
+        worldAabb = default;
+        VisitWorldAabb(node, ref first, ref worldAabb);
+        return !first;
+    }
+
+    private static void VisitWorldAabb(Node node, ref bool first, ref Aabb worldAabb)
+    {
+        if (node is MeshInstance3D mi && mi.Mesh != null)
+        {
+            var aabb = mi.GlobalTransform * mi.Mesh.GetAabb();
+            if (first)
+            {
+                worldAabb = aabb;
+                first = false;
+            }
+            else
+            {
+                worldAabb = worldAabb.Merge(aabb);
+            }
+        }
+
+        foreach (Node child in node.GetChildren())
+            VisitWorldAabb(child, ref first, ref worldAabb);
+    }
+
+    private static void DisableFlameLikeShadowCastersRecursive(Node node)
+    {
+        if (node is MeshInstance3D meshInst && MeshLooksLikeFlameShadowCaster(meshInst))
+        {
+            meshInst.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        }
+
+        foreach (Node child in node.GetChildren())
+            DisableFlameLikeShadowCastersRecursive(child);
+    }
+
+    private static bool MeshLooksLikeFlameShadowCaster(MeshInstance3D meshInst)
+    {
+        string nodeName = meshInst.Name.ToString().ToLowerInvariant();
+        bool flameName =
+            nodeName.Contains("flame") || nodeName.Contains("fire") ||
+            nodeName.Contains("glow") || nodeName.Contains("fx") ||
+            nodeName.Contains("particle");
+
+        int transparentOrEmissive = 0;
+        int opaque = 0;
+
+        int surfaceCount = meshInst.Mesh != null ? meshInst.Mesh.GetSurfaceCount() : meshInst.GetSurfaceOverrideMaterialCount();
+        for (int i = 0; i < surfaceCount; i++)
+        {
+            var mat = meshInst.GetActiveMaterial(i) as BaseMaterial3D;
+            if (mat == null) continue;
+
+            bool isTransparent = mat.Transparency != BaseMaterial3D.TransparencyEnum.Disabled;
+            bool isEmissive = mat is StandardMaterial3D std && std.EmissionEnabled;
+            string matName = (mat.ResourceName ?? string.Empty).ToLowerInvariant();
+            bool flameMatName = matName.Contains("flame") || matName.Contains("fire") || matName.Contains("glow");
+
+            if (isTransparent || isEmissive || flameMatName) transparentOrEmissive++;
+            else opaque++;
+        }
+
+        // Only disable if this mesh is very likely VFX/flame cards, not structural torch holder geometry.
+        return flameName || (transparentOrEmissive > 0 && opaque == 0);
+    }
+
+    private static void DisableNearLightOriginShadowCastersRecursive(Node node, Vector3 lightPos, float radius)
+    {
+        if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
+        {
+            var worldAabb = meshInst.GlobalTransform * meshInst.Mesh.GetAabb();
+            Vector3 center = worldAabb.Position + worldAabb.Size * 0.5f;
+            float halfDiag = worldAabb.Size.Length() * 0.5f;
+            float dist = center.DistanceTo(lightPos);
+
+            // Any mesh overlapping / very near the light source should not cast shadows
+            // back into its own omni. This removes the "mystery wedge" artifacts.
+            if (dist <= radius + halfDiag)
+            {
+                meshInst.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            }
+        }
+
+        foreach (Node child in node.GetChildren())
+            DisableNearLightOriginShadowCastersRecursive(child, lightPos, radius);
+    }
+
+    private static void DisableShadowCastingRecursive(Node node)
+    {
+        if (node is MeshInstance3D meshInst)
+            meshInst.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+
+        foreach (Node child in node.GetChildren())
+            DisableShadowCastingRecursive(child);
     }
     private void AttachAudio(Node3D instance, string soundName, float volumeMultiplier = 1.0f)
     {
@@ -340,18 +673,45 @@ public partial class ZoneObjectPlacer : RefCounted
     /// </summary>
     public Node3D PlaceLights(string zoneId, string cachePath, Node3D parent)
     {
+        if (parent == null) return null;
+        if (DisableLights) return null;
+
         string lightsFile = Path.Combine(cachePath, "Zone", "light_instances.txt");
-        if (!File.Exists(lightsFile)) return null;
-
-        var container = new Node3D { Name = "ZoneLights" };
-        int placed = 0;
-
-        foreach (var line in File.ReadAllLines(lightsFile))
+        if (!File.Exists(lightsFile))
         {
-            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+            GD.Print($"[ObjectPlacer] No light_instances.txt for zone '{zoneId}'");
+            return null;
+        }
+
+        var old = parent.GetNodeOrNull<Node3D>("ZoneBakedLights");
+        if (old != null)
+        {
+            old.GetParent()?.RemoveChild(old);
+            old.QueueFree();
+        }
+
+        var container = new Node3D { Name = "ZoneBakedLights" };
+        parent.AddChild(container);
+
+        int placed = 0;
+        int skipped = 0;
+
+        // Lantern format:
+        // PosX, PosY, PosZ, Radius, ColorR, ColorG, ColorB
+        // Example:
+        // 108.684586,6.903559,-29.038883,70,0.509804,0.509804,0.1176471
+        foreach (string raw in File.ReadAllLines(lightsFile))
+        {
+            string line = raw?.Trim();
+            if (string.IsNullOrEmpty(line) || line.StartsWith("#"))
+                continue;
 
             var parts = line.Split(',');
-            if (parts.Length < 7) continue;
+            if (parts.Length < 7)
+            {
+                skipped++;
+                continue;
+            }
 
             try
             {
@@ -363,48 +723,142 @@ public partial class ZoneObjectPlacer : RefCounted
                 float g = float.Parse(parts[5], CultureInfo.InvariantCulture);
                 float b = float.Parse(parts[6], CultureInfo.InvariantCulture);
 
-                var light = new OmniLight3D();
-                light.Name = $"Light_{placed}";
-                
-                float worldX = -z;
-                float worldY = y;
-                float worldZ = -x;
-                
-                light.Position = new Vector3(worldX, worldY, worldZ);
-                
-                // EQ colors are often 0-1 range. Pure white lights look sterile —
-                // tint them warm since most EQ light sources are fire-based.
-                if (r > 0.9f && g > 0.9f && b > 0.9f)
+                var light = new OmniLight3D
                 {
-                    light.LightColor = new Color(1.0f, 0.75f, 0.4f); // Warm fire tint
-                }
-                else
-                {
-                    light.LightColor = new Color(r, g, b);
-                }
-                
-                // EQ Radiuses are massive, which causes 100s of lights to overlap in Godot.
-                // This overwhelms the Forward+ clustered renderer (max 512 per cluster), causing it to cull ALL lights.
-                // We MUST clamp the radius strictly so they stay localized.
-                float scaledRadius = radius * 0.2f;
-                light.OmniRange = Mathf.Clamp(scaledRadius, 5.0f, 20.0f); 
-                
-                // Keep energy reasonable so it doesn't blow out performance
-                light.LightEnergy = 2.0f; 
-                light.ShadowEnabled = false;
+                    Name = $"Light_{placed}",
+                    LightColor = new Color(
+                        Mathf.Clamp(r, 0f, 1f),
+                        Mathf.Clamp(g, 0f, 1f),
+                        Mathf.Clamp(b, 0f, 1f)),
+                    // Baked zone lights are numerous; keep no-shadows for stability/perf.
+                    ShadowEnabled = false,
+                    // Radius in file already maps well to in-world zone scale.
+                    OmniRange = Mathf.Max(2f, radius),
+                    // Slight boost so baked EQ lights read against dark ambient.
+                    LightEnergy = 1.35f,
+                    OmniAttenuation = 1.0f
+                };
 
+                // Use local position assignment (safe even when parent is not yet in-tree),
+                // avoids Node3D global-transform warnings during async menu backdrop loads.
+                light.Position = EQToGodot(x, y, z);
                 container.AddChild(light);
                 placed++;
             }
-            catch (Exception ex)
+            catch
             {
-                GD.PrintErr($"[ObjectPlacer] Error placing light: {ex.Message}");
+                skipped++;
             }
         }
 
-        parent.AddChild(container);
-        GD.Print($"[ObjectPlacer] Placed {placed} static lights in '{zoneId}'");
+        GD.Print($"[ObjectPlacer] Placed {placed} baked lights in '{zoneId}' ({skipped} skipped).");
         return container;
+    }
+
+    /// <summary>
+    /// Debug helper: spawn one sample of each configured light type so artists can
+    /// tune energy/range/offset quickly in-game.
+    /// </summary>
+    public Node3D SpawnLightTuningGallery(Node3D parent, Vector3 worldOrigin)
+    {
+        if (parent == null)
+            return null;
+
+        var old = parent.GetNodeOrNull<Node3D>("LightTuningGallery");
+        if (old != null)
+        {
+            old.GetParent()?.RemoveChild(old);
+            old.QueueFree();
+        }
+
+        var gallery = new Node3D { Name = "LightTuningGallery" };
+        parent.AddChild(gallery);
+
+        var keys = GetConfiguredLightTypeKeys();
+        const float spacing = 10f;
+        const int columns = 4;
+        int i = 0;
+
+        foreach (string key in keys)
+        {
+            if (!_lightConfigs.TryGetProperty(key, out var cfg) || cfg.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var stand = new Node3D { Name = $"LightType_{key}" };
+            gallery.AddChild(stand);
+
+            int row = i / columns;
+            int col = i % columns;
+            float x = (col - (columns - 1) * 0.5f) * spacing;
+            float z = row * spacing;
+            stand.GlobalPosition = worldOrigin + new Vector3(x, 0f, z);
+
+            var omni = new OmniLight3D { Name = "SampleOmni" };
+            omni.LightEnergy = GetConfigFloat(cfg, "energy", default, 12.0f);
+            omni.OmniRange = GetConfigFloat(cfg, "range", default, 10.0f);
+            if (TryGetConfigArray3(cfg, "color", default, out var color))
+                omni.LightColor = new Color(color[0].GetSingle(), color[1].GetSingle(), color[2].GetSingle());
+
+            bool cast = ShadowsEnabled;
+            if (TryGetConfigBool(cfg, "castShadows", default, out var castProp))
+                cast = castProp.GetBoolean() && ShadowsEnabled;
+            omni.ShadowEnabled = cast;
+            omni.OmniShadowMode = OmniLight3D.ShadowMode.Cube;
+            omni.ShadowBias = 0.05f;
+            omni.ShadowNormalBias = 1.0f;
+
+            Vector3 offset = new Vector3(0f, 2.0f, 0f);
+            if (TryGetConfigArray3(cfg, "position", default, out var pos))
+                offset = new Vector3(pos[0].GetSingle(), pos[1].GetSingle(), pos[2].GetSingle());
+            // Keep sample lights high enough above uneven terrain so the ground itself
+            // doesn't intersect the source and fake a "half-omni" look.
+            if (offset.Y < 1.8f) offset.Y = 1.8f;
+            omni.Position = offset;
+            stand.AddChild(omni);
+
+            var label = new Label3D
+            {
+                Name = "Label",
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                FontSize = 20,
+                OutlineSize = 5,
+                Text = $"{key}\nE:{omni.LightEnergy:F1} R:{omni.OmniRange:F1}",
+                Position = new Vector3(0f, 4.0f, 0f)
+            };
+            label.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            stand.AddChild(label);
+
+            i++;
+        }
+
+        GD.Print($"[ObjectPlacer] Spawned light tuning gallery ({i} sample lights).");
+        return gallery;
+    }
+
+    private List<string> GetConfiguredLightTypeKeys()
+    {
+        var keys = new List<string>();
+        if (_lightConfigs.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in _lightConfigs.EnumerateObject())
+            {
+                if (prop.NameEquals("models")) continue;
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                    keys.Add(prop.Name);
+            }
+        }
+
+        if (keys.Count == 0)
+        {
+            keys.AddRange(new[]
+            {
+                "campfire", "brazier", "torch", "lantern",
+                "forge", "candelabra", "chandelier", "otherfire"
+            });
+        }
+
+        keys.Sort(StringComparer.OrdinalIgnoreCase);
+        return keys;
     }
 
     private void GenerateCollisionRecursive(Node node, Node root, bool forceSolid = false)

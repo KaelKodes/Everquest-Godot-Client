@@ -33,7 +33,7 @@ directional_shadow_split_2 = 0.12
 directional_shadow_split_3 = 0.35
 directional_shadow_max_distance = 600.0
 directional_shadow_fade_start = 0.6
-shadow_bias = 0.04
+shadow_bias = 0.018
 directional_shadow_blend_splits = true
 
 [node name="Floor" type="CSGBox3D" parent="."]

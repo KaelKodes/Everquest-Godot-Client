@@ -305,7 +305,8 @@ public partial class SocialManager : Node
 				break;
 
 			default:
-				GD.Print($"[SOCIAL] Unknown command: {command} {args}");
+				// Match MainUI.Chat: forward server-handled slash commands (e.g. /zone for GMs).
+				_client.SendRaw($"{{\"type\": \"SERVER_COMMAND\", \"command\": \"{EscapeJson(command)}\", \"args\": \"{EscapeJson(args)}\"}}");
 				break;
 		}
 	}

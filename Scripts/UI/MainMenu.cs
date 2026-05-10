@@ -642,15 +642,33 @@ public partial class MainMenu : Control
         _charSelectPreviewCamera.Fov = 30f;
         _charSelectPreviewViewport.AddChild(_charSelectPreviewCamera);
 
-        var previewLight = new DirectionalLight3D();
-        previewLight.RotationDegrees = new Vector3(-30, -45, 0);
-        previewLight.LightEnergy = 1.2f;
-        _charSelectPreviewViewport.AddChild(previewLight);
-        
-        var fillLight = new DirectionalLight3D();
-        fillLight.RotationDegrees = new Vector3(-15, 135, 0);
-        fillLight.LightEnergy = 0.4f;
-        _charSelectPreviewViewport.AddChild(fillLight);
+        // Character-select preview light rig (independent from world/menu backdrop lights).
+        var previewKeyLight = new DirectionalLight3D();
+        previewKeyLight.Name = "CharSelectSun";
+        previewKeyLight.RotationDegrees = new Vector3(-30, -45, 0);
+        previewKeyLight.LightEnergy = 0.85f;
+        previewKeyLight.LightColor = new Color(1.00f, 0.90f, 0.78f);
+        previewKeyLight.LightSpecular = 0.12f;
+        previewKeyLight.ShadowEnabled = false;
+        _charSelectPreviewViewport.AddChild(previewKeyLight);
+
+        var previewFillLight = new DirectionalLight3D();
+        previewFillLight.Name = "CharSelectFillLight";
+        previewFillLight.RotationDegrees = new Vector3(-15, 135, 0);
+        previewFillLight.LightEnergy = 0.22f;
+        previewFillLight.LightColor = new Color(0.72f, 0.80f, 0.95f);
+        previewFillLight.LightSpecular = 0.05f;
+        previewFillLight.ShadowEnabled = false;
+        _charSelectPreviewViewport.AddChild(previewFillLight);
+
+        var previewRimLight = new DirectionalLight3D();
+        previewRimLight.Name = "CharSelectRimLight";
+        previewRimLight.RotationDegrees = new Vector3(-10, 180, 0);
+        previewRimLight.LightEnergy = 0.08f;
+        previewRimLight.LightColor = new Color(0.95f, 0.90f, 0.82f);
+        previewRimLight.LightSpecular = 0.03f;
+        previewRimLight.ShadowEnabled = false;
+        _charSelectPreviewViewport.AddChild(previewRimLight);
 
         _charSelectPreviewRoot = new Node3D();
         _charSelectPreviewRoot.Name = "CharSelectPreviewRoot";
@@ -758,15 +776,24 @@ public partial class MainMenu : Control
         _previewCamera.Fov = 30f;
         _previewViewport.AddChild(_previewCamera);
 
-        // Lighting
-        var previewLight = new DirectionalLight3D();
-        previewLight.RotationDegrees = new Vector3(-30, -45, 0);
-        previewLight.LightEnergy = 1.2f;
-        _previewViewport.AddChild(previewLight);
-        var fillLight = new DirectionalLight3D();
-        fillLight.RotationDegrees = new Vector3(-15, 135, 0);
-        fillLight.LightEnergy = 0.4f;
-        _previewViewport.AddChild(fillLight);
+        // Create-character preview light rig ("sun" + fill), independent from world lighting.
+        var createPreviewSun = new DirectionalLight3D();
+        createPreviewSun.Name = "CreatePreviewSun";
+        createPreviewSun.RotationDegrees = new Vector3(-30, -45, 0);
+        createPreviewSun.LightEnergy = 0.85f;
+        createPreviewSun.LightColor = new Color(1.00f, 0.90f, 0.78f);
+        createPreviewSun.LightSpecular = 0.12f;
+        createPreviewSun.ShadowEnabled = false;
+        _previewViewport.AddChild(createPreviewSun);
+
+        var createPreviewFill = new DirectionalLight3D();
+        createPreviewFill.Name = "CreatePreviewFill";
+        createPreviewFill.RotationDegrees = new Vector3(-15, 135, 0);
+        createPreviewFill.LightEnergy = 0.22f;
+        createPreviewFill.LightColor = new Color(0.72f, 0.80f, 0.95f);
+        createPreviewFill.LightSpecular = 0.05f;
+        createPreviewFill.ShadowEnabled = false;
+        _previewViewport.AddChild(createPreviewFill);
 
         // Model root (spins)
         _previewRoot = new Node3D();
@@ -1148,12 +1175,24 @@ public partial class MainMenu : Control
         if (bg != null) bg.Hide();
     }
 
+    /// <summary>True if this menu control and backdrop nodes are still in the tree (async loads must bail after <c>await</c>).</summary>
+    private bool MenuBackdropAlive()
+    {
+        return GodotObject.IsInstanceValid(this)
+            && IsInsideTree()
+            && _backdropRoot != null && GodotObject.IsInstanceValid(_backdropRoot)
+            && _backdropCamera != null && GodotObject.IsInstanceValid(_backdropCamera);
+    }
+
     /// <summary>
     /// Loads a zone .glb directly from cache to serve as the menu backdrop.
     /// Provide Godot world coordinates for the camera.
     /// </summary>
     public async System.Threading.Tasks.Task LoadBackdropZone(string zoneId, Vector3 cameraPosition, Vector3 cameraRotationDegrees)
     {
+        if (!MenuBackdropAlive())
+            return;
+
         // Clean up old backdrop mesh
         var oldMesh = _backdropRoot.GetNodeOrNull<Node3D>($"GLB_{_currentBackdropZone}");
         if (oldMesh != null) oldMesh.QueueFree();
@@ -1167,6 +1206,8 @@ public partial class MainMenu : Control
             {
                 GD.Print($"[MENU] Extracting backdrop zone {zoneId}...");
                 bool extracted = await extractor.ExtractZone(zoneId);
+                if (!MenuBackdropAlive())
+                    return;
                 if (!extracted)
                 {
                     GD.PrintErr($"[MENU] Failed to extract backdrop zone {zoneId}.");
@@ -1175,6 +1216,9 @@ public partial class MainMenu : Control
             }
         }
         
+        if (!MenuBackdropAlive())
+            return;
+
         string glbPath = EQAssetCache.Instance.GetZoneGlbPath(zoneId);
         if (string.IsNullOrEmpty(glbPath) || !System.IO.File.Exists(glbPath))
         {
@@ -1194,8 +1238,17 @@ public partial class MainMenu : Control
                 return;
             }
 
+            if (!MenuBackdropAlive())
+                return;
+
             Node scene = gltfDoc.GenerateScene(gltfState);
             if (scene == null) return;
+
+            if (!MenuBackdropAlive())
+            {
+                scene.QueueFree();
+                return;
+            }
 
             var zoneRoot = new Node3D { Name = $"GLB_{zoneId}" };
             zoneRoot.Transform = new Transform3D(
@@ -1205,6 +1258,12 @@ public partial class MainMenu : Control
                 Vector3.Zero
             );
             zoneRoot.AddChild(scene);
+            if (!MenuBackdropAlive())
+            {
+                zoneRoot.QueueFree();
+                return;
+            }
+
             _backdropRoot.AddChild(zoneRoot);
 
             _backdropCamera.Position = cameraPosition;
@@ -1219,7 +1278,8 @@ public partial class MainMenu : Control
             _backdropRoot.AddChild(materialAnimator);
 
             var objectPlacer = new ZoneObjectPlacer();
-            objectPlacer.DisableLights = true;
+            // Keep character-select backdrop ambience (torches/lanterns/fires) enabled.
+            objectPlacer.DisableLights = false;
             objectPlacer.ShadowsEnabled = true;
             objectPlacer.Animator = materialAnimator;
             

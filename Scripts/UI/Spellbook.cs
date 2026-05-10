@@ -349,6 +349,8 @@ public partial class Spellbook : Panel
 		return new List<BookSpell>(_bookSpells.Values);
 	}
 
+	public bool IsBookSlotOccupied(int bookSlot) => _bookSpells.ContainsKey(bookSlot);
+
 	// ── Page Navigation ─────────────────────────────────────────────
 
 	private void TurnPage(int delta)
@@ -467,7 +469,12 @@ public partial class Spellbook : Panel
 		// Cancel any pending swap
 		_swapFromSlot = -1;
 
-		if (!_bookSpells.TryGetValue(bookSlot, out var spell)) return;
+		if (!_bookSpells.TryGetValue(bookSlot, out var spell))
+		{
+			if (MainUI.Instance != null && MainUI.Instance.TryDropHeldScrollOnBookSlot(bookSlot))
+				_statusLabel.Text = "Scribing scroll...";
+			return;
+		}
 
 		// Emit signal — MainUI will handle the "click a gem to memorize" flow
 		EmitSignal(SignalName.SpellSelectedForMemorize, spell.SpellKey, spell.Name);
@@ -533,6 +540,12 @@ public partial class Spellbook : Panel
 		_swapFromSlot = -1;
 		_statusLabel.Text = "";
 		RefreshPageDisplay();
+	}
+
+	/// <summary>Clears transient status (e.g. after server rejects scribe).</summary>
+	public void ClearScribingStatus()
+	{
+		_statusLabel.Text = "";
 	}
 
 	// ── Input Handling ──────────────────────────────────────────────

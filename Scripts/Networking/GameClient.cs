@@ -45,6 +45,7 @@ public partial class GameClient : Node
     [Signal] public delegate void CampCompleteEventHandler();
     [Signal] public delegate void DoorStateChangedEventHandler(Variant data);
     [Signal] public delegate void SpellAnimationReceivedEventHandler(Variant data);
+    [Signal] public delegate void ScribeScrollReceivedEventHandler(Variant data);
 
     public static GameClient Instance { get; private set; }
     
@@ -312,6 +313,12 @@ public partial class GameClient : Node
                     break;
                 case "SPELL_ANIMATION":
                     EmitSignal(SignalName.SpellAnimationReceived, message);
+                    break;
+                case "SCRIBE_STARTED":
+                case "SCRIBE_COMPLETE":
+                case "SCRIBE_CANCELLED":
+                case "SCRIBE_REJECTED":
+                    EmitSignal(SignalName.ScribeScrollReceived, message);
                     break;
                 case "TELEPORT":
                 {

@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 
@@ -14,11 +15,32 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private readonly System.Collections.Generic.HashSet<string> _warnedAnims = new();
     private static readonly System.Collections.Generic.HashSet<int> _warnedRaces = new();
 
+    /// <summary>Remember infravision across material rebuilds (equip updates call <see cref="FixCharacterMaterials"/>).</summary>
+    private bool _infravisionEnabled = false;
+
     // Torch / Light Source
     private OmniLight3D _torchLight;
     private bool _hasLightSource = false;
+    /// <summary>Pharos A/B only: server <c>lightPharosVariant</c> (0–4+); -1 = default (player / normal mobs).</summary>
+    private int _lightPharosVariant = -1;
     private float _torchFlickerTimer = 0f;
+    /// <summary>DM F3: live lantern-local omni offset; survives TryAttach until F1 or light off / no lantern.</summary>
+    private Vector3? _dmTorchLightLanternLocalOffset;
+    /// <summary>
+    /// Zone prop lights from <c>ZoneObjectPlacer</c> often use energy ~25; the old handheld value (~1.3) only
+    /// read on the nearby body while the world stayed black. Keep handheld a bit below props so close fire
+    /// geometry is not nuclear, but high enough to navigate by.
+    /// </summary>
+    private const float DefaultTorchLightEnergy = 14f;
+    private const float DefaultTorchOmniRange = 26f;
     private static readonly Random _flickerRng = new Random();
+
+    /// <summary>Held lantern mesh: steady subtle glow (omni still flickers like flame). Keep modest — high values + unshaded nukes detail.</summary>
+    private const float LanternBodyEmissionEnergyMul = 0.38f;
+    private static readonly Color LanternBodyEmissionColor = new Color(0.85f, 0.52f, 0.2f);
+
+    /// <summary>EQ itemtype for inventory slot 14 (secondary); 8 = shield — drives shield_point vs l_point.</summary>
+    private int? _secondaryEquipItemType;
 
     public string EntityName { get; private set; } = "Entity";
     public string EntityType { get; private set; } = "enemy";
@@ -678,9 +700,42 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
     }
 
+    /// <summary>
+    /// C# references to Godot nodes stay non-null after native free; always pair with <see cref="GodotObject.IsInstanceValid"/>.
+    /// </summary>
+    private void ClearTorchLightIfFreed()
+    {
+        if (_torchLight != null && !GodotObject.IsInstanceValid(_torchLight))
+            _torchLight = null;
+    }
+
+    private void EnsureTorchLightNode()
+    {
+        if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight))
+            return;
+
+        _torchLight = new OmniLight3D
+        {
+            Name = "TorchLight",
+            Visible = false,
+            ShadowEnabled = true,
+            ShadowBias = 0.05f,
+            ShadowNormalBias = 1.0f,
+            OmniShadowMode = OmniLight3D.ShadowMode.Cube,
+            LightColor = new Color(1.0f, 0.8f, 0.45f),
+            LightEnergy = DefaultTorchLightEnergy,
+            OmniRange = DefaultTorchOmniRange,
+            OmniAttenuation = 1.0f
+        };
+
+        AddChild(_torchLight);
+        _torchLight.Position = new Vector3(-0.4f, 3.0f, 0.15f);
+    }
+
     public override void _PhysicsProcess(double delta)
     {
         if (IsQueuedForDeletion()) return;
+        ClearTorchLightIfFreed();
 
         // Tick down emote timer
         if (_emoteTimer > 0)
@@ -710,15 +765,19 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
 
         // Torch flicker effect — subtle energy variation for realism
-        if (_torchLight != null && _hasLightSource)
+        if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight) && _hasLightSource)
         {
             _torchFlickerTimer += (float)delta;
             if (_torchFlickerTimer > 0.08f) // flicker ~12 times per second
             {
                 _torchFlickerTimer = 0f;
-                _torchLight.LightEnergy = 1.3f + (float)(_flickerRng.NextDouble() * 0.4 - 0.2);
+                _torchLight.LightEnergy = DefaultTorchLightEnergy + (float)(_flickerRng.NextDouble() * 3.0 - 1.5);
             }
         }
+
+        // Lantern: per-frame world sync (bone motion + torso clearance). No-op if no equipped lantern.
+        if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight) && _hasLightSource)
+            SyncHeldLanternOmniWorldPosition();
 
         // Dynamically track Skeleton bone heights to adjust NameLabel and ClickArea
         // This solves issues where flying mobs (like bats) have rest-poses on the ground
@@ -1319,6 +1378,28 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                             ApplyArmorTextures(_characterModel, modelCode, equipVisualsJson);
                             AttachWeapons(_characterModel, equipVisualsJson);
                         }
+                        else if (_hasLightSource)
+                        {
+                            TryAttachTorchLightToHand();
+                        }
+
+                        if ((modelCode == "frm" || modelCode == "frf" || modelCode == "kem" || modelCode == "kef") && Face > 0)
+                        {
+                            int swappedFace = 0;
+                            ApplyLuclinSkinToNode(_characterModel, modelCode, Face, ref swappedFace);
+                        }
+                        // Face + armor paths duplicate materials; strip backlight again before first draw.
+                        FixCharacterMaterials(_characterModel);
+                        if (_infravisionEnabled)
+                            SetInfravision(true);
+                        // Lighting fix: when the current zone is using the LanternExtractor
+                        // normal-flip correction (see WorldManager.BakeFlippedNormalsRecursive),
+                        // apply the same correction to this character's mesh tree (body parts
+                        // + attached weapons / lantern), so omni / spot lights compute diffuse
+                        // against outward-facing normals instead of the negative-scale-inverted
+                        // ones LanternExtractor bakes into character GLBs. Idempotent via meta
+                        // flag; safe to call again on later equip / face / skin updates.
+                        ApplyLightFixNormalFlipToCharacterIfActive();
                     }
                 }
                 catch (Exception ex)
@@ -1409,7 +1490,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     {
         if (node is MeshInstance3D meshInst)
         {
-            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            int surfaceCount = meshInst.Mesh != null
+                ? meshInst.Mesh.GetSurfaceCount()
+                : meshInst.GetSurfaceOverrideMaterialCount();
+            for (int i = 0; i < surfaceCount; i++)
             {
                 var mat = meshInst.GetActiveMaterial(i);
                 if (mat is not StandardMaterial3D stdMat) continue;
@@ -1437,7 +1521,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                     }
                     else
                     {
-                        meshInst.SetSurfaceOverrideMaterial(i, null);
+                        RestorePlayerSurfaceToSanitizedMeshDefault(meshInst, i);
                         swapped++;
                         continue;
                     }
@@ -1464,6 +1548,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
                 var newMat = (StandardMaterial3D)stdMat.Duplicate();
                 newMat.AlbedoTexture = armorTex;
+                SanitizePlayerBodyBaseMaterial(newMat);
                 meshInst.SetSurfaceOverrideMaterial(i, newMat);
                 swapped++;
             }
@@ -1543,6 +1628,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
                 var newMat = (StandardMaterial3D)stdMat.Duplicate();
                 newMat.AlbedoTexture = faceTex;
+                SanitizePlayerBodyBaseMaterial(newMat);
                 meshInst.SetSurfaceOverrideMaterial(i, newMat);
                 swapped++;
             }
@@ -1567,10 +1653,12 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         var skeleton = _cachedSkeleton ?? FindSkeleton(_characterModel);
         if (skeleton != null)
         {
+            // OmniLight must not be a child of equip_* (freed with the BoneAttachment3D subtree).
+            ParkTorchLightOnCapsule();
             var toRemove = new System.Collections.Generic.List<Node>();
             foreach (var child in skeleton.GetChildren())
             {
-                if (child is BoneAttachment3D ba && ba.Name.ToString().Contains("attach_"))
+                if (child is BoneAttachment3D ba && IsEquipmentWeaponBoneAttachment(ba))
                     toRemove.Add(child);
             }
             foreach (var node in toRemove)
@@ -1596,19 +1684,101 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
         ApplyArmorTextures(_characterModel, modelCode, safeVisualsJson);
         
-        // Re-apply weapons if we have visual data
+        // Re-apply weapons when the payload includes equip keys (avoid stripping-only with no JSON)
         if (!string.IsNullOrEmpty(equipVisualsJson))
         {
             AttachWeapons(_characterModel, equipVisualsJson);
         }
+        else if (_hasLightSource)
+        {
+            TryAttachTorchLightToHand();
+        }
+
+        // Armor/face swaps duplicate GLB materials and can reintroduce backlight / normals.
+        FixCharacterMaterials(_characterModel);
+        if (_infravisionEnabled)
+            SetInfravision(true);
+        // Weapons / armor that were just attached are LanternExtractor GLBs too — flip
+        // their normals to match the rest of the character (idempotent for already-flipped
+        // body parts).
+        ApplyLightFixNormalFlipToCharacterIfActive();
     }
 
     // ═══════ Weapon / Shield Attachment ═══════════════════════════════
+
+    /// <summary>
+    /// Local <see cref="Node3D.RotationDegrees"/> for equipment GLBs whose rest orientation
+    /// does not match EQ hand bones (e.g. lantern held sideways like a pistol).
+    /// Keys: lowercase idfile stem matching <c>Data/Equipment/{id}.glb</c>.
+    /// </summary>
+    private static readonly Dictionary<string, Vector3> s_equipmentLocalRotationDeg =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Roll on Z (not X): vertical hang. −90° vs +90° is 180° flip — tip up, glowing chamber down.
+            ["lantern01"] = new Vector3(0f, 0f, -90f),
+        };
+
+    /// <summary>Local position under <see cref="BoneAttachment3D"/> when the GLB origin needs nudging toward the grip.</summary>
+    private static readonly Dictionary<string, Vector3> s_equipmentLocalPosition =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            // l_point space (reversed from prior try): +X / −Z matched “forward + left” from the model’s POV.
+            // Tuned in-game (DM F3 / F2)
+            ["lantern01"] = new Vector3(0.0531f, -0.407f, -0.0246f),
+        };
+
+    /// <summary>Optional per-id lantern-local omni offsets (DM F2 paste). If missing, omni uses combined mesh AABB center.</summary>
+    private static readonly Dictionary<string, Vector3> s_torchLightOffsetInLanternLocal =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>BoneAttachment3D nodes created for equipped weapons (not torch light).</summary>
+    private static bool IsEquipmentWeaponBoneAttachment(BoneAttachment3D ba)
+    {
+        string n = ba.Name.ToString();
+        if (!n.StartsWith("attach_")) return false;
+        string rest = n["attach_".Length..];
+        return rest is "r_point" or "l_point" or "shield_point"
+            or "Clone of r_point" or "Clone of l_point" or "Clone of shield_point";
+    }
+
+    private static bool TryFindSkeletonBone(Skeleton3D skeleton, string boneName, out int boneIdx, out string resolvedName)
+    {
+        boneIdx = skeleton.FindBone(boneName);
+        if (boneIdx >= 0)
+        {
+            resolvedName = boneName;
+            return true;
+        }
+        string clone = "Clone of " + boneName;
+        boneIdx = skeleton.FindBone(clone);
+        if (boneIdx >= 0)
+        {
+            resolvedName = clone;
+            return true;
+        }
+        resolvedName = null;
+        return false;
+    }
+
+    /// <summary>Off-hand socket: shields use shield_point first; weapons/torches use l_point first.</summary>
+    private static bool TryResolveSecondaryHandBone(Skeleton3D skeleton, int? secondaryItemType, out int boneIdx, out string boneName)
+    {
+        bool shieldFirst = secondaryItemType == 8; // EQ ItemTypeShield
+        string first = shieldFirst ? "shield_point" : "l_point";
+        string second = shieldFirst ? "l_point" : "shield_point";
+        if (TryFindSkeletonBone(skeleton, first, out boneIdx, out boneName)) return true;
+        return TryFindSkeletonBone(skeleton, second, out boneIdx, out boneName);
+    }
+
     private void AttachWeapons(Node3D modelRoot, string equipVisualsJson)
     {
         try
         {
             var vis = JsonDocument.Parse(equipVisualsJson).RootElement;
+
+            _secondaryEquipItemType = null;
+            if (vis.TryGetProperty("secondaryWeaponItemType", out var swt) && swt.ValueKind == JsonValueKind.Number)
+                _secondaryEquipItemType = swt.GetInt32();
 
             if (vis.TryGetProperty("primaryWeapon", out var pwProp))
             {
@@ -1622,16 +1792,95 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 string sw = swProp.GetString();
                 if (!string.IsNullOrEmpty(sw))
                 {
-                    // Try shield_point first, fall back to l_point
-                    if (!AttachEquipmentToPoint(modelRoot, sw, "shield_point"))
-                        AttachEquipmentToPoint(modelRoot, sw, "l_point");
+                    var skeleton = _cachedSkeleton ?? FindSkeleton(modelRoot);
+                    if (skeleton != null && TryResolveSecondaryHandBone(skeleton, _secondaryEquipItemType, out _, out string boneName))
+                        AttachEquipmentToPoint(modelRoot, sw, boneName);
                 }
             }
+
+            if (_hasLightSource)
+                TryAttachTorchLightToHand();
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[MODEL] Weapon attach error: {ex.Message}");
         }
+    }
+
+    /// <summary>DM lantern tuner (F3): first child equipment node named like <c>equip_lantern*</c>.</summary>
+    public Node3D FindLanternEquipNode()
+    {
+        if (_characterModel == null) return null;
+        return FindEquipNodeByNamePrefix(_characterModel, "equip_lantern");
+    }
+
+    private static string EquipNodeToIdfile(Node3D equipNode)
+    {
+        string n = equipNode.Name.ToString();
+        return n.StartsWith("equip_", StringComparison.OrdinalIgnoreCase) ? n["equip_".Length..] : n;
+    }
+
+    /// <summary>DM F3/F2: lantern-local offset of omni (for logging / paste). False if no lit lantern.</summary>
+    public bool TryDmTuneGetTorchLightState(out Node3D lanternEquip, out Vector3 offsetInLanternLocal)
+    {
+        lanternEquip = FindLanternEquipNode();
+        offsetInLanternLocal = default;
+        if (lanternEquip == null || !GodotObject.IsInstanceValid(lanternEquip)) return false;
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight)) return false;
+        if (!_hasLightSource) return false;
+        offsetInLanternLocal = GetTorchLightOffsetInLanternLocal(lanternEquip, _torchLight);
+        return true;
+    }
+
+    /// <summary>DM F3: nudge omni in world space; store offset in true lantern-local space.</summary>
+    public void DmTuneApplyTorchLightWorldDelta(Vector3 worldDelta)
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight)) return;
+        _torchLight.GlobalPosition += worldDelta;
+        Node3D lantern = FindLanternEquipNode();
+        if (lantern != null && GodotObject.IsInstanceValid(lantern))
+            _dmTorchLightLanternLocalOffset = lantern.ToLocal(_torchLight.GlobalPosition);
+    }
+
+    /// <summary>DM F1 while F3 mode: drop live offset (use code defaults) and re-seat the omni; reset range.</summary>
+    public void DmTuneResetTorchLightToDefaults()
+    {
+        _dmTorchLightLanternLocalOffset = null;
+        if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight))
+        {
+            _torchLight.OmniRange = DefaultTorchOmniRange;
+            _torchLight.LightEnergy = DefaultTorchLightEnergy;
+        }
+        if (_hasLightSource)
+            TryAttachTorchLightToHand();
+    }
+
+    /// <summary>DM F3: [ / ] adjust omni radius (units/sec while held).</summary>
+    public void DmTuneAdjustTorchOmniRange(float unitsPerSecond, float deltaTime)
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight)) return;
+        if (!_hasLightSource) return;
+        float chg = unitsPerSecond * deltaTime;
+        _torchLight.OmniRange = Mathf.Clamp(_torchLight.OmniRange + chg, 2f, 45f);
+    }
+
+    private static Vector3 GetTorchLightOffsetInLanternLocal(Node3D lanternEquip, OmniLight3D torch)
+    {
+        if (torch.GetParent() == lanternEquip)
+            return torch.Position;
+        return lanternEquip.ToLocal(torch.GlobalPosition);
+    }
+
+    private static Node3D FindEquipNodeByNamePrefix(Node root, string prefix)
+    {
+        foreach (Node child in root.GetChildren())
+        {
+            if (child is Node3D n3 && child.Name.ToString().StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return n3;
+            Node3D found = FindEquipNodeByNamePrefix(child, prefix);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private bool AttachEquipmentToPoint(Node3D modelRoot, string idfile, string boneName)
@@ -1674,6 +1923,10 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
             var weaponModel = scene.Instantiate<Node3D>();
             weaponModel.Name = $"equip_{idfile}";
+            if (s_equipmentLocalRotationDeg.TryGetValue(idfile, out var rotDeg))
+                weaponModel.RotationDegrees = rotDeg;
+            if (s_equipmentLocalPosition.TryGetValue(idfile, out var posOff))
+                weaponModel.Position = posOff;
 
             // Create BoneAttachment3D to parent weapon to the bone
             var attachment = new BoneAttachment3D();
@@ -1773,20 +2026,53 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             // GD.Print($"[MODEL] {indent}  Mesh: {(mesh != null ? mesh.GetType().Name : "NULL")} surfaces={mesh?.GetSurfaceCount()}");
             meshInst.Visible = true;
 
-            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            int surfCount = mesh != null ? mesh.GetSurfaceCount() : meshInst.GetSurfaceOverrideMaterialCount();
+            bool isLantern = string.Equals(idfile, "lantern01", StringComparison.OrdinalIgnoreCase);
+
+            for (int i = 0; i < surfCount; i++)
             {
                 var mat = meshInst.GetActiveMaterial(i);
                 // GD.Print($"[MODEL] {indent}  Surface {i}: {mat?.GetType().Name} name={mat?.ResourceName}");
 
-                if (mat is StandardMaterial3D stdMat)
+                if (mat is BaseMaterial3D baseMat)
                 {
-                    // Force visibility: no transparency, double-sided
-                    var fixedMat = (StandardMaterial3D)stdMat.Duplicate();
+                    // ORMMaterial3D / StandardMaterial3D — glTF often uses ORM, not Standard-only.
+                    var fixedMat = (BaseMaterial3D)baseMat.Duplicate();
                     fixedMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                     fixedMat.Transparency = BaseMaterial3D.TransparencyEnum.Disabled;
                     meshInst.SetSurfaceOverrideMaterial(i, fixedMat);
-                    // GD.Print($"[MODEL] {indent}  Fixed material: cull=disabled, transparency=disabled, tex={fixedMat.AlbedoTexture?.ResourceName}");
                 }
+                else if (isLantern && mat is ShaderMaterial)
+                {
+                    // So every pane gets a material we can drive emission on (EQ custom shaders).
+                    var fallback = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.22f, 0.18f, 0.14f),
+                        Roughness = 0.85f,
+                        Metallic = 0.05f,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        Transparency = BaseMaterial3D.TransparencyEnum.Disabled,
+                    };
+                    meshInst.SetSurfaceOverrideMaterial(i, fallback);
+                }
+                else if (isLantern && mat == null)
+                {
+                    var fallback = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.2f, 0.17f, 0.14f),
+                        Roughness = 0.9f,
+                        Metallic = 0f,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        Transparency = BaseMaterial3D.TransparencyEnum.Disabled,
+                    };
+                    meshInst.SetSurfaceOverrideMaterial(i, fallback);
+                }
+            }
+
+            if (isLantern)
+            {
+                // Forward+/clustered lights use mesh AABB; thin EQ props can get a hard half-lit seam.
+                meshInst.ExtraCullMargin = Mathf.Max(meshInst.ExtraCullMargin, 1.25f);
             }
         }
 
@@ -1896,6 +2182,271 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
     // ═══════ Light Source (Torch) ═════════════════════════════════════
 
+    private void ReparentTorchLightToCapsuleFallback()
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight)) return;
+        Node p = _torchLight.GetParent();
+        if (p != null)
+            p.RemoveChild(_torchLight);
+        AddChild(_torchLight);
+        // Capsule-space guess: left / off-hand side, ~hand height when model is not loaded
+        _torchLight.Position = new Vector3(-0.4f, 3.0f, 0.15f);
+        _torchLight.RotationDegrees = Vector3.Zero;
+    }
+
+    /// <summary>Move torch omni to capsule root so it survives equip_* <see cref="QueueFree"/>.</summary>
+    private void ParkTorchLightOnCapsule()
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight)) return;
+        Node parent = _torchLight.GetParent();
+        if (parent == this) return;
+        if (parent != null)
+            parent.RemoveChild(_torchLight);
+        AddChild(_torchLight);
+    }
+
+    /// <summary>
+    /// Recursively turn off shadow casting on every MeshInstance3D under <paramref name="root"/>.
+    /// Used on lantern / torch equipment so the prop's own geometry does not occlude the omni
+    /// light source positioned inside it. Real handheld lanterns are too small to cast a
+    /// meaningful shadow anyway; the character carrying it still does.
+    /// </summary>
+    private static void DisableShadowCastingRecursive(Node root)
+    {
+        if (root is MeshInstance3D mi)
+            mi.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        foreach (var child in root.GetChildren())
+            DisableShadowCastingRecursive(child);
+    }
+
+    /// <summary>
+    /// Lantern-local point for the omni (chamber vs handle). No local ±Z guess — that mirrored world left/right
+    /// when the hand rotated. <see cref="SyncHeldLanternOmniWorldPosition"/> adds a torso clearance in world space.
+    /// </summary>
+    private Vector3 ResolveTorchLightLocalPositionInLantern(Node3D lanternEquip)
+    {
+        if (_dmTorchLightLanternLocalOffset.HasValue)
+            return _dmTorchLightLanternLocalOffset.Value;
+        string id = EquipNodeToIdfile(lanternEquip);
+        if (s_torchLightOffsetInLanternLocal.TryGetValue(id, out var tuned))
+            return tuned;
+        var aabb = GetCombinedAABB(lanternEquip);
+        if (aabb.Size.LengthSquared() > 1e-8f)
+        {
+            Vector3 c = aabb.GetCenter();
+            float yLift = Mathf.Max(aabb.Size.Y * 0.32f, 0.07f);
+            return c + new Vector3(0f, yLift, 0f);
+        }
+        return new Vector3(0f, 0.12f, 0f);
+    }
+
+    /// <summary>
+    /// Handheld omni world position: lantern-local flame point, then (except V1/V4) reflect into forward horizontal hemisphere
+    /// (fixes pool lighting behind you), then minimum distance from torso proxy. V4 = 360° at flame, no hemisphere clamp.
+    /// </summary>
+    /// <summary>
+    /// Each physics frame, place the handheld omni at the lantern's flame point in world
+    /// space. Previous versions of this function reflected the position into the player's
+    /// forward hemisphere and added per-variant nudges; that was a workaround for the
+    /// inverted-zone-normals bug (now fixed in WorldManager.BakeFlippedNormalsRecursive)
+    /// and was the actual reason the light "didn't seem to come from the source" — it
+    /// literally wasn't. Now: light goes at the flame, period. The single safety is a
+    /// tiny minimum horizontal distance from the torso so the omni doesn't end up inside
+    /// the body capsule (which would self-shadow the whole character).
+    /// </summary>
+    private void SyncHeldLanternOmniWorldPosition()
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight) || !_hasLightSource) return;
+        Node3D lantern = FindLanternEquipNode();
+        if (lantern == null || !GodotObject.IsInstanceValid(lantern)) return;
+
+        Vector3 flameWorld = lantern.ToGlobal(ResolveTorchLightLocalPositionInLantern(lantern));
+
+        // Anti-self-shadow safety: if the flame point lands inside the torso volume
+        // (hand swing / weird animation frame), push it horizontally outward by a very
+        // small amount so the body mesh doesn't fully envelop the omni and shadow itself.
+        // No directional preference, no hemisphere reflection.
+        Vector3 up = Vector3.Up;
+        Vector3 hip = GlobalPosition + GlobalTransform.Basis * new Vector3(0f, 1.15f, 0f);
+        Vector3 arm = flameWorld - hip;
+        Vector3 armH = arm - up * arm.Dot(up);
+        const float minTorsoClear = 0.18f;
+        if (armH.Length() < minTorsoClear)
+        {
+            Vector3 push = armH.LengthSquared() > 1e-8f
+                ? armH.Normalized()
+                : GlobalTransform.Basis.X; // body-right as a last-resort tiebreaker
+            flameWorld = hip + push * minTorsoClear + up * arm.Dot(up);
+        }
+
+        _torchLight.GlobalPosition = flameWorld;
+    }
+
+    private void ApplyHeldLanternSolidGlow()
+    {
+        if (!_hasLightSource) return;
+        Node3D lantern = FindLanternEquipNode();
+        if (lantern == null || !GodotObject.IsInstanceValid(lantern)) return;
+        ApplyLanternEmissionRecursive(lantern, lit: true, LanternBodyEmissionEnergyMul, LanternBodyEmissionColor);
+    }
+
+    private void SetHeldLanternEmissiveLit(bool lit)
+    {
+        Node3D lantern = FindLanternEquipNode();
+        if (lantern == null || !GodotObject.IsInstanceValid(lantern)) return;
+        if (lit)
+            ApplyHeldLanternSolidGlow();
+        else
+            ApplyLanternEmissionRecursive(lantern, lit: false, 0f, default);
+    }
+
+    private static void ApplyLanternEmissionRecursive(Node node, bool lit, float emissionEnergyMul, Color emissionColor)
+    {
+        if (node is MeshInstance3D meshInst)
+        {
+            int n = meshInst.Mesh != null ? meshInst.Mesh.GetSurfaceCount() : meshInst.GetSurfaceOverrideMaterialCount();
+            for (int i = 0; i < n; i++)
+            {
+                BaseMaterial3D mat = meshInst.GetSurfaceOverrideMaterial(i) as BaseMaterial3D;
+                if (mat == null)
+                {
+                    if (meshInst.GetActiveMaterial(i) is BaseMaterial3D activeBase)
+                    {
+                        mat = (BaseMaterial3D)activeBase.Duplicate();
+                        meshInst.SetSurfaceOverrideMaterial(i, mat);
+                    }
+                    else if (meshInst.GetActiveMaterial(i) is ShaderMaterial)
+                    {
+                        mat = new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color(0.22f, 0.18f, 0.14f),
+                            Roughness = 0.85f,
+                            Metallic = 0.05f,
+                            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                            Transparency = BaseMaterial3D.TransparencyEnum.Disabled,
+                        };
+                        meshInst.SetSurfaceOverrideMaterial(i, mat);
+                    }
+                    else
+                    {
+                        mat = new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color(0.2f, 0.17f, 0.14f),
+                            Roughness = 0.9f,
+                            Metallic = 0f,
+                            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                            Transparency = BaseMaterial3D.TransparencyEnum.Disabled,
+                        };
+                        meshInst.SetSurfaceOverrideMaterial(i, mat);
+                    }
+                }
+                if (lit)
+                {
+                    mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                    // Unshaded + emission blew the whole mesh to flat white; stay PerPixel so albedo/ORM read.
+                    mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel;
+                    mat.EmissionEnabled = true;
+                    mat.Emission = emissionColor;
+                    mat.EmissionEnergyMultiplier = emissionEnergyMul;
+                    // Do not use Backlight — it reads like the flame shines through the holder / nearby skin.
+                    mat.BacklightEnabled = false;
+                }
+                else
+                {
+                    mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel;
+                    mat.EmissionEnabled = false;
+                    mat.BacklightEnabled = false;
+                }
+            }
+        }
+        foreach (Node child in node.GetChildren())
+            ApplyLanternEmissionRecursive(child, lit, emissionEnergyMul, emissionColor);
+    }
+
+    private void RemoveTorchHandBoneAttachment()
+    {
+        Skeleton3D skel = _cachedSkeleton ?? (_characterModel != null ? FindSkeleton(_characterModel) : null);
+        if (skel == null) return;
+        var attach = skel.GetNodeOrNull("TorchHandLightAttach");
+        if (attach == null) return;
+        if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight) && _torchLight.GetParent() == attach)
+        {
+            attach.RemoveChild(_torchLight);
+            AddChild(_torchLight);
+        }
+        attach.QueueFree();
+    }
+
+    /// <summary>
+    /// Parent handheld omni to off-hand bone (or capsule). Lantern: sibling under the same bone attachment as
+    /// <c>equip_lantern*</c>; world position is driven each frame by <see cref="SyncHeldLanternOmniWorldPosition"/>.
+    /// </summary>
+    private void TryAttachTorchLightToHand()
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight) || !_hasLightSource) return;
+
+        RemoveTorchHandBoneAttachment();
+
+        Node3D lanternEquip = FindLanternEquipNode();
+        if (lanternEquip != null && GodotObject.IsInstanceValid(lanternEquip))
+        {
+            Node parent = _torchLight.GetParent();
+            if (parent != null)
+                parent.RemoveChild(_torchLight);
+            if (lanternEquip.GetParent() is Node3D attachParent)
+            {
+                attachParent.AddChild(_torchLight);
+                _torchLight.RotationDegrees = Vector3.Zero;
+                SyncHeldLanternOmniWorldPosition();
+            }
+            else
+            {
+                lanternEquip.AddChild(_torchLight);
+                _torchLight.Position = ResolveTorchLightLocalPositionInLantern(lanternEquip);
+                _torchLight.RotationDegrees = Vector3.Zero;
+            }
+            // CRITICAL with ShadowEnabled=true: the omni's flame point sits *inside* the
+            // lantern's mesh (cup / glass / handle). If those mesh parts cast shadows, the
+            // lantern fully self-shadows the omni and projects no light at all — the user
+            // sees a glowing emissive lantern that lights nothing around it. Disable shadow
+            // casting on every MeshInstance3D under the lantern equip node so the lantern
+            // body itself is never an occluder. The character body, walls, trees etc. are
+            // separate meshes and continue to cast shadows from this light normally.
+            DisableShadowCastingRecursive(lanternEquip);
+            ApplyHeldLanternSolidGlow();
+            return;
+        }
+
+        _dmTorchLightLanternLocalOffset = null;
+
+        Skeleton3D skeleton = _cachedSkeleton ?? (_characterModel != null ? FindSkeleton(_characterModel) : null);
+        if (skeleton == null)
+        {
+            ReparentTorchLightToCapsuleFallback();
+            return;
+        }
+
+        if (!TryResolveSecondaryHandBone(skeleton, _secondaryEquipItemType, out int boneIdx, out string boneName))
+        {
+            ReparentTorchLightToCapsuleFallback();
+            return;
+        }
+
+        var handAttach = new BoneAttachment3D
+        {
+            Name = "TorchHandLightAttach",
+            BoneIdx = boneIdx,
+            BoneName = boneName,
+        };
+        skeleton.AddChild(handAttach);
+        Node p2 = _torchLight.GetParent();
+        if (p2 != null)
+            p2.RemoveChild(_torchLight);
+        handAttach.AddChild(_torchLight);
+        _torchLight.Position = new Vector3(0.12f, 0.05f, 0.08f);
+        _torchLight.RotationDegrees = Vector3.Zero;
+    }
+
     /// <summary>
     /// Show or hide a warm OmniLight3D on this entity to simulate an
     /// equipped torch, lantern, or lightstone. Called by WorldManager
@@ -1903,31 +2454,55 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     /// </summary>
     public void SetLightSource(bool hasLight)
     {
-        _hasLightSource = hasLight;
-
-        if (hasLight)
+        if (!hasLight)
         {
-            if (_torchLight == null)
-            {
-                _torchLight = new OmniLight3D
-                {
-                    Name = "TorchLight",
-                    LightColor = new Color(1.0f, 0.8f, 0.45f),  // Warm torch orange
-                    LightEnergy = 1.3f,
-                    OmniRange = 12f,
-                    OmniAttenuation = 1.4f,
-                    ShadowEnabled = false,  // Performance: skip shadows for handheld lights
-                    Position = new Vector3(0.4f, 1.6f, -0.3f),  // Right-hand height, slightly forward
-                };
-                AddChild(_torchLight);
-            }
-            _torchLight.Visible = true;
-        }
-        else
-        {
-            if (_torchLight != null)
+            _hasLightSource = false;
+            if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight))
                 _torchLight.Visible = false;
+            SetHeldLanternEmissiveLit(false);
+            return;
         }
+
+        _hasLightSource = true;
+        EnsureTorchLightNode();
+        ApplyTorchLightVariantSettings();
+        TryAttachTorchLightToHand();
+        SetHeldLanternEmissiveLit(true);
+    }
+
+    /// <summary>Call before the first <see cref="SetLightSource"/> in <see cref="WorldManager.SpawnEntityAt"/> so variant-specific omni settings apply on first attach.</summary>
+    public void PrepareLightPharosVariantForSpawn(int variant)
+    {
+        _lightPharosVariant = variant;
+    }
+
+    /// <summary>Pharos lighting experiment hook (server <c>lightPharosVariant</c>). Variant 4 = 360° omni at flame (<c>retreat_pharos_eidos</c>).</summary>
+    public void SetLightPharosVariant(int variant)
+    {
+        _lightPharosVariant = variant;
+        ApplyTorchLightVariantSettings();
+    }
+
+    /// <summary>
+    /// Reset handheld omni to the canonical "lantern" config. The Pharos variant switch
+    /// (V1..V4) was tuning around inverted normals and a wrong-position hemisphere clamp;
+    /// both are gone now (zone+character normals corrected, light placed at flame), so all
+    /// variants share one config. The variant id is left intact so Pharos NPCs can still
+    /// be used as A/B viewing positions in fayrtrt.
+    /// </summary>
+    private void ApplyTorchLightVariantSettings()
+    {
+        if (_torchLight == null || !GodotObject.IsInstanceValid(_torchLight))
+            return;
+
+        _torchLight.Visible = true;
+        _torchLight.ShadowEnabled = true;
+        _torchLight.ShadowBias = 0.05f;
+        _torchLight.ShadowNormalBias = 1.0f;
+        _torchLight.LightColor = new Color(1.0f, 0.8f, 0.45f);
+        _torchLight.LightEnergy = DefaultTorchLightEnergy;
+        _torchLight.OmniRange = DefaultTorchOmniRange;
+        _torchLight.OmniAttenuation = 1.0f;
     }
 
     /// <summary>Show or hide this entity's overhead name label.</summary>
@@ -1953,6 +2528,47 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     // ═══════ Character Material Fix ═══════════════════════════════════
 
     /// <summary>
+    /// Strip glTF defaults that fake light on the side <i>opposite</i> the lamp (backlight, strong normals, etc.).
+    /// EQ character textures are flat hand-painted diffuse — no subsurface rim.
+    /// </summary>
+    private static void SanitizePlayerBodyBaseMaterial(BaseMaterial3D m)
+    {
+        if (m == null) return;
+        m.Metallic = 0f;
+        m.MetallicSpecular = 0.1f;
+        m.Roughness = 0.9f;
+        m.BacklightEnabled = false;
+        m.NormalTexture = null;
+        if (m is StandardMaterial3D std)
+        {
+            std.NormalEnabled = false;
+            std.AOEnabled = false;
+            std.ClearcoatEnabled = false;
+            std.SpecularMode = StandardMaterial3D.SpecularModeEnum.Disabled;
+        }
+    }
+
+    /// <summary>After unequip, never leave raw embedded GLB materials (they often ship with backlight enabled).</summary>
+    private static void RestorePlayerSurfaceToSanitizedMeshDefault(MeshInstance3D meshInst, int surfaceIndex)
+    {
+        var mesh = meshInst.Mesh;
+        if (mesh == null || surfaceIndex < 0 || surfaceIndex >= mesh.GetSurfaceCount())
+        {
+            meshInst.SetSurfaceOverrideMaterial(surfaceIndex, null);
+            return;
+        }
+        var embedded = mesh.SurfaceGetMaterial(surfaceIndex);
+        if (embedded is BaseMaterial3D bm)
+        {
+            var copy = (BaseMaterial3D)bm.Duplicate();
+            SanitizePlayerBodyBaseMaterial(copy);
+            meshInst.SetSurfaceOverrideMaterial(surfaceIndex, copy);
+        }
+        else
+            meshInst.SetSurfaceOverrideMaterial(surfaceIndex, null);
+    }
+
+    /// <summary>
     /// Recursively fix all StandardMaterial3D surfaces on a loaded GLB
     /// character model so they don't reflect the sun/moon like chrome.
     /// EQ's original textures are hand-painted diffuse sprites — they
@@ -1962,15 +2578,15 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     {
         if (node is MeshInstance3D meshInst)
         {
-            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+            var mesh = meshInst.Mesh;
+            int surfCount = mesh != null ? mesh.GetSurfaceCount() : meshInst.GetSurfaceOverrideMaterialCount();
+            for (int i = 0; i < surfCount; i++)
             {
                 var mat = meshInst.GetActiveMaterial(i);
-                if (mat is StandardMaterial3D stdMat)
+                if (mat is BaseMaterial3D baseMat)
                 {
-                    var fixedMat = (StandardMaterial3D)stdMat.Duplicate();
-                    fixedMat.Metallic = 0.0f;
-                    fixedMat.MetallicSpecular = 0.1f;
-                    fixedMat.Roughness = 0.9f;
+                    var fixedMat = (BaseMaterial3D)baseMat.Duplicate();
+                    SanitizePlayerBodyBaseMaterial(fixedMat);
                     meshInst.SetSurfaceOverrideMaterial(i, fixedMat);
                 }
             }
@@ -1982,8 +2598,31 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
     }
 
+    /// <summary>
+    /// Apply the LanternExtractor normal-flip lighting fix to this character mesh tree.
+    /// Character GLBs come out with the same baked negative-scale node transform that
+    /// inverts world-space normals, so without this they remain lit on the wrong side.
+    ///
+    /// Safe to call repeatedly (each MeshInstance3D is marked with
+    /// <see cref="WorldManager.LightFixFlipMetaKey"/> after a successful flip; subsequent
+    /// calls skip already-flipped instances). New child meshes added later (e.g. weapons
+    /// attached after this call) will be flipped on the next invocation.
+    /// </summary>
+    private void ApplyLightFixNormalFlipToCharacterIfActive()
+    {
+        if (_characterModel == null) return;
+        int meshCountFixed = 0;
+        int surfaceCountFixed = 0;
+        WorldManager.BakeFlippedNormalsRecursive(_characterModel, ref meshCountFixed, ref surfaceCountFixed);
+        if (meshCountFixed > 0)
+        {
+            GD.Print($"[ENTITY][LIGHT-FIX] '{Name}': flipped outward normals on {surfaceCountFixed} character surface(s) across {meshCountFixed} mesh(es).");
+        }
+    }
+
     public void SetInfravision(bool enabled)
     {
+        _infravisionEnabled = enabled;
         if (_characterModel == null) return;
         SetInfravisionRecursive(_characterModel, enabled);
     }

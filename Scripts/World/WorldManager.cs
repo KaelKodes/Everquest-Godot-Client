@@ -775,8 +775,9 @@ public partial class WorldManager : Node3D
         }
 
         bool isTyping = MainUI.Instance != null && MainUI.Instance.IsChatFocused;
-        HandleDmLanternKeys(isTyping);
-        if (_dmLanternTuneActive && !isTyping)
+        bool blockWorldInput = isTyping || (MainUI.Instance != null && MainUI.Instance.IsGmWorldInputBlocked);
+        HandleDmLanternKeys(blockWorldInput);
+        if (_dmLanternTuneActive && !blockWorldInput)
         {
             RunDmLanternTuneFrame((float)delta);
             return;
@@ -803,7 +804,7 @@ public partial class WorldManager : Node3D
         float gravity = 50f;
 
         // Manual movement cancels autorun
-        if (!isTyping && (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back"))) {
+        if (!blockWorldInput && (Input.IsActionPressed("move_forward") || Input.IsActionPressed("move_back"))) {
             _isAutoRunning = false;
         }
 
@@ -814,7 +815,7 @@ public partial class WorldManager : Node3D
             {
                 // Right-Click Held: Strafe behavior
                 Vector3 inputDir = Vector3.Zero;
-                if (!isTyping)
+                if (!blockWorldInput)
                 {
                     if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
                     if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
@@ -841,7 +842,7 @@ public partial class WorldManager : Node3D
             {
                 // Normal Drive Mode: A/D to turn, W/S to move
                 float turnAmount = 0f;
-                if (!isTyping)
+                if (!blockWorldInput)
                 {
                     if (Input.IsActionPressed("move_left")) turnAmount += 1;
                     if (Input.IsActionPressed("move_right")) turnAmount -= 1;
@@ -852,7 +853,7 @@ public partial class WorldManager : Node3D
 
                 float forwardInput = 0;
                 if (_isAutoRunning) forwardInput += 1;
-                if (!isTyping)
+                if (!blockWorldInput)
                 {
                     if (Input.IsActionPressed("move_forward")) forwardInput += 1;
                     if (Input.IsActionPressed("move_back"))    forwardInput -= 1;
@@ -879,7 +880,7 @@ public partial class WorldManager : Node3D
             // --- Free Look Mode ---
             Vector3 inputDir = Vector3.Zero;
             if (_isAutoRunning) inputDir.Z -= 1;
-            if (!isTyping)
+            if (!blockWorldInput)
             {
                 if (Input.IsActionPressed("move_forward")) inputDir.Z -= 1;
                 if (Input.IsActionPressed("move_back"))    inputDir.Z += 1;
@@ -910,7 +911,7 @@ public partial class WorldManager : Node3D
         {
             // Fly mode: Space = up, C = down, no gravity
             velocity.Y = 0;
-            if (!isTyping)
+            if (!blockWorldInput)
             {
                 if (Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = speed;
                 if (Input.IsPhysicalKeyPressed(Key.C) || Input.IsPhysicalKeyPressed(Key.Ctrl)) velocity.Y = -speed;
@@ -922,7 +923,7 @@ public partial class WorldManager : Node3D
             velocity.Y = 0; // neutral buoyancy
             bool isMovingInWater = false;
             
-            if (!isTyping)
+            if (!blockWorldInput)
             {
                 if (Input.IsPhysicalKeyPressed(Key.Space)) { velocity.Y = speed; isMovingInWater = true; }
                 if (Input.IsPhysicalKeyPressed(Key.Ctrl)) { velocity.Y = -speed; isMovingInWater = true; }
@@ -953,7 +954,7 @@ public partial class WorldManager : Node3D
         else
         {
             velocity.Y = 0;
-            if (!isTyping && Input.IsPhysicalKeyPressed(Key.Space))
+            if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.Space))
             {
                 velocity.Y = 30.0f; // Jump force
                 PlayFootstep("jmp");
@@ -1011,7 +1012,7 @@ public partial class WorldManager : Node3D
         }
 
         // --- Debug Admin Tools ---
-        if (Input.IsPhysicalKeyPressed(Key.F5) && !_f5Held)
+        if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.F5) && !_f5Held)
         {
             _f5Held = true;
             _flyMode = !_flyMode;
@@ -1026,7 +1027,7 @@ public partial class WorldManager : Node3D
         }
         if (!Input.IsPhysicalKeyPressed(Key.F5)) _f5Held = false;
 
-        if (Input.IsPhysicalKeyPressed(Key.F6) && !_f6Held)
+        if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.F6) && !_f6Held)
         {
             _f6Held = true;
             var gPos = _playerCapsule.GlobalPosition;
@@ -1039,7 +1040,7 @@ public partial class WorldManager : Node3D
         if (!Input.IsPhysicalKeyPressed(Key.F6)) _f6Held = false;
 
         // F4: Admin Succor — teleport to zone safe point via server
-        if (Input.IsPhysicalKeyPressed(Key.F4) && !_f4Held)
+        if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.F4) && !_f4Held)
         {
             _f4Held = true;
             GD.Print("[WORLD] Admin Succor requested (F4)");
@@ -1050,15 +1051,15 @@ public partial class WorldManager : Node3D
         if (!Input.IsPhysicalKeyPressed(Key.F4)) _f4Held = false;
 
         // --- Targeting Keybinds (polled every physics frame) ---
-        if (Input.IsActionJustPressed("target_self"))
+        if (!blockWorldInput && Input.IsActionJustPressed("target_self"))
             TargetSelf();
-        if (Input.IsActionJustPressed("target_next_enemy"))
+        if (!blockWorldInput && Input.IsActionJustPressed("target_next_enemy"))
             CycleTarget("enemy", 1);
-        if (Input.IsActionJustPressed("target_prev_enemy"))
+        if (!blockWorldInput && Input.IsActionJustPressed("target_prev_enemy"))
             CycleTarget("enemy", -1);
-        if (Input.IsActionJustPressed("target_next_friendly"))
+        if (!blockWorldInput && Input.IsActionJustPressed("target_next_friendly"))
             CycleTarget("friendly", 1);
-        if (Input.IsActionJustPressed("target_prev_friendly"))
+        if (!blockWorldInput && Input.IsActionJustPressed("target_prev_friendly"))
             CycleTarget("friendly", -1);
 
         UpdateCamera();
@@ -1068,6 +1069,9 @@ public partial class WorldManager : Node3D
     {
         if (@event is InputEventMouseButton mouseBtnEvent && mouseBtnEvent.Pressed)
         {
+            if (MainUI.Instance != null && MainUI.Instance.IsGmWorldInputBlocked)
+                return;
+
             // Clicking anywhere in the 3D world releases chat focus
             MainUI.Instance?.ReleaseChatFocus();
 

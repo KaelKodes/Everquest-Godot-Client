@@ -183,6 +183,15 @@ public partial class MainUI : Control
 	private string _lastWhisperSender = "";
 	private bool _chatInputFocused = false;
 	public bool IsChatFocused => _chatInputFocused;
+
+	/// <summary>GM modal dialogs (prompt windows) block world movement / combat keys while open.</summary>
+	private int _gmWorldInputBlockDepth;
+	public bool IsGmWorldInputBlocked => _gmWorldInputBlockDepth > 0;
+	private void PushGmWorldInputBlock() => _gmWorldInputBlockDepth++;
+	private void PopGmWorldInputBlock()
+	{
+		if (_gmWorldInputBlockDepth > 0) _gmWorldInputBlockDepth--;
+	}
 	
 	public GameClient GetClient() => _client;
 	
@@ -397,6 +406,8 @@ public partial class MainUI : Control
 	private Button _mercSwitchBtn;
 	private Button _mercSuspendBtn;
 	private Button _mercReleaseBtn;
+	private Button _mercPlayAsBtn;
+	private Button _mercReturnBtn;
 	private int _selectedMercSlot = -1;
 	private JsonElement _mercenariesData;
 
@@ -1171,6 +1182,8 @@ public partial class MainUI : Control
 				EnsureMercenariesManagerWindow();
 				_mercenariesManagerWindow.Visible = !_mercenariesManagerWindow.Visible;
 			};
+
+			RegisterGmToolsMenu(menuVBoxNode);
 		}
 		if (menuVBoxNode != null)
 		{
@@ -1889,6 +1902,9 @@ public partial class MainUI : Control
 		{
 			switch (type)
 			{
+				case "GM_INVENTORY_VIEW":
+					HandleGmInventoryViewMessage(json);
+					break;
 				case "MOB_VISUAL_UPDATE":
 				{
 					using var doc = JsonDocument.Parse(json);

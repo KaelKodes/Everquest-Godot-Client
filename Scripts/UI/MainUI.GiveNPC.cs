@@ -83,9 +83,11 @@ public partial class MainUI
 		{
 			if (_giveNPCItemData[i].HasValue)
 			{
-				var inst_id = _giveNPCItemData[i].Value.TryGetProperty("item_id", out var instIdProp) ? instIdProp.GetInt32() : 0;
-				var item_id = _giveNPCItemData[i].Value.TryGetProperty("eq_item_id", out var itemIdProp) ? itemIdProp.GetInt32() : 0; 
-				items.Add(new { slot = i + 1, inst_id = inst_id, item_id = item_id });
+				var item = _giveNPCItemData[i].Value;
+				var inst_id = item.TryGetProperty("item_id", out var instIdProp) ? instIdProp.GetInt32() : 0;
+				var item_id = item.TryGetProperty("eq_item_id", out var itemIdProp) ? itemIdProp.GetInt32() : 0;
+				var slotId = item.TryGetProperty("slotId", out var slotProp) ? slotProp.GetInt32() : -1;
+				items.Add(new { slot = i + 1, inst_id = inst_id, item_id = item_id, slotId = slotId });
 			}
 		}
 
@@ -98,7 +100,10 @@ public partial class MainUI
 				items = items
 			};
 			_client.SendRaw(JsonSerializer.Serialize(payload));
-			Log("SYSTEM", "You handed the items to the NPC.");
+			string who = _giveNPCTitle != null ? _giveNPCTitle.Text.Trim() : "the NPC";
+			if (string.IsNullOrEmpty(who)) who = "the NPC";
+			string qty = items.Count == 1 ? "your item" : $"{items.Count} items";
+			Log("SYSTEM", $"You hand {qty} to {who}.");
 		}
 
 		// Clear slots

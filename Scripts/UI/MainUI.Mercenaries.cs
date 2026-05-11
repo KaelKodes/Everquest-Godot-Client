@@ -134,6 +134,29 @@ public partial class MainUI : Control
 		_mercReleaseBtn.CustomMinimumSize = new Vector2(0, 35);
 		_mercReleaseBtn.Pressed += () => SendMercAction("release");
 		btnVbox.AddChild(_mercReleaseBtn);
+
+		_mercPlayAsBtn = new Button { Text = "Play as student" };
+		_mercPlayAsBtn.CustomMinimumSize = new Vector2(0, 35);
+		_mercPlayAsBtn.Pressed += OnMercPlayAsPressed;
+		btnVbox.AddChild(_mercPlayAsBtn);
+
+		_mercReturnBtn = new Button { Text = "Return to mentor" };
+		_mercReturnBtn.CustomMinimumSize = new Vector2(0, 35);
+		_mercReturnBtn.Pressed += () => _client.SendRaw("{\"type\":\"RETURN_TO_MENTOR\"}");
+		btnVbox.AddChild(_mercReturnBtn);
+	}
+
+	private void OnMercPlayAsPressed()
+	{
+		if (_selectedMercSlot < 0 || _selectedMercSlot >= 2) return;
+		if (_mercenariesData.ValueKind != JsonValueKind.Object || !_mercenariesData.TryGetProperty("mercenaries", out var arr))
+			return;
+		if (arr.ValueKind != JsonValueKind.Array || _selectedMercSlot >= arr.GetArrayLength()) return;
+		var merc = arr[_selectedMercSlot];
+		if (merc.ValueKind == JsonValueKind.Null) return;
+		if (!merc.TryGetProperty("id", out var idProp)) return;
+		int sid = idProp.GetInt32();
+		_client.SendRaw($"{{\"type\":\"ASSUME_STUDENT\",\"studentId\":{sid}}}");
 	}
 
 	private void SendMercAction(string action)

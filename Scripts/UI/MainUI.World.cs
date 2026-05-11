@@ -490,6 +490,9 @@ public partial class MainUI
 			var root = doc.RootElement;
 			var character = root.GetProperty("character");
 
+			bool isGmFlag = character.TryGetProperty("isGm", out var isGmEl) && isGmEl.ValueKind == JsonValueKind.True;
+			ApplyGmStatusFromServer(isGmFlag);
+
 			UpdateBars(character);
 			UpdateStatsUI(character);
 			UpdateInventoryStats(character);

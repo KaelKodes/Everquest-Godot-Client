@@ -594,12 +594,22 @@ public partial class MainUI
 				if (string.IsNullOrEmpty(body)) { Log("SYSTEM", "Usage: /emote <action>"); break; }
 				_client.SendRaw($"{{\"type\": \"EMOTE\", \"emote\": \"{EscapeJson(body)}\"}}");
 				break;
-			case "/random":
 			case "/roll":
+			{
+				int maxRoll = 20;
+				if (!string.IsNullOrWhiteSpace(body) && int.TryParse(body.Trim(), out int parsedRoll))
+					maxRoll = parsedRoll;
+				_client.SendRaw($"{{\"type\": \"ROLL\", \"max\": {maxRoll}}}");
+				break;
+			}
+			case "/random":
+			{
 				int maxRoll = 100;
-				if (!string.IsNullOrEmpty(body) && int.TryParse(body, out int parsedRoll)) maxRoll = parsedRoll;
+				if (!string.IsNullOrWhiteSpace(body) && int.TryParse(body.Trim(), out int parsedRoll))
+					maxRoll = parsedRoll;
 				_client.SendRaw($"{{\"type\": \"RANDOM\", \"max\": {maxRoll}}}");
 				break;
+			}
 
 			case "/corpse":
 			case "/dragcorpse":

@@ -30,9 +30,9 @@ There is **no server lobby** in the client yet (pick-a-server UI is a future goa
 ### How to Play
 The current build of EQ.gd is for local servers only.
 The MMO server should be up soon.
-You will need to set up your own server to first.
-- **Everquest.godot Server:** I have tried to provide instructions as best I can at this time, things are still moving around quickly. Once you have the server running, it gets much easier.
-- **EQ.gd Laucnher:** download the launcher, right now this just handles the Client-side but includes everything needed for it read your database.
-- **Support:** Because this is in active development it is hard for me to provide much support, as I myself am still trying to get it all working. Please be patience and expect much better documentation once its 100% stable!
+You will need to set up your own server.
+- **[Everquest.godot Server:](https://github.com/KaelKodes/Everquest-Godot-Server)** I have tried to provide instructions as best I can at this time, things are still moving around quickly. Once you have the server running, it gets much easier.
+- **[EQ.gd Laucnher:](https://github.com/KaelKodes/Everquest-Godot-Launcher)** This is the real face of the project. Right now it just handles the Client-side but includes everything needed for it to read your database.
+- **Support:** Because this is in active development it is hard for me to provide much support, as I myself am still trying to get it all working. Please be have patience and expect much better documentation once its closer to 100% stable!
 ---
 *Safe travels, and keep your torch lit.*

@@ -18,6 +18,30 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     /// <summary>Remember infravision across material rebuilds (equip updates call <see cref="FixCharacterMaterials"/>).</summary>
     private bool _infravisionEnabled = false;
 
+    // ── LIGHT-FIX summary aggregation ─────────────────────────────────
+    // The character-mesh normal-flip fix runs once per entity (and again on
+    // equip swaps), which produces dozens of identical-looking log lines for a
+    // single zone hydration. Aggregate the counters here and emit one
+    // "[ENTITY][LIGHT-FIX] Corrected normals on X surface(s) ..." summary at
+    // each natural batch boundary (see <see cref="FlushLightFixSummary"/>).
+    private static int s_lightFixEntities = 0;
+    private static int s_lightFixMeshes = 0;
+    private static int s_lightFixSurfaces = 0;
+
+    /// <summary>
+    /// Print and reset the accumulated LIGHT-FIX counters. Called once per
+    /// hydration batch from <see cref="WorldManager.SyncLiveMobs"/>. Safe to
+    /// call when nothing has been fixed (no-op).
+    /// </summary>
+    public static void FlushLightFixSummary()
+    {
+        if (s_lightFixEntities == 0) return;
+        GD.Print($"[ENTITY][LIGHT-FIX] Corrected normals on {s_lightFixSurfaces} surface(s) across {s_lightFixMeshes} mesh(es) on {s_lightFixEntities} entity/entities.");
+        s_lightFixEntities = 0;
+        s_lightFixMeshes = 0;
+        s_lightFixSurfaces = 0;
+    }
+
     // Torch / Light Source
     private OmniLight3D _torchLight;
     private bool _hasLightSource = false;
@@ -2616,7 +2640,11 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         WorldManager.BakeFlippedNormalsRecursive(_characterModel, ref meshCountFixed, ref surfaceCountFixed);
         if (meshCountFixed > 0)
         {
-            GD.Print($"[ENTITY][LIGHT-FIX] '{Name}': flipped outward normals on {surfaceCountFixed} character surface(s) across {meshCountFixed} mesh(es).");
+            // Aggregate instead of printing per-entity — the summary is emitted
+            // by FlushLightFixSummary() at hydration batch boundaries.
+            s_lightFixEntities++;
+            s_lightFixMeshes += meshCountFixed;
+            s_lightFixSurfaces += surfaceCountFixed;
         }
     }
 

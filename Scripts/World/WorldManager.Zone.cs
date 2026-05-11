@@ -146,6 +146,11 @@ public partial class WorldManager : Node3D
         _teleportSettling = false;
         _teleportSafetyTimer = 0.0;
         _playerCapsule.Velocity = Vector3.Zero;
+
+        // Player capsule was created after the initial SyncLiveMobs flush; emit
+        // any accumulated counters (player + late equip swaps) as a follow-up
+        // summary so the initial-load LIGHT-FIX output is fully consolidated.
+        EntityCapsule.FlushLightFixSummary();
     }
     public void ClearWorld()
     {

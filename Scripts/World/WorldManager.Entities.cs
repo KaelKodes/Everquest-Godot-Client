@@ -185,6 +185,10 @@ public partial class WorldManager : Node3D
                 }
             }
         }
+
+        // Emit a single consolidated LIGHT-FIX summary for this sync batch
+        // instead of one log line per entity (zone hydrations spawn 90+ mobs).
+        EntityCapsule.FlushLightFixSummary();
     }
     public void UpdateEntitySneak(string id, bool sneaking)
     {

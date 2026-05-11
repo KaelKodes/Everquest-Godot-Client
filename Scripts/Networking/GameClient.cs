@@ -59,7 +59,21 @@ public partial class GameClient : Node
 
     private WebSocketPeer _socket = new WebSocketPeer();
     private string _url = "ws://localhost:3005";
-    public string ServerUrl { get => _url; set => _url = value; }
+    // Host portion of the URL the user picked at Server Select time (e.g.
+    // "24.33.88.252" or "127.0.0.1"). All subsequent HANDOFFs (login → world →
+    // zone) keep the port the server advertises but force the host to this
+    // value, because only the client knows which host is actually reachable
+    // from its own network (LAN, WAN, or loopback).
+    private string _clusterHost = "";
+    public string ServerUrl
+    {
+        get => _url;
+        set
+        {
+            _url = value;
+            _clusterHost = ExtractHost(value);
+        }
+    }
     private bool _connected = false;
     public bool IsSocketConnected => _connected;
 
@@ -173,8 +187,13 @@ public partial class GameClient : Node
             if (type == "HANDOFF")
             {
                 _handoffToken = root.GetProperty("token").GetString();
-                _url = root.GetProperty("url").GetString();
-                GD.Print($"[NET] Received HANDOFF to {_url}");
+                string advertised = root.GetProperty("url").GetString();
+                string corrected = RewriteHostForCluster(advertised);
+                _url = corrected;
+                if (!string.Equals(advertised, corrected, StringComparison.Ordinal))
+                    GD.Print($"[NET] HANDOFF: server said {advertised}, connecting to {corrected} (cluster host rewrite)");
+                else
+                    GD.Print($"[NET] Received HANDOFF to {_url}");
                 _isHandoff = true;
                 _handoffInProgress = true;
                 _socket.Close();
@@ -410,5 +429,84 @@ public partial class GameClient : Node
     {
         if (_socket.GetReadyState() == WebSocketPeer.State.Open)
             _socket.SendText(json);
+    }
+
+    /// <summary>
+    /// Extracts just the host portion of a "ws://host:port/..." URL.
+    /// Returns empty string on parse failure.
+    /// </summary>
+    private static string ExtractHost(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "";
+        try
+        {
+            // Uri can't parse "ws://" by default on .NET; convert to "http://"
+            // for parsing purposes only.
+            string parsable = url;
+            if (parsable.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+                parsable = "http://" + parsable.Substring(5);
+            else if (parsable.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+                parsable = "https://" + parsable.Substring(6);
+
+            var uri = new Uri(parsable);
+            return uri.Host ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="serverUrl"/> with its host replaced by the
+    /// cluster host the player chose at Server Select time. The original port
+    /// and path are preserved. If we don't have a cluster host yet, or parsing
+    /// fails, the URL is returned unchanged.
+    /// </summary>
+    private string RewriteHostForCluster(string serverUrl)
+    {
+        if (string.IsNullOrWhiteSpace(serverUrl)) return serverUrl;
+        if (string.IsNullOrWhiteSpace(_clusterHost)) return serverUrl;
+
+        try
+        {
+            string scheme;
+            string remainder;
+            if (serverUrl.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            {
+                scheme = "ws://";
+                remainder = serverUrl.Substring(5);
+            }
+            else if (serverUrl.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+            {
+                scheme = "wss://";
+                remainder = serverUrl.Substring(6);
+            }
+            else
+            {
+                return serverUrl;
+            }
+
+            // remainder is "host[:port][/path]" — split off path first, then port.
+            string hostPort = remainder;
+            string path = "";
+            int slash = remainder.IndexOf('/');
+            if (slash >= 0)
+            {
+                hostPort = remainder.Substring(0, slash);
+                path = remainder.Substring(slash);
+            }
+
+            string port = "";
+            int colon = hostPort.IndexOf(':');
+            if (colon >= 0)
+                port = hostPort.Substring(colon); // includes leading ':'
+
+            return scheme + _clusterHost + port + path;
+        }
+        catch
+        {
+            return serverUrl;
+        }
     }
 }

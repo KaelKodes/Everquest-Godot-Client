@@ -7,4 +7,16 @@
   <ItemGroup>
     <PackageReference Include="MeltySynth" Version="2.4.1" />
   </ItemGroup>
+  <!--
+    Bundle the General MIDI SoundFont used to render XMI zone music
+    DIRECTLY into the C# assembly. Godot's export pipeline does not
+    treat raw .sf2 files as resources, so they can silently get omitted
+    from the .pck. Embedding it here guarantees the SoundFont travels
+    with EQMUD.dll in every export, regardless of export_presets.cfg.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/Audio/TimGM6mb.sf2">
+      <LogicalName>EQMUD.TimGM6mb.sf2</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

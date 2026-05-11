@@ -347,7 +347,119 @@ public partial class ZoneMusicPlayer : Node
     // ── XMI Rendering ───────────────────────────────────────────
 
     private MeltySynth.Synthesizer _synth;
-    private string _soundFontPath;
+    private string _soundFontSource; // human-readable label for logging
+
+    /// <summary>
+    /// Resolve the bundled SoundFont as a byte array.
+    ///
+    /// Resolution order:
+    ///   1. Embedded .NET resource inside EQMUD.dll (the most reliable —
+    ///      ships with the C# assembly so it is never omitted by Godot's
+    ///      export pipeline).
+    ///   2. Godot resource path <c>res://Assets/Audio/TimGM6mb.sf2</c>
+    ///      (works in editor; only works in export if the file is packed).
+    ///   3. A copy sitting next to the executable, e.g.
+    ///      <c>&lt;exe-dir&gt;/Assets/Audio/TimGM6mb.sf2</c>.
+    /// </summary>
+    private static byte[] LoadBundledSoundFontBytes(out string sourceLabel)
+    {
+        // 1) Embedded resource (preferred — see EQMUD.csproj <EmbeddedResource>)
+        try
+        {
+            var asm = typeof(ZoneMusicPlayer).Assembly;
+            using var s = asm.GetManifestResourceStream("EQMUD.TimGM6mb.sf2");
+            if (s != null)
+            {
+                using var ms = new MemoryStream();
+                s.CopyTo(ms);
+                byte[] bytes = ms.ToArray();
+                if (bytes.Length > 0)
+                {
+                    sourceLabel = "TimGM6mb.sf2 (embedded)";
+                    return bytes;
+                }
+                GD.PrintErr("[Music] Embedded SF2 stream was empty.");
+            }
+            else
+            {
+                GD.Print("[Music] Embedded SF2 resource 'EQMUD.TimGM6mb.sf2' not present in assembly.");
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Music] Embedded SF2 load failed: {ex.Message}");
+        }
+
+        // 2) Godot resource path (works in editor; PCK-dependent in exports)
+        const string bundledSf2 = "res://Assets/Audio/TimGM6mb.sf2";
+        if (Godot.FileAccess.FileExists(bundledSf2))
+        {
+            byte[] bytes = Godot.FileAccess.GetFileAsBytes(bundledSf2);
+            if (bytes != null && bytes.Length > 0)
+            {
+                sourceLabel = "TimGM6mb.sf2 (res://)";
+                return bytes;
+            }
+            GD.PrintErr("[Music] res:// SF2 existed but read returned 0 bytes.");
+        }
+        else
+        {
+            GD.Print($"[Music] SF2 not found at {bundledSf2} (PCK may not contain it).");
+        }
+
+        // 3) Sibling-to-executable fallback (manual drop-in for emergency use)
+        try
+        {
+            string exeDir = AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(exeDir))
+            {
+                string sidecar = Path.Combine(exeDir, "Assets", "Audio", "TimGM6mb.sf2");
+                if (File.Exists(sidecar))
+                {
+                    byte[] bytes = File.ReadAllBytes(sidecar);
+                    if (bytes.Length > 0)
+                    {
+                        sourceLabel = $"TimGM6mb.sf2 (sidecar: {sidecar})";
+                        return bytes;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Music] Sidecar SF2 load failed: {ex.Message}");
+        }
+
+        sourceLabel = null;
+        return null;
+    }
+
+    /// <summary>
+    /// Resolve a fallback SoundFont from the EQ installation as bytes.
+    /// </summary>
+    private static byte[] LoadEqSoundFontBytes(out string sourceLabel)
+    {
+        var config = EQAssetConfig.Instance;
+        if (config.IsConfigured)
+        {
+            string sf2 = Path.Combine(config.EQPath, "synthusr.sf2");
+            if (File.Exists(sf2))
+            {
+                try
+                {
+                    sourceLabel = "synthusr.sf2 (EQ install)";
+                    return File.ReadAllBytes(sf2);
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[Music] Failed to read EQ SoundFont: {ex.Message}");
+                }
+            }
+        }
+
+        sourceLabel = null;
+        return null;
+    }
 
     /// <summary>
     /// Load an XMI file, convert to MIDI, render via MeltySynth + EQ SoundFont,
@@ -365,38 +477,14 @@ public partial class ZoneMusicPlayer : Node
                 return null;
             }
 
-            // Find a SoundFont: prefer bundled TimGM6mb.sf2 (known-good), fallback to EQ's synthusr.sf2
-            if (_soundFontPath == null)
-            {
-                // 1) Bundled GM SoundFont in project assets
-                string bundledSf2 = ProjectSettings.GlobalizePath("res://Assets/Audio/TimGM6mb.sf2");
-                if (File.Exists(bundledSf2))
-                    _soundFontPath = bundledSf2;
-
-                // 2) EQ installation SoundFont
-                if (_soundFontPath == null)
-                {
-                    var config = EQAssetConfig.Instance;
-                    if (config.IsConfigured)
-                    {
-                        string sf2 = Path.Combine(config.EQPath, "synthusr.sf2");
-                        if (File.Exists(sf2))
-                            _soundFontPath = sf2;
-                    }
-                }
-
-                if (_soundFontPath == null)
-                {
-                    GD.PrintErr("[Music] No SoundFont found. Cannot render XMI music.");
-                    return null;
-                }
-            }
-
-            // Initialize synthesizer (lazy, reuse across tracks)
+            // Initialize synthesizer (lazy, reuse across tracks).
+            // We load the SoundFont bytes via Godot.FileAccess so the bundled
+            // SF2 resolves correctly inside an exported .pck.
             if (_synth == null)
             {
-                _synth = new MeltySynth.Synthesizer(_soundFontPath, 22050);
-                GD.Print($"[Music] SoundFont loaded: {Path.GetFileName(_soundFontPath)}");
+                _synth = TryCreateSynth(22050);
+                if (_synth == null)
+                    return null;
             }
 
             // Load MIDI from bytes
@@ -440,6 +528,67 @@ public partial class ZoneMusicPlayer : Node
         catch (Exception ex)
         {
             GD.PrintErr($"[Music] Error rendering XMI: {ex.Message}\n{ex.StackTrace}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Try to construct a MeltySynth.Synthesizer using the bundled SoundFont first,
+    /// then the EQ installation SoundFont as a fallback. Loads SF2 bytes via Godot's
+    /// FileAccess so the bundled file resolves both in the editor and in an exported .pck.
+    /// Returns null and logs if no usable SoundFont is available.
+    /// </summary>
+    private MeltySynth.Synthesizer TryCreateSynth(int sampleRate)
+    {
+        // 1) Bundled SoundFont (preferred — known-good GM bank)
+        byte[] bytes = LoadBundledSoundFontBytes(out string label);
+
+        // 2) Fallback: EQ install SoundFont
+        if (bytes == null)
+            bytes = LoadEqSoundFontBytes(out label);
+
+        if (bytes == null)
+        {
+            GD.PrintErr("[Music] No SoundFont available (neither bundled nor EQ install). XMI playback disabled.");
+            return null;
+        }
+
+        try
+        {
+            using var ms = new MemoryStream(bytes);
+            var soundFont = new MeltySynth.SoundFont(ms);
+            var synth = new MeltySynth.Synthesizer(soundFont, sampleRate);
+            _soundFontSource = label;
+            GD.Print($"[Music] SoundFont loaded: {label}");
+            return synth;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Music] SoundFont '{label}' failed to load: {ex.Message}");
+
+            // If the bundled SF2 was tried first and we haven't tried the EQ fallback,
+            // give it one more shot.
+            if (label != null && label.StartsWith("TimGM6mb"))
+            {
+                byte[] fallback = LoadEqSoundFontBytes(out string fallbackLabel);
+                if (fallback != null)
+                {
+                    try
+                    {
+                        using var ms2 = new MemoryStream(fallback);
+                        var soundFont2 = new MeltySynth.SoundFont(ms2);
+                        var synth2 = new MeltySynth.Synthesizer(soundFont2, sampleRate);
+                        _soundFontSource = fallbackLabel;
+                        GD.Print($"[Music] SoundFont loaded (fallback): {fallbackLabel}");
+                        return synth2;
+                    }
+                    catch (Exception ex2)
+                    {
+                        GD.PrintErr($"[Music] Fallback SoundFont '{fallbackLabel}' failed to load: {ex2.Message}");
+                    }
+                }
+            }
+
             return null;
         }
     }

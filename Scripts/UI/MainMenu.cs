@@ -25,6 +25,8 @@ public partial class MainMenu : Control
     private Button _loginButton;
     private Button _createAccountButton;
     private Label _loginStatusLabel;
+    private Label _loginServerLabel;
+    private Button _loginBackToServerSelectButton;
     private CheckBox _rememberCheckbox;
     private LineEdit _serverAddressInput; // Removed from UI, kept as internal ref
     private string _currentServerName = "ALPHA";
@@ -188,6 +190,9 @@ public partial class MainMenu : Control
         // ── Title Panel ──
         _titlePanel = GetNode<Control>("TitlePanel");
 
+        // ── Build Server Select Panel programmatically ──
+        BuildServerSelectPanel();
+
         // ── Build Login Panel programmatically ──
         BuildLoginPanel();
 
@@ -201,10 +206,11 @@ public partial class MainMenu : Control
         BuildMenuBackdrop();
         _ = LoadBackdropZone("mistmoore", new Vector3(2.1690567f, -194.32549f, -204.49268f), new Vector3(15.469843f, 178.62137f, 0f));
 
-        // Hide all panels initially except login
+        // Hide all panels initially — ShowPanel() picks the right one below
         _createPanel.Hide();
         _charSelectPanel.Hide();
         _loginPanel.Hide();
+        if (_serverSelectPanel != null) _serverSelectPanel.Hide();
 
         // Listen to signals
         GameClient.Instance.Connected += OnClientConnected;
@@ -216,7 +222,7 @@ public partial class MainMenu : Control
         GameClient.Instance.LoginOkReceived += OnLoginOkReceived;
         GameClient.Instance.MessageReceived += OnClientMessageReceived;
 
-        // Check if we're creating a student
+        // Check if we're creating a student (skip server select — already connected)
         if (GameState.IsCreatingStudent)
         {
             GD.Print("[MENU] Entering Student Creation mode.");
@@ -236,7 +242,7 @@ public partial class MainMenu : Control
             return;
         }
 
-        // Check if we're returning from camp (already connected + authenticated)
+        // Check if we're returning from camp (already connected + authenticated → skip server select)
         if (GameClient.Instance.IsSocketConnected && !string.IsNullOrEmpty(GameState.AccountName))
         {
             GD.Print("[MENU] Returning from camp — re-requesting character list.");
@@ -257,9 +263,12 @@ public partial class MainMenu : Control
             return;
         }
 
-        // ── Fresh start: wait for user login ──
-        _loginStatusLabel.Text = "Enter credentials and server address.";
-        ShowPanel("login");
+        // ── Fresh start: server select first, then login on the chosen server ──
+        _loginStatusLabel.Text = "Enter credentials.";
+        // Pre-fill saved values so credentials/server address are ready when
+        // the user reaches the login panel.
+        LoadSavedCredentials();
+        ShowPanel("serverselect");
     }
 
     public override void _ExitTree()
@@ -275,6 +284,7 @@ public partial class MainMenu : Control
             GameClient.Instance.LoginOkReceived -= OnLoginOkReceived;
             GameClient.Instance.MessageReceived -= OnClientMessageReceived;
         }
+        ShutdownServerProbes();
         base._ExitTree();
     }
 
@@ -314,6 +324,23 @@ public partial class MainMenu : Control
         header.AddThemeColorOverride("font_color", new Color(0.85f, 0.7f, 0.25f, 1f));
         vbox.AddChild(header);
 
+        // Selected-server breadcrumb — updated by ShowPanel("login")
+        _loginServerLabel = new Label();
+        _loginServerLabel.Text = "";
+        _loginServerLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _loginServerLabel.AddThemeFontSizeOverride("font_size", 12);
+        _loginServerLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.7f, 0.55f, 1f));
+        vbox.AddChild(_loginServerLabel);
+
+        // "← Server Select" link button so users can swap servers without restarting.
+        _loginBackToServerSelectButton = new Button();
+        _loginBackToServerSelectButton.Text = "← Server Select";
+        _loginBackToServerSelectButton.Flat = true;
+        _loginBackToServerSelectButton.AddThemeFontSizeOverride("font_size", 11);
+        _loginBackToServerSelectButton.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.7f, 1f));
+        _loginBackToServerSelectButton.Pressed += OnBackToServerSelectPressed;
+        vbox.AddChild(_loginBackToServerSelectButton);
+
         // Username
         var userLabel = new Label();
         userLabel.Text = "Account Name";
@@ -352,19 +379,24 @@ public partial class MainMenu : Control
         _rememberCheckbox.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
         vbox.AddChild(_rememberCheckbox);
 
-        // Server Address Input (Dynamic Server Selection)
+        // Server Address — chosen on the Server Select screen now, so the
+        // visible row is hidden. We keep the LineEdit around because the
+        // existing connection logic (ValidateInputs / InitiateConnection)
+        // reads its .Text to pass the URL through.
         var serverLabel = new Label();
         serverLabel.Text = "Server Address";
         serverLabel.HorizontalAlignment = HorizontalAlignment.Center;
         serverLabel.AddThemeFontSizeOverride("font_size", 13);
         serverLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f, 1f));
+        serverLabel.Visible = false;
         vbox.AddChild(serverLabel);
 
         _serverAddressInput = new LineEdit();
         _serverAddressInput.PlaceholderText = "ws://localhost:3005";
-        _serverAddressInput.Text = "ws://localhost:3005"; // Default, but editable
+        _serverAddressInput.Text = "ws://localhost:3005";
         _serverAddressInput.Alignment = HorizontalAlignment.Center;
         _serverAddressInput.AddThemeFontSizeOverride("font_size", 15);
+        _serverAddressInput.Visible = false;
         vbox.AddChild(_serverAddressInput);
 
         // Login button
@@ -1387,6 +1419,29 @@ public partial class MainMenu : Control
         _loginPanel.Visible = panel == "login";
         _charSelectPanel.Visible = panel == "charselect";
         _createPanel.Visible = panel == "create";
+        if (_serverSelectPanel != null) _serverSelectPanel.Visible = panel == "serverselect";
+
+        // Start / stop server probes alongside the server-select panel
+        if (panel == "serverselect")
+        {
+            StartServerProbes();
+
+            // Pre-select whatever the user picked last time so the Connect
+            // button enables itself as soon as its probe goes green.
+            string lastUrl = _serverAddressInput != null ? _serverAddressInput.Text.Trim() : "";
+            PreselectServerByUrl(lastUrl);
+        }
+        else
+        {
+            ShutdownServerProbes();
+        }
+
+        if (panel == "login" && _loginServerLabel != null)
+        {
+            string name = !string.IsNullOrEmpty(GameState.ServerName) ? GameState.ServerName : "Server";
+            string url = _serverAddressInput != null ? _serverAddressInput.Text.Trim() : "";
+            _loginServerLabel.Text = string.IsNullOrEmpty(url) ? name : $"{name}  ({url})";
+        }
 
         // Request char create data when entering create panel
         if (panel == "create" && GameClient.Instance.IsSocketConnected)
@@ -1625,6 +1680,18 @@ public partial class MainMenu : Control
             _pendingAction = "login";
             await InitiateConnection();
         }
+    }
+
+    private void OnBackToServerSelectPressed()
+    {
+        // Tear down any in-flight connection so probes against the current
+        // server URL don't fight with an open session.
+        GameClient.Instance.DisconnectFromServer();
+        _pendingAction = null;
+        _loginButton.Disabled = false;
+        _createAccountButton.Disabled = false;
+        _loginStatusLabel.Text = "";
+        ShowPanel("serverselect");
     }
 
     private async void OnCreateAccountPressed()
@@ -1941,18 +2008,23 @@ public partial class MainMenu : Control
             modelPath = $"res://Data/Characters/{modelCode}.glb";
         }
 
-        if (!ResourceLoader.Exists(modelPath)) return;
+        if (!ResourceLoader.Exists(modelPath))
+        {
+            GD.Print($"[MENU] CharSelect preview model not found: {modelPath}");
+            return;
+        }
 
         try
         {
-            var gltfDoc = new GltfDocument();
-            var gltfState = new GltfState();
-            using var file = FileAccess.Open(modelPath, FileAccess.ModeFlags.Read);
-            byte[] glbBytes = file.GetBuffer((long)file.GetLength());
-            var err = gltfDoc.AppendFromBuffer(glbBytes, "", gltfState);
-            if (err != Error.Ok) return;
-
-            Node scene = gltfDoc.GenerateScene(gltfState);
+            // Use the imported PackedScene (works in both editor and packaged builds — raw
+            // .glb source files are not bundled in the .pck, only the imported .scn is).
+            var packed = GD.Load<PackedScene>(modelPath);
+            if (packed == null)
+            {
+                GD.PrintErr($"[MENU] CharSelect failed to load PackedScene: {modelPath}");
+                return;
+            }
+            Node3D scene = packed.Instantiate<Node3D>();
             if (scene == null) return;
 
             _charSelectPreviewModel = new Node3D();
@@ -2238,25 +2310,23 @@ public partial class MainMenu : Control
 
         try
         {
-            var gltfDoc = new GltfDocument();
-            var gltfState = new GltfState();
-            using var file = FileAccess.Open(modelPath, FileAccess.ModeFlags.Read);
-            byte[] glbBytes = file.GetBuffer((long)file.GetLength());
-            var err = gltfDoc.AppendFromBuffer(glbBytes, "", gltfState);
-            if (err != Error.Ok) return;
-
-            Node scene = gltfDoc.GenerateScene(gltfState);
+            // Use the imported PackedScene (works in both editor and packaged builds — raw
+            // .glb source files are not bundled in the .pck, only the imported .scn is).
+            var packed = GD.Load<PackedScene>(modelPath);
+            if (packed == null)
+            {
+                GD.PrintErr($"[MENU] CharCreate failed to load PackedScene: {modelPath}");
+                return;
+            }
+            Node3D scene = packed.Instantiate<Node3D>();
             if (scene == null) return;
 
             if (useMergedAnims)
             {
-                var mergedDoc = new GltfDocument();
-                var mergedState = new GltfState();
-                using var mergedFile = FileAccess.Open(mergedPath, FileAccess.ModeFlags.Read);
-                byte[] mergedBytes = mergedFile.GetBuffer((long)mergedFile.GetLength());
-                if (mergedDoc.AppendFromBuffer(mergedBytes, "", mergedState) == Error.Ok)
+                var mergedPacked = GD.Load<PackedScene>(mergedPath);
+                if (mergedPacked != null)
                 {
-                    Node mergedScene = mergedDoc.GenerateScene(mergedState);
+                    Node3D mergedScene = mergedPacked.Instantiate<Node3D>();
                     AnimationPlayer mergedAnim = FindPreviewAnimationPlayer(mergedScene);
                     if (mergedAnim != null)
                     {
@@ -2673,6 +2743,9 @@ public partial class MainMenu : Control
 
     public override void _Process(double delta)
     {
+        // Keep the server-select probes ticking while that panel is visible.
+        PollServerProbes();
+
         if (_adminCameraMode && _backdropCamera != null)
         {
             float speed = 20.0f;

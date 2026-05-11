@@ -95,22 +95,20 @@ Configuration is read from `.env` in the **`server/`** directory (`server/eqemu_
 ### 2.2 Initialization Order
 The critical invariant: **the DB pool must finish initialization (including the zone metadata query that fills `ZONE_ID_TO_SHORT`) before the process accepts player connections.** Otherwise fast-connecting clients can get `zone_<id>` instead of a proper short name (e.g. `felwithea`).
 
-**Primary: zone cluster — `server/zone_server.js`** (via `server/master.js` / `npm run cluster`)
+**Cluster — `server/master.js` / `npm run cluster`**
 
-**Reference / legacy monolith — `Reference/server_monolith/index.js`** (`npm run monolith` from `server/`)
+Processes and default ports are defined in `master.js` (typical layout):
 
-Monolith init order:
+- **`login_server.js`** — **`PORT` 3005**: `DB.initDatabase()`, `broker.init()`, WebSocket login / char flow.
+- **`world_server.js`** — **`PORT` 3006**: `DB.initDatabase()`, `broker.init()`, token handoff to zone nodes.
+- **`zone_server.js`** — **`PORT` 3010+** per child (`NODE` = e.g. `tunare` / `innoruuk`): full game bootstrap and tick.
 
-1. **`await engine.bootstrapServer()`** — calls **`DB.initDatabase()`** → `eqemu_db.init()`: creates pool, runs migrations/custom tables, loads **`ZONE_ID_TO_SHORT`** and related zone caches from the `zone` table. Also initializes core engine subsystems (`CombatSystem`, `SpellSystem`, etc.). **`ZoneSystem.initZones()` is not called here** (it was removed from bootstrap; zones load on demand).
-2. **`engine.startGameLoop()`** — starts the tick loop.
-3. Express + WebSocket setup, then **`server.listen(PORT)`** — default **`PORT`** is **3005** (`process.env.PORT || 3005`).
+**Zone process boot (`zone_server.js`):**
 
-**Zone cluster entrypoint — `server/zone_server.js`** (same bootstrap as above, then broker + `initZones([])`)
-
-1. **`await engine.bootstrapServer()`** — same DB and system init as above.
-2. **`await broker.init()`** — cluster broker.
-3. **`await engine.initZones([])`** — explicit zone init (empty array = no full pre-load; routing still set up for the node).
-4. **`engine.startGameLoop()`**, then listen — default port **3010** (`process.env.PORT || 3010`).
+1. **`await engine.bootstrapServer()`** — `eqemu_db.init()`: pool, migrations/custom tables, **`ZONE_ID_TO_SHORT`** and zone caches from the `zone` table; core engine subsystems (`CombatSystem`, `SpellSystem`, etc.). **`ZoneSystem.initZones()` is not run inside bootstrap**; zones load on demand.
+2. **`await broker.init()`** — Redis broker for cluster messaging.
+3. **`await engine.initZones([])`** — routing setup without full zone pre-load (empty array).
+4. **`engine.startGameLoop()`**, then **`server.listen(PORT)`** — zone port from env (e.g. **3010**).
 
 ---
 

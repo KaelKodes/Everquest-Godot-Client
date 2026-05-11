@@ -91,14 +91,29 @@ public partial class WorldManager : Node3D
         if (result.Count > 0)
         {
             Vector3 hitPos = (Vector3)result["position"];
+            Vector3 hitNormal = result.ContainsKey("normal") ? (Vector3)result["normal"] : Vector3.Up;
             float floorY = hitPos.Y + 0.1f;
-            // If mesh collision disagrees badly with server EQ.Z (Godot Y), trust authority — avoids
-            // UPDATE_POS rubberband → TELEPORT feedback loops when GLB origin/ceiling hits are wrong.
+            // Stale zone_point / DB Z often places feet *below* walkable collision. A downward ray then finds
+            // the real floor *above* authority; the old abs()-based rule always forced bad DB Z and caused fall-through.
+            // Prefer raycast when the hit is an upward-facing walkable surface; only fall back to authority for
+            // steep disagreements with ceilings / wrong layers (see hitNormal).
             const float MaxAuthVsRaycast = 4f;
+            const float MaxSnapDownFromAuth = 85f;
             if (_authSpawnEqValid && Mathf.Abs(floorY - _authSpawnEqZ) > MaxAuthVsRaycast)
             {
-                GD.Print($"[WORLD] FinalizeTeleport: raycast Y {floorY:F2} vs authoritative EQ.Z {_authSpawnEqZ:F2} — using server height.");
-                floorY = _authSpawnEqZ + 0.1f;
+                bool upwardFacing = hitNormal.Y > 0.35f;
+                bool raycastWellAboveAuth = floorY > _authSpawnEqZ + MaxAuthVsRaycast;
+                bool raycastFarBelowAuth = floorY < _authSpawnEqZ - MaxSnapDownFromAuth;
+
+                if (upwardFacing && raycastWellAboveAuth && !raycastFarBelowAuth)
+                {
+                    GD.Print($"[WORLD] FinalizeTeleport: raycast Y {floorY:F2} vs authoritative EQ.Z {_authSpawnEqZ:F2} (Δ={floorY - _authSpawnEqZ:F2}) — using raycast (walkable mesh; likely stale Z).");
+                }
+                else if (!upwardFacing || raycastFarBelowAuth)
+                {
+                    GD.Print($"[WORLD] FinalizeTeleport: raycast Y {floorY:F2} vs authoritative EQ.Z {_authSpawnEqZ:F2}, normalY={hitNormal.Y:F2} — using server height.");
+                    floorY = _authSpawnEqZ + 0.1f;
+                }
             }
 
             _playerCapsule.GlobalPosition = new Vector3(_playerCapsule.GlobalPosition.X, floorY, _playerCapsule.GlobalPosition.Z);
@@ -321,22 +336,25 @@ public partial class WorldManager : Node3D
                     }
                     else
                     {
-                        // Fallback: use center + size from DB zone_points
+                        // Fallback: use center + size from DB zone_points (EQ coords: Z = height → Godot Y).
+                        // Previously Y was forced to wallHeight/2, so triggers sat at the wrong elevation vs mesh/DB.
                         float zpX = zl.TryGetProperty("x", out var zpxp) ? zpxp.GetSingle() : 0;
                         float zpY = zl.TryGetProperty("y", out var zpyp) ? zpyp.GetSingle() : 0;
+                        float zpZ = zl.TryGetProperty("z", out var zpzp) ? zpzp.GetSingle() : 0f;
                         string orient = zl.TryGetProperty("orientation", out var op) ? op.GetString() : "ns";
                         float trigWidth = zl.TryGetProperty("width", out var twp) ? twp.GetSingle() : 50f;
                         float trigLength = zl.TryGetProperty("length", out var tlp) ? tlp.GetSingle() : 100f;
+                        float trigH = zl.TryGetProperty("triggerHeight", out var thp) ? thp.GetSingle() : wallHeight;
                         
                         float gx = -zpX;
                         float gz = -zpY;
                         
                         if (orient == "ew")
-                            triggerSize = new Vector3(trigLength, wallHeight, trigWidth);
+                            triggerSize = new Vector3(trigLength, trigH, trigWidth);
                         else
-                            triggerSize = new Vector3(trigWidth, wallHeight, trigLength);
+                            triggerSize = new Vector3(trigWidth, trigH, trigLength);
                         
-                        triggerPos = new Vector3(gx, wallHeight / 2f, gz);
+                        triggerPos = new Vector3(gx, zpZ, gz);
                     }
 
                     col.Shape = new BoxShape3D { Size = triggerSize };

@@ -997,6 +997,7 @@ public partial class MainUI
 				_pendingSpawnY = spawnProp.TryGetProperty("y", out var yp) ? yp.GetSingle() : 0f;
 				_pendingSpawnZ = spawnProp.TryGetProperty("z", out var zp) ? zp.GetSingle() : 0f;
 				_isInitialLoadPending = true;
+				_pendingSpawnLockedFromSpawnPos = true;
 
 				// Pass player appearance to WorldManager for correct model
 				int raceId = character.TryGetProperty("raceId", out var ridProp) ? ridProp.GetInt32() : 1;
@@ -1013,9 +1014,9 @@ public partial class MainUI
 					_loadingBar.Value = 10;
 				}
 				
-				GD.Print($"[UI] Server requested spawn at {_pendingSpawnX}, {_pendingSpawnZ}. race={raceId} gender={gender} face={face}. Delaying until entities ready...");
+				GD.Print($"[UI] Server requested spawn at EQ({_pendingSpawnX:F1}, {_pendingSpawnY:F1}, {_pendingSpawnZ:F1}). race={raceId} gender={gender} face={face}. Delaying until entities ready...");
 			}
-			else if (_isInitialLoadPending)
+			else if (_isInitialLoadPending && !_pendingSpawnLockedFromSpawnPos)
 			{
 				// Initial load into scene (e.g. returning from Student Hire Menu) without an explicit teleport
 				_pendingSpawnX = character.TryGetProperty("x", out var xp) ? xp.GetSingle() : 0f;
@@ -1037,7 +1038,7 @@ public partial class MainUI
 					_loadingBar.Value = 10;
 				}
 				
-				GD.Print($"[UI] Initial load using existing coordinates at {_pendingSpawnX}, {_pendingSpawnZ}. race={raceId}");
+				GD.Print($"[UI] Initial load using existing coordinates at EQ({_pendingSpawnX:F1}, {_pendingSpawnY:F1}, {_pendingSpawnZ:F1}). race={raceId}");
 			}
 
 			// Update equipment visuals on every STATUS (handles equip/unequip without respawn)

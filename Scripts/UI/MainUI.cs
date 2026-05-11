@@ -230,6 +230,8 @@ public partial class MainUI : Control
 	private ProgressBar _loadingBar;
 	private Label _flavorLabel;
 	private bool _isInitialLoadPending = true;
+	/// <summary>When true, <c>spawnPos</c> from the server set <c>_pendingSpawn*</c>; follow-up STATUS without <c>spawnPos</c> must not clobber it (server clears pendingTeleport after first send).</summary>
+	private bool _pendingSpawnLockedFromSpawnPos = false;
 	private float _pendingSpawnX = 0;
 	private float _pendingSpawnY = 0;
 	private float _pendingSpawnZ = 0;
@@ -2955,7 +2957,8 @@ public partial class MainUI : Control
 					if (_isInitialLoadPending)
 					{
 						// LOCK: Immediately consume the initial load pending flag to prevent parallel execution
-						_isInitialLoadPending = false; 
+						_isInitialLoadPending = false;
+						_pendingSpawnLockedFromSpawnPos = false;
 
 						_loadingBar.MaxValue = 100;
 						_loadingBar.Value = 10;

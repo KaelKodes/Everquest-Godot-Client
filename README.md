@@ -9,6 +9,15 @@
 - **Zero Coinage:** This is a fan project with **zero monetization**. If you wish to support Norrath, please head to [EverQuest.com](https://www.everquest.com) and support the original developers.
 - **WIP:** We are currently in **Phase 1**. Expect bugs, ghosts in the machine, and shifting sands.
 
+### 🔌 Server & editor setup (open source contributors)
+
+1. **Godot:** 4.6+ with **C# / .NET** enabled (see `project.godot` features). Open this folder as the project root.
+2. **Game server:** Run the Node stack from **`../server/`** (MariaDB + Redis + `npm run cluster`). **Start here:** **`../server/README_SETUP.md`** (full install, database, hosting expectations); **`../server/README.md`** for Node-only overview.
+3. **Default WebSocket URL:** `GameClient` defaults to **`ws://localhost:3005`** (login). Change in the client UI or in code if your login port differs.
+4. **Coordinates & pipeline:** **`DEVELOPER_REFERENCE.md`** in this folder — EQ ↔ Godot swizzles, Lantern vs server-space, DB bootstrap order.
+
+There is **no server lobby** in the client yet (pick-a-server UI is a future goal). You set the WebSocket URL for **your** stack. Policy text lives in **`../server/README_SETUP.md`**.
+
 ### 🕯️ Immersive Features
 - **The Living Dark:** A completely overhauled lighting and vision system. Infravision and Ultravision aren't just toggles—they are survival tools in a world that respects the darkness.
 - **Shadow & Silence:** A reworked Hide and Sneak system that emphasizes position and atmosphere.

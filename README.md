@@ -26,5 +26,13 @@ There is **no server lobby** in the client yet (pick-a-server UI is a future goa
 - **Expanded Destinies:** New Class/Race combinations and a deep, faction-based world.
 - **Gothic Immersion:** A UI and atmosphere designed to make every encounter feel heavy and meaningful.
 
+
+### How to Play
+The current build of EQ.gd is for local servers only.
+The MMO server should be up soon.
+You will need to set up your own server to first.
+- **Everquest.godot Server:** I have tried to provide instructions as best I can at this time, things are still moving around quickly. Once you have the server running, it gets much easier.
+- **EQ.gd Laucnher:** download the launcher, right now this just handles the Client-side but includes everything needed for it read your database.
+- **Support:** Because this is in active development it is hard for me to provide much support, as I myself am still trying to get it all working. Please be patience and expect much better documentation once its 100% stable!
 ---
 *Safe travels, and keep your torch lit.*

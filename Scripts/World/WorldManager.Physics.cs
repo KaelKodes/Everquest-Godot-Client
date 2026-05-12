@@ -135,4 +135,64 @@ public partial class WorldManager : Node3D
             GD.Print($"[Footstep] No sound found for model='{modelCode}' type='{moveType}'");
         }
     }
+
+    /// <summary>Track airborne height/speed and send one <c>FALL_IMPACT</c> per landing (server applies damage).</summary>
+    private void ProcessFallImpactTelemetry()
+    {
+        if (_playerCapsule == null) return;
+        if (_flyMode || _teleportSettling || _playerCapsule.IsInWater)
+        {
+            _fallTracking = false;
+            return;
+        }
+
+        bool onFloor = _playerCapsule.IsOnFloor();
+        if (_playerLevitating)
+        {
+            _fallTracking = false;
+            return;
+        }
+
+        if (!onFloor)
+        {
+            if (!_fallTracking)
+            {
+                _fallTracking = true;
+                _fallPeakY = _playerCapsule.GlobalPosition.Y;
+                _fallMaxDownSpeed = 0f;
+            }
+            else
+            {
+                _fallPeakY = Mathf.Max(_fallPeakY, _playerCapsule.GlobalPosition.Y);
+                _fallMaxDownSpeed = Mathf.Max(_fallMaxDownSpeed, Mathf.Max(0f, -_playerCapsule.Velocity.Y));
+            }
+            return;
+        }
+
+        if (!_fallTracking)
+            return;
+
+        float fallDist = _fallPeakY - _playerCapsule.GlobalPosition.Y;
+        float peakSpeed = _fallMaxDownSpeed;
+        _fallTracking = false;
+
+        if (_zoneImmunityTimer > 0f)
+            return;
+
+        if (fallDist < FallMinHeightReport && peakSpeed < 22f)
+            return;
+
+        double nowSec = Time.GetTicksMsec() * 0.001;
+        if (nowSec - _lastFallImpactSentAt < FallImpactCooldownSec)
+            return;
+
+        _lastFallImpactSentAt = nowSec;
+
+        var client = GetNodeOrNull<GameClient>("/root/GameClient");
+        if (client == null) return;
+
+        string fh = fallDist.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string sp = peakSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        client.SendRaw($"{{\"type\":\"FALL_IMPACT\",\"fallHeight\":{fh},\"impactSpeed\":{sp}}}");
+    }
 }

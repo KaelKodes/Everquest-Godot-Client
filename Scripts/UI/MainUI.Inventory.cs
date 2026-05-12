@@ -532,7 +532,7 @@ public partial class MainUI
 						if (itemData.TryGetProperty("item_id", out var instIdProp)) {
 							int instId = instIdProp.GetInt32();
 							if (!string.IsNullOrEmpty(_activeMerchantId)) {
-								_client.SendRaw($"{{\"type\": \"GET_OFFER\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {instId}}}");
+								_client.SendRaw($"{{\"type\": \"GET_OFFER\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {instId}, \"slotId\": {slotId}}}");
 							}
 						}
 					}
@@ -1089,6 +1089,7 @@ public partial class MainUI
 		
 		UpdateDetailedStats(source);
 		UpdateCurrencyDisplay();
+		RefreshMerchantMoneyDisplay();
 	}
 
 	private void UpdateDetailedStats(JsonElement source)
@@ -1292,6 +1293,7 @@ public partial class MainUI
 		else if (source.TryGetProperty("maxMana", out var mm2)) { maxMana = mm2.GetDouble(); hasMana = true; }
 
 		if (source.TryGetProperty("copper", out var cpProp)) { _copper = cpProp.GetInt32(); }
+		RefreshMerchantMoneyDisplay();
 
 		double fatigue = 0;
 		if (source.TryGetProperty("fatigue", out var fProp)) { fatigue = fProp.GetDouble(); }

@@ -19,13 +19,14 @@ public partial class MainUI
 
 			// Track active merchant for sell transactions
 			_activeMerchantId = npcId;
+			_merchantOpenNpcName = npcName ?? "";
 
 			// Read player class/level from payload
 			_merchantPlayerClassBitmask = root.TryGetProperty("playerClassBitmask", out var pcb) ? pcb.GetInt32() : 65535;
 			_merchantPlayerLevel = root.TryGetProperty("playerLevel", out var pl) ? pl.GetInt32() : 60;
 
 			// Fix title with proper em-dash
-			_merchantTitle.Text = $"{npcName} \u2014 Your coin: {FormatCurrency(_copper)}";
+			RefreshMerchantMoneyDisplay();
 
 			// Parse all items into struct list for sorting/filtering
 			_merchantItems.Clear();
@@ -40,6 +41,7 @@ public partial class MainUI
 				int classes = item.TryGetProperty("classes", out var cl) ? cl.GetInt32() : 65535;
 				int recLevel = item.TryGetProperty("reclevel", out var rl) ? rl.GetInt32() : 0;
 				int icon = item.TryGetProperty("icon", out var ic) ? ic.GetInt32() : 0;
+				int stackSz = item.TryGetProperty("stacksize", out var ss) ? ss.GetInt32() : 0;
 
 				_merchantItems.Add(new MerchantItem
 				{
@@ -53,7 +55,8 @@ public partial class MainUI
 					Classes = classes,
 					RecLevel = recLevel,
 					NpcId = npcId,
-					Icon = icon
+					Icon = icon,
+					StackSize = stackSz
 				});
 			}
 
@@ -68,6 +71,8 @@ public partial class MainUI
 				
 				_merchantActionBtn.Pressed += OnMerchantActionClicked;
 				_merchantSellJunkBtn.Pressed += () => _client.SendRaw($"{{\"type\": \"SELL_JUNK\", \"npcId\": \"{_activeMerchantId}\"}}");
+				_merchantQtySpin.ValueChanged += OnMerchantQtySpinValueChanged;
+				_merchantQtyMaxBtn.Pressed += OnMerchantQtyMaxPressed;
 				
 				// Enable drop on slot rect
 				_merchantSlotRect.MouseFilter = Control.MouseFilterEnum.Stop;
@@ -91,7 +96,16 @@ public partial class MainUI
 		}
 		catch (Exception ex) { GD.PrintErr($"[UI] Merchant Error: {ex.Message}"); }
 	}
-	
+
+	/// <summary>Updates the merchant window title coin line when <see cref="_copper"/> changes (e.g. after buy/sell).</summary>
+	private void RefreshMerchantMoneyDisplay()
+	{
+		if (_merchantTitle == null || _merchantWindow == null || !_merchantWindow.Visible) return;
+		if (string.IsNullOrEmpty(_merchantOpenNpcName)) return;
+		_merchantTitle.Text = $"{_merchantOpenNpcName} \u2014 Your coin: {FormatCurrency(_copper)}";
+		RefreshMerchantQuantityLine();
+	}
+
 	private void OnMerchantSlotGuiInput(InputEvent @event)
 	{
 		if (@event is InputEventMouseButton mouseBtn && !mouseBtn.Pressed && mouseBtn.ButtonIndex == MouseButton.Left)
@@ -124,17 +138,28 @@ public partial class MainUI
 			var root = doc.RootElement;
 			
 			string name = root.GetProperty("name").GetString();
-			int instId = root.GetProperty("itemId").GetInt32();
+			int eqItemId = root.GetProperty("itemId").GetInt32();
 			int price = root.GetProperty("price").GetInt32();
 			string priceText = root.GetProperty("priceText").GetString();
 			int icon = root.GetProperty("icon").GetInt32();
-			
-			_merchantSelectedItemId = instId.ToString();
+			int slotId = root.TryGetProperty("slotId", out var slotEl) ? slotEl.GetInt32() : -1;
+			int qty = root.TryGetProperty("quantity", out var qtyEl) ? qtyEl.GetInt32() : 1;
+			int unitCp = root.TryGetProperty("unitPrice", out var ue) ? ue.GetInt32() : (qty > 0 ? price / qty : price);
+			_merchantSellUnitCp = Math.Max(1, unitCp);
+			_merchantSellMaxQty = Math.Max(1, qty);
+
+			_merchantSelectedItemId = eqItemId.ToString();
+			_merchantSelectedSlotId = slotId;
 			_merchantSelectedItemKey = null;
 			_merchantSelectedAction = "SELL";
-			
+
 			_merchantSelectionName.Text = name;
-			_merchantSelectionPrice.Text = $"Offer: {priceText}";
+			_merchantQtyRow.Visible = true;
+			_merchantQtySpin.MinValue = 1;
+			_merchantQtySpin.MaxValue = Math.Max(1, _merchantSellMaxQty);
+			_merchantQtySpin.Value = 1;
+			RefreshMerchantQuantityLine();
+
 			_merchantSlotRect.Texture = IconManager.Instance.GetItemIcon(icon);
 			
 			_merchantActionBtn.Text = "Accept";
@@ -172,6 +197,7 @@ public partial class MainUI
 					_merchantSelectedBuybackId = buybackId;
 					_merchantSelectedPrice = price;
 					_merchantSelectedAction = "BUY_RECOVER";
+					_merchantQtyRow.Visible = false;
 					
 					_merchantSelectionName.Text = name;
 					_merchantSelectionPrice.Text = $"Cost: {priceText}";
@@ -189,8 +215,11 @@ public partial class MainUI
 	{
 		_merchantSelectedItemId = null;
 		_merchantSelectedItemKey = null;
+		_merchantSelectedSlotId = -1;
 		_merchantSelectedBuybackId = -1;
 		_merchantSelectedAction = "";
+		if (_merchantQtyRow != null)
+			_merchantQtyRow.Visible = false;
 		
 		_merchantSelectionName.Text = "Select or Drop Item";
 		_merchantSelectionPrice.Text = "---";
@@ -203,15 +232,21 @@ public partial class MainUI
 	{
 		if (_merchantSelectedAction == "BUY" && _merchantSelectedItemKey != null)
 		{
-			if (_copper < _merchantSelectedPrice) {
+			int q = Math.Max(1, (int)_merchantQtySpin.Value);
+			int total = checked(_merchantUnitPriceCp * q);
+			if (_copper < total) {
 				Log("SYSTEM", "[color=red]You don't have enough money.[/color]");
 				return;
 			}
-			_client.SendRaw($"{{\"type\": \"BUY\", \"npcId\": \"{_activeMerchantId}\", \"itemKey\": \"{_merchantSelectedItemKey}\"}}");
+			_client.SendRaw($"{{\"type\": \"BUY\", \"npcId\": \"{_activeMerchantId}\", \"itemKey\": \"{_merchantSelectedItemKey}\", \"quantity\": {q}}}");
 		}
 		else if (_merchantSelectedAction == "SELL" && _merchantSelectedItemId != null)
 		{
-			_client.SendRaw($"{{\"type\": \"SELL\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {_merchantSelectedItemId}}}");
+			int q = Math.Max(1, (int)_merchantQtySpin.Value);
+			if (_merchantSelectedSlotId >= 0)
+				_client.SendRaw($"{{\"type\": \"SELL\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {_merchantSelectedItemId}, \"slotId\": {_merchantSelectedSlotId}, \"quantity\": {q}}}");
+			else
+				_client.SendRaw($"{{\"type\": \"SELL\", \"npcId\": \"{_activeMerchantId}\", \"itemId\": {_merchantSelectedItemId}, \"quantity\": {q}}}");
 			ClearMerchantSelection();
 		}
 		else if (_merchantSelectedAction == "BUY_RECOVER" && _merchantSelectedBuybackId != -1)
@@ -222,6 +257,96 @@ public partial class MainUI
 			}
 			_client.SendRaw($"{{\"type\": \"BUY_RECOVER\", \"npcId\": \"{_activeMerchantId}\", \"buybackId\": {_merchantSelectedBuybackId}}}");
 			ClearMerchantSelection();
+		}
+	}
+
+	private const int MerchantQtyCap = 999;
+
+	private void OnMerchantQtySpinValueChanged(double value)
+	{
+		if (_merchantQtyRow == null || !_merchantQtyRow.Visible) return;
+		RefreshMerchantQuantityLine();
+	}
+
+	private void OnMerchantQtyMaxPressed()
+	{
+		if (_merchantQtySpin == null || !_merchantQtyRow.Visible) return;
+		_merchantQtySpin.Value = _merchantQtySpin.MaxValue;
+		RefreshMerchantQuantityLine();
+	}
+
+	/// <summary>Approximate max units that fit in main pockets (22–29), merged with server logic; capped by coin and 999.</summary>
+	private int EstimateMaxBuyMainPockets(string shopItemKey, int stackSize, int unitPriceCp)
+	{
+		int stack = stackSize > 0 ? stackSize : 1;
+		if (!int.TryParse(shopItemKey?.Trim(), out int buyEqId) || buyEqId == 0)
+			return Math.Max(1, Math.Min(MerchantQtyCap, unitPriceCp > 0 ? _copper / Math.Max(1, unitPriceCp) : MerchantQtyCap));
+
+		int room = 0;
+		string invJson = _client.LastInventoryPayload;
+		if (!string.IsNullOrEmpty(invJson))
+		{
+			try
+			{
+				using var doc = JsonDocument.Parse(invJson);
+				if (doc.RootElement.TryGetProperty("inventory", out var inventory))
+				{
+					for (int slot = 22; slot <= 29; slot++)
+					{
+						JsonElement? atSlot = null;
+						foreach (var invItem in inventory.EnumerateArray())
+						{
+							if (!invItem.TryGetProperty("slotId", out var sid)) continue;
+							if (sid.GetInt32() != slot) continue;
+							if (invItem.TryGetProperty("equipped", out var eq) && eq.GetInt32() != 0) continue;
+							atSlot = invItem;
+							break;
+						}
+						if (atSlot == null)
+							room += stack;
+						else
+						{
+							var el = atSlot.Value;
+							int eqId = el.TryGetProperty("eq_item_id", out var eid) ? eid.GetInt32() : 0;
+							if (eqId != buyEqId) continue;
+							int q = ReadItemStackCount(el);
+							room += Math.Max(0, stack - q);
+						}
+					}
+				}
+			}
+			catch (Exception ex) { GD.PrintErr($"[UI] EstimateMaxBuyMainPockets: {ex.Message}"); }
+		}
+		else
+			room = 8 * stack;
+
+		int afford = unitPriceCp > 0 ? _copper / Math.Max(1, unitPriceCp) : MerchantQtyCap;
+		return Math.Max(1, Math.Min(MerchantQtyCap, Math.Min(room, afford)));
+	}
+
+	private void RefreshMerchantQuantityLine()
+	{
+		if (_merchantSelectionPrice == null || _merchantQtySpin == null || _merchantActionBtn == null) return;
+		if (!_merchantQtyRow.Visible) return;
+
+		int maxQ = Math.Max(1, (int)_merchantQtySpin.MaxValue);
+		int q = Math.Clamp((int)_merchantQtySpin.Value, 1, maxQ);
+		if (Math.Abs(_merchantQtySpin.Value - q) > 0.001)
+			_merchantQtySpin.Value = q;
+
+		if (_merchantSelectedAction == "BUY" && _merchantSelectedItemKey != null)
+		{
+			int unit = Math.Max(1, _merchantUnitPriceCp);
+			long total = (long)unit * q;
+			_merchantSelectionPrice.Text = $"Cost: {FormatCurrency(total > int.MaxValue ? int.MaxValue : (int)total)} ({q} × {FormatCurrency(unit)})";
+			_merchantActionBtn.Disabled = total > int.MaxValue || _copper < total;
+		}
+		else if (_merchantSelectedAction == "SELL" && _merchantSelectedItemId != null)
+		{
+			int unit = Math.Max(1, _merchantSellUnitCp);
+			long total = (long)unit * q;
+			_merchantSelectionPrice.Text = $"Offer: {FormatCurrency(total > int.MaxValue ? int.MaxValue : (int)total)} ({q} × {FormatCurrency(unit)})";
+			_merchantActionBtn.Disabled = false;
 		}
 	}
 
@@ -259,13 +384,19 @@ public partial class MainUI
 				_merchantSelectedItemKey = mi.ItemKey;
 				_merchantSelectedPrice = mi.Price;
 				_merchantSelectedAction = "BUY";
+				_merchantUnitPriceCp = Math.Max(1, mi.Price);
+				int st = mi.StackSize > 0 ? mi.StackSize : 1;
+				int maxBuy = EstimateMaxBuyMainPockets(mi.ItemKey, st, _merchantUnitPriceCp);
+				_merchantQtyRow.Visible = true;
+				_merchantQtySpin.MinValue = 1;
+				_merchantQtySpin.MaxValue = Math.Max(1, maxBuy);
+				_merchantQtySpin.Value = 1;
 				
 				_merchantSelectionName.Text = displayName;
-				_merchantSelectionPrice.Text = $"Cost: {mi.PriceText}";
 				_merchantSlotRect.Texture = iconMgr.GetItemIcon(mi.Icon);
+				RefreshMerchantQuantityLine();
 				
 				_merchantActionBtn.Text = "Accept";
-				_merchantActionBtn.Disabled = _copper < mi.Price;
 			});
 			
 			// Set color based on usability

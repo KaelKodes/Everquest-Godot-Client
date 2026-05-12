@@ -47,7 +47,8 @@ public partial class WorldManager : Node3D
             }
 
             var doorMeshNode = scene.Instantiate<Node3D>();
-            
+            _objectPlacer.RegisterInstanceMaterialAnimations(doorMeshNode, modelName, objectsDir);
+
             // Invisible barrier doors usually have specific opentypes (53, 54, etc)
             // Elevators are 58, 59, so >= 54 is too broad and makes lifts invisible!
             if (opentype == 53 || opentype == 54)

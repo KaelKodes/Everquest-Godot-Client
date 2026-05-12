@@ -81,6 +81,14 @@ public partial class WorldManager : Node3D
     private bool _f6Held = false;
     private bool _f4Held = false;
 
+    private bool _playerLevitating = false;
+    private bool _fallTracking = false;
+    private float _fallPeakY = 0f;
+    private float _fallMaxDownSpeed = 0f;
+    private double _lastFallImpactSentAt = -1000.0;
+    private const float FallMinHeightReport = 14f;
+    private const double FallImpactCooldownSec = 1.05;
+
     // DM handheld omni tuner (F3 toggle, F2 snapshot — logs lantern-local torch offset for EntityCapsule)
     private bool _dmLanternTuneActive = false;
     private bool _f3DmHeld = false;
@@ -949,12 +957,15 @@ public partial class WorldManager : Node3D
         }
         else if (!_playerCapsule.IsOnFloor())
         {
-            velocity.Y -= gravity * (float)delta;
+            if (_playerLevitating)
+                velocity.Y = Mathf.MoveToward(velocity.Y, 0f, 52f * (float)delta);
+            else
+                velocity.Y -= gravity * (float)delta;
         }
         else
         {
             velocity.Y = 0;
-            if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.Space))
+            if (!blockWorldInput && Input.IsPhysicalKeyPressed(Key.Space) && !_playerLevitating)
             {
                 velocity.Y = 30.0f; // Jump force
                 PlayFootstep("jmp");
@@ -980,6 +991,8 @@ public partial class WorldManager : Node3D
 
         _playerCapsule.Velocity = velocity;
         _playerCapsule.MoveAndSlide();
+
+        ProcessFallImpactTelemetry();
 
         // Update player animation based on movement, jump, and combat state
         bool isSprinting = Input.IsPhysicalKeyPressed(Key.Shift) || _isAutoRunning;
@@ -1605,7 +1618,12 @@ public partial class WorldManager : Node3D
         if (_playerCapsule.IsInWater)
             velocity.Y = 0;
         else if (!_playerCapsule.IsOnFloor())
-            velocity.Y -= gravity * delta;
+        {
+            if (_playerLevitating)
+                velocity.Y = Mathf.MoveToward(velocity.Y, 0f, 52f * (float)delta);
+            else
+                velocity.Y -= gravity * (float)delta;
+        }
         else
             velocity.Y = 0;
 
@@ -1613,6 +1631,8 @@ public partial class WorldManager : Node3D
         velocity.Z = 0;
         _playerCapsule.Velocity = velocity;
         _playerCapsule.MoveAndSlide();
+
+        ProcessFallImpactTelemetry();
 
         _playerCapsule.UpdateAnimationFromVelocity(
             _playerCapsule.Velocity,

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://7fe3h2d78a6j"
-path="res://.godot/imported/WHATIWANTITTOLOOKLIKE.png-a310400224d6c606598e8c1ac26f72ce.ctex"
+uid="uid://c0w3j4r1afx0v"
+path="res://.godot/imported/CombatIcon.png-b83a663c32662d817a27405a0f4ccf32.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Assets/UI/ClassicUI/WHATIWANTITTOLOOKLIKE.png"
-dest_files=["res://.godot/imported/WHATIWANTITTOLOOKLIKE.png-a310400224d6c606598e8c1ac26f72ce.ctex"]
+source_file="res://Assets/UI/ClassicUI/CombatIcon.png"
+dest_files=["res://.godot/imported/CombatIcon.png-b83a663c32662d817a27405a0f4ccf32.ctex"]
 
 [params]
 

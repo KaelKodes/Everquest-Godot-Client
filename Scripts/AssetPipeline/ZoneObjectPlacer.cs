@@ -13,6 +13,8 @@ public partial class ZoneObjectPlacer : RefCounted
 {
     // Cache loaded object scenes to avoid re-loading duplicates (e.g., 50 trees)
     private readonly Dictionary<string, PackedScene> _objectSceneCache = new();
+    /// <summary>Parsed MaterialLists/*.txt per object model — used after Instantiate so animated materials are the live instance materials.</summary>
+    private readonly Dictionary<string, Dictionary<string, (string[] frames, float delay)>> _objectAnimDataCache = new();
     
     // Graphics Settings
     public bool ShadowsEnabled { get; set; } = true;
@@ -128,6 +130,7 @@ public partial class ZoneObjectPlacer : RefCounted
 
                 // Instantiate and position
                 var instance = scene.Instantiate<Node3D>();
+                RegisterInstanceMaterialAnimations(instance, modelName, objectsDir);
                 instance.Name = $"{modelName}_{placed}";
 
                 // Use the previous working mapping
@@ -217,45 +220,8 @@ public partial class ZoneObjectPlacer : RefCounted
             // Generate collision so that objects (e.g. ramps) are solid
             GenerateCollisionRecursive(scene, scene, forceSolid);
 
-            // Setup animated materials if the animator is available
-            if (Animator != null)
-            {
-                string matListFile = Path.Combine(objectsDir, "MaterialLists", $"{modelName}.txt");
-                // GD.Print($"[Anim Debug] Object: {modelName}. Checking for mat list: {matListFile}");
-                if (File.Exists(matListFile))
-                {
-                    var animData = ParseMaterialList(matListFile);
-                    // GD.Print($"[Anim Debug] Object: {modelName}. Found mat list. Parsed {animData.Count} animated materials.");
-                    if (animData.Count > 0)
-                    {
-                        string texturesDir = Path.Combine(objectsDir, "Textures");
-                        RegisterAnimationsRecursive(scene, animData, texturesDir);
-                    }
-                }
-                else
-                {
-                    // Fallback to case-insensitive match for the txt file just in case!
-                    matListFile = FindFileCaseInsensitive(Path.Combine(objectsDir, "MaterialLists"), $"{modelName}.txt");
-                    if (matListFile != null)
-                    {
-                        var animData = ParseMaterialList(matListFile);
-                        // GD.Print($"[Anim Debug] Object: {modelName}. Found mat list via fallback. Parsed {animData.Count} animated materials.");
-                        if (animData.Count > 0)
-                        {
-                            string texturesDir = Path.Combine(objectsDir, "Textures");
-                            RegisterAnimationsRecursive(scene, animData, texturesDir);
-                        }
-                    }
-                    else
-                    {
-                        // GD.Print($"[Anim Debug] Object: {modelName}. No mat list found.");
-                    }
-                }
-            }
-            else
-            {
-                // GD.Print($"[Anim Debug] Animator is null for {modelName}!");
-            }
+            // Animated materials are registered per Instantiate() — the template scene is Packed then freed;
+            // registering here would target materials that are not used by packed instances (export builds finalize frees reliably).
 
             // Pack it so we can instantiate multiple copies efficiently
             var packed = new PackedScene();
@@ -277,6 +243,36 @@ public partial class ZoneObjectPlacer : RefCounted
     public void ClearCache()
     {
         _objectSceneCache.Clear();
+        _objectAnimDataCache.Clear();
+    }
+
+    /// <summary>
+    /// Registers MaterialList texture-frame cycling on <paramref name="instance"/> materials.
+    /// Must run after <see cref="PackedScene.Instantiate{T}"/> so references match the live meshes (template scenes are packed then freed).
+    /// </summary>
+    public void RegisterInstanceMaterialAnimations(Node3D instance, string modelName, string objectsDir)
+    {
+        if (Animator == null || instance == null) return;
+        if (!TryGetObjectAnimData(modelName, objectsDir, out var animData)) return;
+        string texturesDir = Path.Combine(objectsDir, "Textures");
+        RegisterAnimationsRecursive(instance, animData, texturesDir);
+    }
+
+    private bool TryGetObjectAnimData(string modelName, string objectsDir, out Dictionary<string, (string[] frames, float delay)> animData)
+    {
+        if (_objectAnimDataCache.TryGetValue(modelName, out animData))
+            return animData != null && animData.Count > 0;
+
+        string matListDir = Path.Combine(objectsDir, "MaterialLists");
+        string matListFile = Path.Combine(matListDir, $"{modelName}.txt");
+        if (!File.Exists(matListFile))
+            matListFile = FindFileCaseInsensitive(matListDir, $"{modelName}.txt");
+
+        animData = (matListFile != null && File.Exists(matListFile))
+            ? ParseMaterialList(matListFile)
+            : new Dictionary<string, (string[] frames, float delay)>();
+        _objectAnimDataCache[modelName] = animData;
+        return animData.Count > 0;
     }
 
     /// <summary>Find a file case-insensitively in a directory.</summary>

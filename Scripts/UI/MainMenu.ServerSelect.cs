@@ -614,6 +614,11 @@ public partial class MainMenu : Control
         SaveLastServerSelection(entry.Url);
 
         GD.Print($"[SERVERSELECT] Selected '{entry.DisplayName}' → {entry.Url}");
+        if (!EQAssetConfig.Instance.IsConfigured)
+        {
+            ShowMandatoryEverQuestLinkGate();
+            return;
+        }
         ShowPanel("login");
     }
 

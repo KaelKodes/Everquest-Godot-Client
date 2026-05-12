@@ -27,6 +27,7 @@ public partial class MainMenu : Control
     private Label _loginStatusLabel;
     private Label _loginServerLabel;
     private Button _loginBackToServerSelectButton;
+    private Button _eqDirButton;
     private CheckBox _rememberCheckbox;
     private LineEdit _serverAddressInput; // Removed from UI, kept as internal ref
     private string _currentServerName = "ALPHA";
@@ -252,6 +253,12 @@ public partial class MainMenu : Control
             string password = _passwordInput.Text;
             if (username.Length >= 2 && password.Length >= 4)
             {
+                if (!EQAssetConfig.Instance.IsConfigured)
+                {
+                    _loginStatusLabel.Text = "Link your EverQuest installation before logging in.";
+                    ShowPanel("login");
+                    return;
+                }
                 GameState.AccountPassword = password;
                 GameClient.Instance.SendMessage("LOGIN_ACCOUNT", new { username, password });
             }
@@ -416,12 +423,12 @@ public partial class MainMenu : Control
         vbox.AddChild(_createAccountButton);
 
         // ── EQ Directory button ──
-        var eqDirButton = new Button();
-        eqDirButton.CustomMinimumSize = new Vector2(0, 32);
-        eqDirButton.AddThemeFontSizeOverride("font_size", 12);
-        UpdateEQButtonText(eqDirButton);
-        eqDirButton.Pressed += () => ShowEQSetupDialog(eqDirButton);
-        vbox.AddChild(eqDirButton);
+        _eqDirButton = new Button();
+        _eqDirButton.CustomMinimumSize = new Vector2(0, 32);
+        _eqDirButton.AddThemeFontSizeOverride("font_size", 12);
+        UpdateEQButtonText();
+        _eqDirButton.Pressed += () => ShowEQSetupDialog();
+        vbox.AddChild(_eqDirButton);
 
         // Status
         _loginStatusLabel = new Label();
@@ -440,30 +447,30 @@ public partial class MainMenu : Control
 
     // ── EQ Directory helpers ──
 
-    private void UpdateEQButtonText(Button btn)
+    private const string EqLegalDisclaimerText =
+        "EQ.gd is a fan-made, non-profit emulator-style client. It does not ship EverQuest game data. " +
+        "You must own and install your own legal copy of EverQuest (for example via Steam or Daybreak). " +
+        "Please support the original developers at everquest.com.";
+
+    private void UpdateEQButtonText(Button btn = null)
     {
+        var target = btn ?? _eqDirButton;
+        if (target == null) return;
         if (EQAssetConfig.Instance.IsConfigured)
         {
-            btn.Text = "⚙ EQ Linked ✓";
-            btn.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
+            target.Text = "⚙ EQ Linked ✓";
+            target.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
         }
         else
         {
-            btn.Text = "⚙ Link EQ Directory";
-            btn.AddThemeColorOverride("font_color", new Color(0.9f, 0.7f, 0.2f, 1f));
+            target.Text = "⚙ Link EQ Directory";
+            target.AddThemeColorOverride("font_color", new Color(0.9f, 0.7f, 0.2f, 1f));
         }
     }
 
-    private void ShowEQSetupDialog(Button parentBtn)
+    /// <summary>Shared path row + link/unlink used by the login settings dialog and the mandatory post-server-select gate.</summary>
+    private void AddEverQuestLinkControls(VBoxContainer vbox, Button eqDirButtonForUpdates, Action onLinkStateChanged)
     {
-        var dialog = new AcceptDialog();
-        dialog.Title = "EverQuest Directory";
-        dialog.Size = new Vector2I(520, 280);
-
-        var vbox = new VBoxContainer();
-        vbox.AddThemeConstantOverride("separation", 10);
-
-        // Status label
         var statusLabel = new Label();
         statusLabel.AddThemeFontSizeOverride("font_size", 13);
         statusLabel.AutowrapMode = TextServer.AutowrapMode.Word;
@@ -479,7 +486,6 @@ public partial class MainMenu : Control
         }
         vbox.AddChild(statusLabel);
 
-        // Path input
         var pathRow = new HBoxContainer();
         pathRow.AddThemeConstantOverride("separation", 6);
         var pathInput = new LineEdit();
@@ -490,12 +496,11 @@ public partial class MainMenu : Control
         pathRow.AddChild(pathInput);
         vbox.AddChild(pathRow);
 
-        // Result label (for validation feedback)
         var resultLabel = new Label();
         resultLabel.AddThemeFontSizeOverride("font_size", 12);
+        resultLabel.AutowrapMode = TextServer.AutowrapMode.Word;
         vbox.AddChild(resultLabel);
 
-        // Button row
         var btnRow = new HBoxContainer();
         btnRow.AddThemeConstantOverride("separation", 8);
 
@@ -510,11 +515,10 @@ public partial class MainMenu : Control
             {
                 resultLabel.Text = "✓ EQ directory linked successfully!";
                 resultLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
-                statusLabel.Text = $"✓ EQ Linked: {path}";
+                statusLabel.Text = $"✓ EQ Linked: {EQAssetConfig.Instance.EQPath}";
                 statusLabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.8f, 0.4f, 1f));
-                UpdateEQButtonText(parentBtn);
+                UpdateEQButtonText(eqDirButtonForUpdates);
 
-                // Show asset summary
                 var (zones, chars, music) = EQAssetConfig.Instance.GetAssetSummary();
                 resultLabel.Text += $"\nFound: {zones} zones, {chars} character sets, {music} music files";
             }
@@ -523,6 +527,7 @@ public partial class MainMenu : Control
                 resultLabel.Text = "✗ Invalid EQ directory. Missing required files (eqgame.exe, gfaydark.s3d, global_chr.s3d)";
                 resultLabel.AddThemeColorOverride("font_color", new Color(0.9f, 0.3f, 0.3f, 1f));
             }
+            onLinkStateChanged?.Invoke();
         };
         btnRow.AddChild(linkBtn);
 
@@ -539,14 +544,110 @@ public partial class MainMenu : Control
             resultLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f, 1f));
             statusLabel.Text = "No EQ installation linked.";
             statusLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.75f, 0.5f, 1f));
-            UpdateEQButtonText(parentBtn);
+            UpdateEQButtonText(eqDirButtonForUpdates);
+            onLinkStateChanged?.Invoke();
         };
         btnRow.AddChild(unlinkBtn);
 
         vbox.AddChild(btnRow);
+    }
+
+    private void ShowEQSetupDialog()
+    {
+        var dialog = new AcceptDialog();
+        dialog.Title = "EverQuest Directory";
+        dialog.Size = new Vector2I(520, 280);
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 10);
+        AddEverQuestLinkControls(vbox, _eqDirButton, null);
+
         dialog.AddChild(vbox);
         AddChild(dialog);
         dialog.PopupCentered();
+    }
+
+    /// <summary>After the player picks a server: block account login until a valid EQ install path is saved.</summary>
+    private void ShowMandatoryEverQuestLinkGate()
+    {
+        var win = new Window();
+        win.Title = "Link Your EverQuest Copy";
+        win.Unresizable = true;
+        win.Size = new Vector2I(580, 460);
+        win.PopupWindow = true;
+        win.Exclusive = true;
+
+        var outer = new MarginContainer();
+        outer.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        outer.AddThemeConstantOverride("margin_left", 16);
+        outer.AddThemeConstantOverride("margin_top", 14);
+        outer.AddThemeConstantOverride("margin_right", 16);
+        outer.AddThemeConstantOverride("margin_bottom", 14);
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 12);
+        vbox.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+
+        var disclaimer = new Label();
+        disclaimer.Text = EqLegalDisclaimerText;
+        disclaimer.AutowrapMode = TextServer.AutowrapMode.Word;
+        disclaimer.AddThemeFontSizeOverride("font_size", 12);
+        disclaimer.AddThemeColorOverride("font_color", new Color(0.75f, 0.72f, 0.62f, 1f));
+        vbox.AddChild(disclaimer);
+
+        var continueBtn = new Button();
+        continueBtn.Text = "Continue to Login";
+        continueBtn.CustomMinimumSize = new Vector2(0, 38);
+        continueBtn.AddThemeFontSizeOverride("font_size", 15);
+        continueBtn.Disabled = !EQAssetConfig.Instance.IsConfigured;
+
+        AddEverQuestLinkControls(vbox, _eqDirButton, () =>
+        {
+            continueBtn.Disabled = !EQAssetConfig.Instance.IsConfigured;
+        });
+
+        var footer = new HBoxContainer();
+        footer.AddThemeConstantOverride("separation", 14);
+
+        var backBtn = new Button();
+        backBtn.Text = "← Server Select";
+        backBtn.CustomMinimumSize = new Vector2(140, 36);
+        backBtn.AddThemeFontSizeOverride("font_size", 13);
+        backBtn.Pressed += () =>
+        {
+            win.QueueFree();
+            ShowPanel("serverselect");
+        };
+        footer.AddChild(backBtn);
+
+        var footerSpacer = new Control();
+        footerSpacer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        footer.AddChild(footerSpacer);
+
+        continueBtn.Pressed += () =>
+        {
+            if (!EQAssetConfig.Instance.IsConfigured) return;
+            win.QueueFree();
+            ShowPanel("login");
+        };
+        footer.AddChild(continueBtn);
+
+        vbox.AddChild(footer);
+
+        outer.AddChild(vbox);
+        win.AddChild(outer);
+
+        void onClose()
+        {
+            if (!GodotObject.IsInstanceValid(win)) return;
+            win.QueueFree();
+            ShowPanel("serverselect");
+        }
+
+        win.CloseRequested += onClose;
+
+        AddChild(win);
+        win.PopupCentered();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1712,6 +1813,11 @@ public partial class MainMenu : Control
         if (username.Length < 2) { _loginStatusLabel.Text = "Name too short."; return false; }
         if (password.Length < 4) { _loginStatusLabel.Text = "Password too short (min 4)."; return false; }
         if (string.IsNullOrEmpty(serverUrl)) { _loginStatusLabel.Text = "Server address required."; return false; }
+        if (!EQAssetConfig.Instance.IsConfigured)
+        {
+            _loginStatusLabel.Text = "Link your EverQuest installation before logging in.";
+            return false;
+        }
         return true;
     }
 

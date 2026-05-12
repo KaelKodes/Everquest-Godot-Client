@@ -404,6 +404,7 @@ public partial class MainUI
 				float maxDuration = buff.TryGetProperty("maxDuration", out var maxDurProp) ? (float)maxDurProp.GetDouble() : duration;
 				bool beneficial = buff.TryGetProperty("beneficial", out var benProp) ? benProp.GetBoolean() : true;
 				int memIcon = buff.TryGetProperty("memIcon", out var memProp) ? memProp.GetInt32() : 0;
+				int spellIcon = buff.TryGetProperty("icon", out var iconProp) ? iconProp.GetInt32() : 0;
 				bool isSong = buff.TryGetProperty("isSong", out var songProp) ? songProp.GetBoolean() : false;
 
 				var buffObj = new ActiveBuff
@@ -413,7 +414,8 @@ public partial class MainUI
 					DurationRemaining = duration,
 					IconNode = null,
 					IsBeneficial = beneficial,
-					MemIcon = memIcon
+					MemIcon = memIcon,
+					SpellIcon = spellIcon
 				};
 
 				if (isSong && beneficial)
@@ -496,7 +498,67 @@ public partial class MainUI
 			UpdateBars(character);
 			UpdateStatsUI(character);
 			UpdateInventoryStats(character);
-			
+
+			// Sit/Stand before regen icon (Idle vs Resting uses _isSitting)
+			if (character.TryGetProperty("state", out var statePropEarly))
+			{
+				string state = statePropEarly.GetString();
+				bool wasSitting = _isSitting;
+				_isSitting = (state == "medding");
+				if (_sitStandBtn != null) _sitStandBtn.Text = _isSitting ? "Stand" : "Sit";
+
+				if (wasSitting && !_isSitting && _spellbookUI != null && _spellbookUI.Visible)
+				{
+					_spellbookUI.Visible = false;
+					_pendingMemorizeSpellKey = null;
+					_pendingMemorizeSpellName = null;
+					Log("SYSTEM", "Your spellbook closes as you stand.");
+				}
+
+				if (wasSitting != _isSitting)
+				{
+					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+					if (wm != null) wm.SetPlayerSitting(_isSitting);
+				}
+			}
+
+			bool statusInCombat = false;
+			if (character.TryGetProperty("inCombat", out var icEl))
+			{
+				statusInCombat = icEl.ValueKind switch
+				{
+					JsonValueKind.True => true,
+					JsonValueKind.False => false,
+					JsonValueKind.Number => icEl.GetInt32() != 0,
+					JsonValueKind.String => string.Equals(icEl.GetString(), "true", StringComparison.OrdinalIgnoreCase),
+					_ => false
+				};
+			}
+			bool restedRegen = !statusInCombat;
+			if (character.TryGetProperty("restedRegen", out var rrEl))
+			{
+				restedRegen = rrEl.ValueKind switch
+				{
+					JsonValueKind.True => true,
+					JsonValueKind.False => false,
+					JsonValueKind.Number => rrEl.GetInt32() != 0,
+					JsonValueKind.String => string.Equals(rrEl.GetString(), "true", StringComparison.OrdinalIgnoreCase),
+					_ => restedRegen
+				};
+			}
+			UpdateCombatRegenStatusFromServer(statusInCombat, restedRegen);
+
+			{
+				var wmLev = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wmLev != null)
+				{
+					bool lev = character.TryGetProperty("isLevitating", out var levEl) && (levEl.ValueKind == JsonValueKind.True
+						|| (levEl.ValueKind == JsonValueKind.Number && levEl.GetInt32() != 0)
+						|| (levEl.ValueKind == JsonValueKind.String && string.Equals(levEl.GetString(), "true", StringComparison.OrdinalIgnoreCase)));
+					wmLev.SetPlayerLevitating(lev);
+				}
+			}
+
 			if (character.TryGetProperty("vision", out var visionDict))
 			{
 				if (visionDict.TryGetProperty("modeName", out var modeNameProp))
@@ -518,31 +580,6 @@ public partial class MainUI
 					{
 						wmVision.SetWeatherEffect(wreProp.GetString());
 					}
-				}
-			}
-
-			// Sit/Stand state
-			if (character.TryGetProperty("state", out var stateProp))
-			{
-				string state = stateProp.GetString();
-				bool wasSitting = _isSitting;
-				_isSitting = (state == "medding"); 
-				if (_sitStandBtn != null) _sitStandBtn.Text = _isSitting ? "Stand" : "Sit";
-
-				// Auto-close spellbook when standing up
-				if (wasSitting && !_isSitting && _spellbookUI != null && _spellbookUI.Visible)
-				{
-					_spellbookUI.Visible = false;
-					_pendingMemorizeSpellKey = null;
-					_pendingMemorizeSpellName = null;
-					Log("SYSTEM", "Your spellbook closes as you stand.");
-				}
-
-				// Trigger sit/stand animation on player model
-				if (wasSitting != _isSitting)
-				{
-					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-					if (wm != null) wm.SetPlayerSitting(_isSitting);
 				}
 			}
 
@@ -627,6 +664,7 @@ public partial class MainUI
 						float bMaxDuration = buff.TryGetProperty("maxDuration", out var bMaxDurProp) ? (float)bMaxDurProp.GetDouble() : bDuration;
 						bool bBeneficial = buff.TryGetProperty("beneficial", out var bBenProp) ? bBenProp.GetBoolean() : true;
 						int bMemIcon = buff.TryGetProperty("memIcon", out var bMemProp) ? bMemProp.GetInt32() : 0;
+						int bSpellIcon = buff.TryGetProperty("icon", out var bIconProp) ? bIconProp.GetInt32() : 0;
 
 						_activeTargetBuffs.Add(new ActiveBuff
 						{
@@ -634,7 +672,8 @@ public partial class MainUI
 							DurationMax = bMaxDuration,
 							DurationRemaining = bDuration,
 							IsBeneficial = bBeneficial,
-							MemIcon = bMemIcon
+							MemIcon = bMemIcon,
+							SpellIcon = bSpellIcon
 						});
 					}
 					RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
@@ -1144,12 +1183,16 @@ public partial class MainUI
 						
 						slot.TooltipText = buff.Name;
 						
-						if (iconRect != null && buff.MemIcon > 0)
+						if (iconRect != null && (buff.MemIcon > 0 || buff.SpellIcon > 0))
 						{
 							var iconMgr = IconManager.Instance;
 							if (iconMgr != null)
 							{
-								var tex = iconMgr.GetSpellGem(buff.MemIcon);
+								AtlasTexture tex = null;
+								if (buff.MemIcon > 0)
+									tex = iconMgr.GetSpellGem(buff.MemIcon);
+								if (tex == null && buff.SpellIcon > 0)
+									tex = iconMgr.GetSpellIcon(buff.SpellIcon);
 								if (tex != null)
 								{
 									iconRect.Texture = tex;
@@ -1161,6 +1204,11 @@ public partial class MainUI
 									label.Text = buff.Name.Length > 5 ? buff.Name[..5] : buff.Name;
 									iconRect.Visible = false;
 								}
+							}
+							else
+							{
+								if (label != null) label.Text = buff.Name.Length > 5 ? buff.Name[..5] : buff.Name;
+								iconRect.Visible = false;
 							}
 						}
 						else

@@ -15,6 +15,26 @@ public partial class MainUI : Control
 	private ProgressBar _enduranceBar;
 	private Label _enduranceLabel;
 	private Label _playerNameLabel;
+	private TextureRect _combatStatusIcon;
+	private Texture2D _texRegenCombat;
+	private Texture2D _texRegenCooldown;
+	private Texture2D _texRegenIdle;
+	private Texture2D _texRegenResting;
+
+	private enum CombatRegenIconKind
+	{
+		Combat,
+		Cooldown,
+		/// <summary>Out of combat, rested regen gate active, standing.</summary>
+		Idle,
+		/// <summary>Out of combat, rested regen gate active, sitting (medding).</summary>
+		Resting
+	}
+
+	/// <summary>Last combat / rested-regen flags from STATUS; used with <see cref="_isSitting"/> for regen icon.</summary>
+	private bool _regenStatusInCombat;
+	private bool _regenStatusRestedRegen = true;
+
 	private Button _sitStandBtn;
 	private Button _autoFightBtn;
 	private Button _bagsBtn;
@@ -149,11 +169,21 @@ public partial class MainUI : Control
 	// Track the selected item in the merchant slot
 	private string _merchantSelectedItemId = null;
 	private string _merchantSelectedItemKey = null;
+	private int _merchantSelectedSlotId = -1;
 	private int _merchantSelectedPrice = 0;
 	private int _merchantSelectedBuybackId = -1;
 	private string _merchantSelectedAction = ""; // "SELL", "BUY", "BUY_RECOVER"
 	
 	private string _activeMerchantId = null; // Track open merchant for sell transactions
+	/// <summary>Merchant display name while shop is open — used to refresh the title when coin changes.</summary>
+	private string _merchantOpenNpcName = "";
+
+	private HBoxContainer _merchantQtyRow;
+	private SpinBox _merchantQtySpin;
+	private Button _merchantQtyMaxBtn;
+	private int _merchantUnitPriceCp = 1;
+	private int _merchantSellMaxQty = 1;
+	private int _merchantSellUnitCp = 1;
 
 	// Merchant sort/filter state
 	private struct MerchantItem
@@ -169,6 +199,7 @@ public partial class MainUI : Control
 		public int RecLevel;
 		public string NpcId;
 		public int Icon;
+		public int StackSize;
 	}
 	private List<MerchantItem> _merchantItems = new List<MerchantItem>();
 	private int _merchantPlayerClassBitmask = 65535;
@@ -366,6 +397,8 @@ public partial class MainUI : Control
 		public Panel IconNode;
 		public bool IsBeneficial;
 		public int MemIcon;
+		/// <summary>Classic spell icon id (spellsXX.tga). Used when <see cref="MemIcon"/> is unset.</summary>
+		public int SpellIcon;
 	}
 	private List<ActiveBuff> _activeBuffs = new List<ActiveBuff>();
 	private List<ActiveBuff> _activeSongBuffs = new List<ActiveBuff>();
@@ -621,12 +654,16 @@ public partial class MainUI : Control
 		_merchantSlotRect = _merchantWindow.GetNode<TextureRect>("VBox/SelectionPanel/HBox/SlotRect");
 		_merchantSelectionName = _merchantWindow.GetNode<Label>("VBox/SelectionPanel/HBox/VBox/SelectionName");
 		_merchantSelectionPrice = _merchantWindow.GetNode<Label>("VBox/SelectionPanel/HBox/VBox/SelectionPrice");
+		_merchantQtyRow = _merchantWindow.GetNode<HBoxContainer>("VBox/SelectionPanel/HBox/VBox/QtyRow");
+		_merchantQtySpin = _merchantWindow.GetNode<SpinBox>("VBox/SelectionPanel/HBox/VBox/QtyRow/QtySpin");
+		_merchantQtyMaxBtn = _merchantWindow.GetNode<Button>("VBox/SelectionPanel/HBox/VBox/QtyRow/QtyMaxBtn");
 		_merchantActionBtn = _merchantWindow.GetNode<Button>("VBox/SelectionPanel/HBox/ActionBtn");
 		_merchantSellJunkBtn = _merchantWindow.GetNode<Button>("VBox/BottomRow/SellJunkBtn");
 
 		_merchantWindow.GetNode<Button>("VBox/BottomRow/CloseBtn").Pressed += () => {
 			_merchantWindow.Hide();
 			_activeMerchantId = null;
+			_merchantOpenNpcName = "";
 			// Refresh inventory to hide sell buttons
 			if (!string.IsNullOrEmpty(_client.LastInventoryPayload))
 				OnInventoryUpdated(_client.LastInventoryPayload);
@@ -686,6 +723,23 @@ public partial class MainUI : Control
 		}
 
 		_playerNameLabel = GetNode<Label>("%PlayerName");
+
+		_texRegenCombat = GD.Load<Texture2D>("res://Assets/UI/ClassicUI/CombatIcon.png");
+		_texRegenCooldown = GD.Load<Texture2D>("res://Assets/UI/ClassicUI/CooldownIcon.png");
+		_texRegenIdle = GD.Load<Texture2D>("res://Assets/UI/ClassicUI/IdleIcon.png");
+		_texRegenResting = GD.Load<Texture2D>("res://Assets/UI/ClassicUI/RestedIcon.png");
+		if (_texRegenIdle == null)
+			GD.PushWarning("[UI] IdleIcon.png missing under Assets/UI/ClassicUI/ — Idle regen state will use cooldown art.");
+		_combatStatusIcon = GetNodeOrNull<TextureRect>("%CombatStatusIcon");
+		if (_combatStatusIcon != null)
+		{
+			var iconSize = new Vector2(18, 18);
+			_combatStatusIcon.CustomMinimumSize = iconSize;
+			_combatStatusIcon.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+			_combatStatusIcon.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+			_combatStatusIcon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			UpdateCombatRegenStatusFromServer(false, true);
+		}
 		
 		_sitStandBtn = GetNodeOrNull<Button>("%SitStandBtn");
 		_autoFightBtn = GetNodeOrNull<Button>("%AutoFightBtn");
@@ -1639,6 +1693,7 @@ public partial class MainUI : Control
 			{
 				_client.SendRaw("{\"type\": \"STAND\"}");
 				_isSitting = false;
+				ApplyCombatRegenIcon();
 				if (_sitStandBtn != null) _sitStandBtn.Text = "Sit";
 			}
 		}
@@ -1695,6 +1750,54 @@ public partial class MainUI : Control
 			EQAssetCache.Instance.ClearCache();
 			GetTree().Quit();
 		}
+	}
+
+	private void SetCombatRegenIcon(CombatRegenIconKind kind)
+	{
+		if (_combatStatusIcon == null) return;
+		Texture2D tex = kind switch
+		{
+			CombatRegenIconKind.Combat => _texRegenCombat,
+			CombatRegenIconKind.Cooldown => _texRegenCooldown,
+			CombatRegenIconKind.Idle => _texRegenIdle ?? _texRegenCooldown,
+			CombatRegenIconKind.Resting => _texRegenResting,
+			_ => _texRegenCooldown
+		};
+		if (tex != null)
+			_combatStatusIcon.Texture = tex;
+		_combatStatusIcon.TooltipText = kind switch
+		{
+			CombatRegenIconKind.Combat => "In combat — standard regeneration.",
+			CombatRegenIconKind.Cooldown => "Recovering — post-combat delay before elevated regen.",
+			CombatRegenIconKind.Idle => "Idle — elevated out-of-combat regen (standing).",
+			CombatRegenIconKind.Resting => "Resting — elevated out-of-combat regen (sitting).",
+			_ => ""
+		};
+	}
+
+	/// <summary>
+	/// Stores server <c>inCombat</c> and <c>restedRegen</c>, then updates the status icon (Idle standing vs Resting sitting when regen gate is on).
+	/// </summary>
+	private void UpdateCombatRegenStatusFromServer(bool inCombat, bool restedRegen)
+	{
+		_regenStatusInCombat = inCombat;
+		_regenStatusRestedRegen = restedRegen;
+		ApplyCombatRegenIcon();
+	}
+
+	/// <summary>Re-applies regen icon from cached server flags and current <see cref="_isSitting"/> (e.g. after optimistic stand).</summary>
+	private void ApplyCombatRegenIcon()
+	{
+		if (_combatStatusIcon == null) return;
+
+		if (_regenStatusInCombat)
+			SetCombatRegenIcon(CombatRegenIconKind.Combat);
+		else if (!_regenStatusRestedRegen)
+			SetCombatRegenIcon(CombatRegenIconKind.Cooldown);
+		else if (_isSitting)
+			SetCombatRegenIcon(CombatRegenIconKind.Resting);
+		else
+			SetCombatRegenIcon(CombatRegenIconKind.Idle);
 	}
 
 	public override void _Process(double delta)
@@ -1801,7 +1904,6 @@ public partial class MainUI : Control
 			_client.SendRaw("{\"type\":\"UPDATE_RANGE\",\"outOfRange\":false}");
 		}
 
-		// ── Item Interaction: cursor label follows mouse ──
 		if (_cursorIcon != null && _cursorIcon.Visible) {
 			_cursorIcon.GlobalPosition = GetGlobalMousePosition() + new Vector2(12, 12);
 		}
@@ -2209,6 +2311,7 @@ public partial class MainUI : Control
 								float bMaxDuration = buff.TryGetProperty("maxDuration", out var bMaxDurProp) ? (float)bMaxDurProp.GetDouble() : bDuration;
 								bool bBeneficial = buff.TryGetProperty("beneficial", out var bBenProp) ? bBenProp.GetBoolean() : true;
 								int bMemIcon = buff.TryGetProperty("memIcon", out var bMemProp) ? bMemProp.GetInt32() : 0;
+								int bSpellIcon = buff.TryGetProperty("icon", out var bIconProp) ? bIconProp.GetInt32() : 0;
 
 								_activeTargetBuffs.Add(new ActiveBuff
 								{
@@ -2216,7 +2319,8 @@ public partial class MainUI : Control
 									DurationMax = bMaxDuration,
 									DurationRemaining = bDuration,
 									IsBeneficial = bBeneficial,
-									MemIcon = bMemIcon
+									MemIcon = bMemIcon,
+									SpellIcon = bSpellIcon
 								});
 							}
 							RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);

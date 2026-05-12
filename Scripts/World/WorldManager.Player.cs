@@ -181,6 +181,14 @@ public partial class WorldManager : Node3D
         else
             _playerCapsule.Revive(); // resets _isSitting and returns to idle
     }
+
+    public void SetPlayerLevitating(bool levitating)
+    {
+        _playerLevitating = levitating;
+        if (levitating)
+            _fallTracking = false;
+    }
+
     public void SetVisionStyle(string styleName)
     {
         _currentVisionStyle = styleName;

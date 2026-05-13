@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Reads LanternExtractor's object_instances.txt and places extracted
@@ -15,6 +17,10 @@ public partial class ZoneObjectPlacer : RefCounted
     private readonly Dictionary<string, PackedScene> _objectSceneCache = new();
     /// <summary>Parsed MaterialLists/*.txt per object model — used after Instantiate so animated materials are the live instance materials.</summary>
     private readonly Dictionary<string, Dictionary<string, (string[] frames, float delay)>> _objectAnimDataCache = new();
+
+    /// <summary>PEQ classic <c>IT66</c> style names → RoF2 <c>it10800</c> basenames from <c>Data/classic_tradeskill_mesh_redirect.json</c>.</summary>
+    private static Dictionary<string, List<string>> _classicMeshRedirects;
+    private static bool _classicMeshRedirectsLoaded;
     
     // Graphics Settings
     public bool ShadowsEnabled { get; set; } = true;
@@ -97,6 +103,7 @@ public partial class ZoneObjectPlacer : RefCounted
 
         int placed = 0;
         int skipped = 0;
+        var missingModels = new HashSet<string>();
         var lines = File.ReadAllLines(instancesFile);
         var pendingLights = new System.Collections.Generic.List<(Node3D Instance, string ModelName)>();
 
@@ -124,6 +131,7 @@ public partial class ZoneObjectPlacer : RefCounted
                 var scene = GetObjectScene(modelName, objectsDir);
                 if (scene == null)
                 {
+                    missingModels.Add(modelName);
                     skipped++;
                     continue;
                 }
@@ -164,8 +172,611 @@ public partial class ZoneObjectPlacer : RefCounted
             AddLightIfSource(inst, mdl, container, 0f, 0f, 0f);
 
         GD.Print($"[ObjectPlacer] Placed {placed} objects in '{zoneId}' ({skipped} skipped)");
+        if (missingModels.Count > 0)
+        {
+            var sample = new List<string>(missingModels);
+            sample.Sort(StringComparer.OrdinalIgnoreCase);
+            int show = Math.Min(40, sample.Count);
+            GD.Print($"[ObjectPlacer] Missing GLB under Objects/ ({missingModels.Count} unique): {string.Join(", ", sample.GetRange(0, show))}" +
+                     (sample.Count > show ? $" … (+{sample.Count - show} more)" : ""));
+        }
 
         return container;
+    }
+
+    /// <summary>
+    /// Strips EQEmu/Lantern suffixes (e.g. <c>_ACTORDEF</c>) from mesh ids so they match on-disk GLB names.
+    /// </summary>
+    public static string NormalizeObjectMeshModelName(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return "";
+        string n = modelName.Trim();
+        const string suf = "_ACTORDEF";
+        if (n.Length > suf.Length && n.EndsWith(suf, StringComparison.OrdinalIgnoreCase))
+            n = n[..^suf.Length];
+        return n;
+    }
+
+    /// <summary>Player-facing name for known tradeskill placeables (PEQ classic <c>IT*</c> or RoF2 <c>it*</c> meshes).</summary>
+    public static string GetTradeskillStationDisplayName(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return "World object";
+        string k = NormalizeObjectMeshModelName(modelName).Trim();
+        k = k.Replace(".glb", "", StringComparison.OrdinalIgnoreCase)
+            .Replace(".eqg", "", StringComparison.OrdinalIgnoreCase)
+            .Replace(".s3d", "", StringComparison.OrdinalIgnoreCase)
+            .ToLowerInvariant();
+        return k switch
+        {
+            "it66" or "it10801" => "Forge",
+            "it69" or "it10803" => "Oven",
+            "it70" or "it11340" => "Brew Barrel",
+            "it73" or "it10804" => "Kiln",
+            "it74" or "it10800" => "Pottery Wheel",
+            "it128" or "it10802" => "Loom",
+            _ => FallbackWorldObjectLabel(NormalizeObjectMeshModelName(modelName)),
+        };
+    }
+
+    private static string FallbackWorldObjectLabel(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized)) return "World object";
+        string s = normalized.Replace('_', ' ').Trim();
+        if (s.Length == 0) return "World object";
+        return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(s.ToLowerInvariant());
+    }
+
+    /// <summary>Stable cache key for object GLBs (eqsage uses lowercase <c>itNNNNN.glb</c>).</summary>
+    private static string GetObjectModelCacheKey(string modelName)
+    {
+        string n = NormalizeObjectMeshModelName(modelName);
+        return string.IsNullOrEmpty(n) ? "" : n.ToLowerInvariant();
+    }
+
+    private static void EnsureClassicMeshRedirectsLoaded()
+    {
+        if (_classicMeshRedirectsLoaded) return;
+        _classicMeshRedirectsLoaded = true;
+        _classicMeshRedirects = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        const string path = "Data/classic_tradeskill_mesh_redirect.json";
+        if (!File.Exists(path))
+            return;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.Name.Length > 0 && prop.Name[0] == '_')
+                    continue;
+                string key = NormalizeObjectMeshModelName(prop.Name);
+                if (string.IsNullOrEmpty(key))
+                    continue;
+                var targets = new List<string>();
+                switch (prop.Value.ValueKind)
+                {
+                    case JsonValueKind.String:
+                    {
+                        string s = prop.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) targets.Add(s.Trim());
+                        break;
+                    }
+                    case JsonValueKind.Array:
+                    {
+                        foreach (var el in prop.Value.EnumerateArray())
+                        {
+                            if (el.ValueKind != JsonValueKind.String) continue;
+                            string s = el.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) targets.Add(s.Trim());
+                        }
+                        break;
+                    }
+                    default:
+                        continue;
+                }
+                if (targets.Count > 0)
+                    _classicMeshRedirects[key] = targets;
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[ObjectPlacer] Could not load {path}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Basename candidates for <c>.glb</c> lookup. EQEmu uses <c>IT10804</c>; RoF2 eqsage exports <c>it10804.glb</c>.
+    /// </summary>
+    private static List<string> BuildGlbBaseNameCandidates(string modelName)
+    {
+        EnsureClassicMeshRedirectsLoaded();
+        var list = new List<string>();
+        void Add(string b)
+        {
+            if (string.IsNullOrEmpty(b)) return;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (string.Equals(list[i], b, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            list.Add(b);
+        }
+
+        string n = NormalizeObjectMeshModelName(modelName);
+        if (_classicMeshRedirects != null && _classicMeshRedirects.TryGetValue(n, out var redirected))
+        {
+            foreach (string r in redirected)
+                Add(r);
+        }
+
+        Add(n);
+        // Numeric tradeskill / item meshes: prefer lowercase it* to match eqsage/objects.
+        if (n.Length >= 3 && n.StartsWith("IT", StringComparison.OrdinalIgnoreCase) && char.IsDigit(n[2]))
+            Add("it" + n[2..]);
+        Add(n.ToLowerInvariant());
+        return list;
+    }
+
+    /// <summary>IT66 / IT10804 style meshes (digits only after IT).</summary>
+    private static bool IsTradeskillNumericItMesh(string normalizedName)
+    {
+        if (string.IsNullOrEmpty(normalizedName) || normalizedName.Length < 3) return false;
+        if (!normalizedName.StartsWith("IT", StringComparison.OrdinalIgnoreCase)) return false;
+        for (int i = 2; i < normalizedName.Length; i++)
+        {
+            if (!char.IsDigit(normalizedName[i])) return false;
+        }
+        return true;
+    }
+
+    private static void AddUniqueGlbPath(List<string> list, string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        foreach (string e in list)
+        {
+            if (string.Equals(e, path, StringComparison.OrdinalIgnoreCase)) return;
+        }
+        list.Add(path);
+    }
+
+    private static void CollectGlbPathsFromDir(string dir, string modelName, List<string> outList)
+    {
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+        foreach (string baseName in BuildGlbBaseNameCandidates(modelName))
+        {
+            string p = Path.Combine(dir, $"{baseName}.glb");
+            if (File.Exists(p)) AddUniqueGlbPath(outList, p);
+            p = FindFileCaseInsensitive(dir, $"{baseName}.glb");
+            if (p != null) AddUniqueGlbPath(outList, p);
+        }
+    }
+
+    /// <summary>
+    /// Numeric IT* meshes: prefer RoF2 eqsage folder over zone Objects/ (zone copy can be corrupt or wrong casing).
+    /// </summary>
+    private static List<string> BuildOrderedGlbPaths(string objectsDir, string modelName)
+    {
+        var list = new List<string>();
+        string n = NormalizeObjectMeshModelName(modelName);
+        string sharedObj = EQAssetCache.Instance.GetSharedTradeskillObjectsDir();
+        string sharedRoot = Path.Combine(EQAssetCache.Instance.CacheRoot, "shared", "tradeskill_objects");
+
+        if (IsTradeskillNumericItMesh(n))
+        {
+            CollectGlbPathsFromDir(sharedObj, modelName, list);
+            CollectGlbPathsFromDir(sharedRoot, modelName, list);
+            CollectGlbPathsFromDir(objectsDir, modelName, list);
+        }
+        else
+        {
+            CollectGlbPathsFromDir(objectsDir, modelName, list);
+            CollectGlbPathsFromDir(sharedObj, modelName, list);
+            CollectGlbPathsFromDir(sharedRoot, modelName, list);
+        }
+
+        return list;
+    }
+
+    private static uint GltfChunkType(string tag4)
+    {
+        return (uint)(tag4[0] | (tag4[1] << 8) | (tag4[2] << 16) | (tag4[3] << 24));
+    }
+
+    private static bool TryReadGlbJsonAndBin(byte[] glb, out ReadOnlySpan<byte> jsonUtf8, out ReadOnlySpan<byte> binSpan)
+    {
+        jsonUtf8 = default;
+        binSpan = default;
+        if (glb == null || glb.Length < 20) return false;
+        if (glb[0] != (byte)'g' || glb[1] != (byte)'l' || glb[2] != (byte)'T' || glb[3] != (byte)'F') return false;
+        if (BitConverter.ToUInt32(glb, 4) != 2u) return false;
+        int pos = 12;
+        uint jsonLen = BitConverter.ToUInt32(glb, pos); pos += 4;
+        uint jsonType = BitConverter.ToUInt32(glb, pos); pos += 4;
+        if (jsonType != GltfChunkType("JSON")) return false;
+        if (pos + jsonLen > glb.Length) return false;
+        jsonUtf8 = glb.AsSpan(pos, (int)jsonLen);
+        pos += (int)jsonLen;
+        if (pos + 8 <= glb.Length)
+        {
+            uint binLen = BitConverter.ToUInt32(glb, pos); pos += 4;
+            uint binType = BitConverter.ToUInt32(glb, pos); pos += 4;
+            if (binType == GltfChunkType("BIN\0") && pos + binLen <= glb.Length && binLen > 0)
+                binSpan = glb.AsSpan(pos, (int)binLen);
+        }
+        return true;
+    }
+
+    private static byte[] EncodeGlb2(ReadOnlySpan<byte> jsonUtf8Unpadded, ReadOnlySpan<byte> binSpan)
+    {
+        int jPad = (4 - (jsonUtf8Unpadded.Length % 4)) % 4;
+        int jsonChunkLen = jsonUtf8Unpadded.Length + jPad;
+        int binTotal = binSpan.IsEmpty ? 0 : 8 + binSpan.Length;
+        int total = 12 + 8 + jsonChunkLen + binTotal;
+        var buf = new byte[total];
+        int w = 0;
+        buf[w++] = (byte)'g'; buf[w++] = (byte)'l'; buf[w++] = (byte)'T'; buf[w++] = (byte)'F';
+        BitConverter.TryWriteBytes(buf.AsSpan(w), 2u); w += 4;
+        BitConverter.TryWriteBytes(buf.AsSpan(w), (uint)total); w += 4;
+        BitConverter.TryWriteBytes(buf.AsSpan(w), (uint)jsonChunkLen); w += 4;
+        BitConverter.TryWriteBytes(buf.AsSpan(w), GltfChunkType("JSON")); w += 4;
+        jsonUtf8Unpadded.CopyTo(buf.AsSpan(w)); w += jsonUtf8Unpadded.Length;
+        for (int z = 0; z < jPad; z++) buf[w++] = 0x20;
+        if (!binSpan.IsEmpty)
+        {
+            BitConverter.TryWriteBytes(buf.AsSpan(w), (uint)binSpan.Length); w += 4;
+            BitConverter.TryWriteBytes(buf.AsSpan(w), GltfChunkType("BIN\0")); w += 4;
+            binSpan.CopyTo(buf.AsSpan(w));
+        }
+        return buf;
+    }
+
+    private static bool ImageJsonObjectIsValid(JsonObject o)
+    {
+        if (o["uri"] is JsonValue jv)
+        {
+            try
+            {
+                string s = jv.GetValue<string>();
+                if (!string.IsNullOrEmpty(s)) return true;
+            }
+            catch { /* ignore */ }
+        }
+        if (o["bufferView"] is JsonValue bv)
+        {
+            try
+            {
+                if (bv.TryGetValue<int>(out int idx) && idx >= 0) return true;
+            }
+            catch { /* ignore */ }
+        }
+        return false;
+    }
+
+    private static void StripMaterialTextureRefs(JsonObject mat, ref bool changed)
+    {
+        ReadOnlySpan<string> topKeys = new[]
+        {
+            "normalTexture", "occlusionTexture", "emissiveTexture", "clearcoat", "sheen", "specular",
+            "transmission", "volume", "ior", "anisotropy", "iridescence"
+        };
+        foreach (string k in topKeys)
+        {
+            if (mat.Remove(k)) changed = true;
+        }
+        if (mat["pbrMetallicRoughness"] is JsonObject pbr)
+        {
+            if (pbr.Remove("baseColorTexture")) changed = true;
+            if (pbr.Remove("metallicRoughnessTexture")) changed = true;
+        }
+    }
+
+    private static void StripAllMaterialTextureRefs(JsonObject rootObj, ref bool changed)
+    {
+        if (rootObj["materials"] is not JsonArray mats) return;
+        foreach (JsonNode m in mats)
+        {
+            if (m is JsonObject mo) StripMaterialTextureRefs(mo, ref changed);
+        }
+    }
+
+    private static void ClampTextureSourcesToImages(JsonObject rootObj, int imageCount, ref bool changed)
+    {
+        if (imageCount <= 0 || rootObj["textures"] is not JsonArray texs) return;
+        foreach (JsonNode t in texs)
+        {
+            if (t is not JsonObject to || to["source"] is not JsonValue sv) continue;
+            if (!sv.TryGetValue<int>(out int src)) continue;
+            if (src < 0 || src >= imageCount)
+            {
+                to["source"] = 0;
+                changed = true;
+            }
+        }
+    }
+
+    private static int ReadGltfAccessorCount(JsonObject acc)
+    {
+        if (acc["count"] is JsonValue jv && jv.TryGetValue(out int c)) return c;
+        return 0;
+    }
+
+    private static string GetGltfAccessorType(JsonObject acc)
+    {
+        if (acc["type"] is JsonValue jv)
+        {
+            try
+            {
+                string s = jv.GetValue<string>();
+                if (!string.IsNullOrEmpty(s)) return s;
+            }
+            catch { /* ignore */ }
+        }
+        return "VEC3";
+    }
+
+    private static int GetGltfAccessorComponentType(JsonObject acc)
+    {
+        if (acc["componentType"] is JsonValue jv && jv.TryGetValue(out int ct)) return ct;
+        return 5126;
+    }
+
+    private static int GltfAccessorTypeComponentCount(string type)
+    {
+        return type switch
+        {
+            "SCALAR" => 1,
+            "VEC2" => 2,
+            "VEC3" => 3,
+            "VEC4" => 4,
+            "MAT2" => 4,
+            "MAT3" => 9,
+            "MAT4" => 16,
+            _ => 3,
+        };
+    }
+
+    private static int GltfBytesPerComponentType(int componentType)
+    {
+        return componentType switch
+        {
+            5120 or 5121 => 1,
+            5122 or 5123 => 2,
+            5125 or 5126 => 4,
+            _ => 4,
+        };
+    }
+
+    private static int GltfAccessorElementByteSize(JsonObject acc)
+    {
+        string type = GetGltfAccessorType(acc);
+        int ct = GetGltfAccessorComponentType(acc);
+        int comps = GltfAccessorTypeComponentCount(type);
+        int bpc = GltfBytesPerComponentType(ct);
+        return Math.Max(1, comps * bpc);
+    }
+
+    private static void PadGltfBinListToAlignment(List<byte> bin, int alignment)
+    {
+        if (alignment <= 1) return;
+        while (bin.Count % alignment != 0) bin.Add(0);
+    }
+
+    private static void EnsureRootBuffer0ByteLength(JsonObject rootObj, int byteLength)
+    {
+        if (rootObj["buffers"] is not JsonArray bufs)
+        {
+            rootObj["buffers"] = new JsonArray { new JsonObject { ["byteLength"] = byteLength } };
+            return;
+        }
+        if (bufs.Count == 0)
+        {
+            bufs.Add(new JsonObject { ["byteLength"] = byteLength });
+            return;
+        }
+        if (bufs[0] is JsonObject b0)
+            b0["byteLength"] = byteLength;
+        else
+            bufs.Insert(0, new JsonObject { ["byteLength"] = byteLength });
+    }
+
+    /// <summary>
+    /// Godot rejects accessors with count 0. Append minimal zero-filled BIN data and new bufferViews so counts are 1.
+    /// </summary>
+    private static void FixZeroCountAccessors(JsonObject rootObj, ref byte[] binBytes, ref bool changed)
+    {
+        if (rootObj["accessors"] is not JsonArray accessors) return;
+        var bin = new List<byte>(binBytes != null && binBytes.Length > 0 ? binBytes.Length + 64 : 64);
+        if (binBytes != null && binBytes.Length > 0) bin.AddRange(binBytes);
+
+        JsonArray bvs = rootObj["bufferViews"] as JsonArray;
+        if (bvs == null)
+        {
+            bvs = new JsonArray();
+            rootObj["bufferViews"] = bvs;
+        }
+
+        for (int i = 0; i < accessors.Count; i++)
+        {
+            if (accessors[i] is not JsonObject acc) continue;
+            if (ReadGltfAccessorCount(acc) > 0) continue;
+
+            PadGltfBinListToAlignment(bin, 4);
+            int byteOff = bin.Count;
+            int elemSize = GltfAccessorElementByteSize(acc);
+            for (int z = 0; z < elemSize; z++) bin.Add(0);
+
+            int bvIndex = bvs.Count;
+            bvs.Add(new JsonObject
+            {
+                ["buffer"] = 0,
+                ["byteOffset"] = byteOff,
+                ["byteLength"] = elemSize,
+            });
+
+            acc["bufferView"] = bvIndex;
+            acc["byteOffset"] = 0;
+            acc["count"] = 1;
+            acc.Remove("sparse");
+            acc.Remove("max");
+            acc.Remove("min");
+
+            string ty = GetGltfAccessorType(acc);
+            if (ty == "VEC3")
+            {
+                acc["min"] = new JsonArray { 0, 0, 0 };
+                acc["max"] = new JsonArray { 0, 0, 0 };
+            }
+
+            changed = true;
+        }
+
+        binBytes = bin.ToArray();
+        EnsureRootBuffer0ByteLength(rootObj, binBytes.Length);
+    }
+
+    /// <summary>
+    /// Godot warns when the default <c>scene</c> index is omitted; set <c>scene</c> to 0 if <c>scenes</c> is non-empty.
+    /// </summary>
+    private static void EnsureGltfDefaultSceneIndex(JsonObject rootObj, ref bool changed)
+    {
+        if (rootObj["scenes"] is not JsonArray scenes || scenes.Count == 0)
+            return;
+
+        int current = -1;
+        if (rootObj["scene"] is JsonValue sv && sv.TryGetValue(out int idx))
+            current = idx;
+
+        if (current < 0 || current >= scenes.Count)
+        {
+            rootObj["scene"] = 0;
+            changed = true;
+        }
+    }
+
+    /// <summary>
+    /// Fix Lantern/eqsage glTF JSON (invalid images, skins, bad texture indices) and optionally strip material
+    /// texture links for RoF2 exports that confuse Godot's glTF loader. Returns false only if GLB/JSON cannot be read.
+    /// </summary>
+    private static bool TryMitigateLanternGltf(byte[] glbBytes, bool stripMaterialTextures, out byte[] mitigated)
+    {
+        mitigated = null;
+        if (!TryReadGlbJsonAndBin(glbBytes, out ReadOnlySpan<byte> jsonSpan, out ReadOnlySpan<byte> binSpan)) return false;
+        string jsonStr = Encoding.UTF8.GetString(jsonSpan).TrimEnd('\0', ' ');
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(jsonStr);
+        }
+        catch
+        {
+            return false;
+        }
+        if (root is not JsonObject rootObj) return false;
+
+        byte[] binWorking;
+        if (binSpan.IsEmpty)
+            binWorking = Array.Empty<byte>();
+        else
+        {
+            binWorking = new byte[binSpan.Length];
+            binSpan.CopyTo(binWorking);
+        }
+
+        bool changed = false;
+        const string PngDataUri =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+        if (rootObj.Remove("extensions")) changed = true;
+        if (rootObj.Remove("extensionsUsed")) changed = true;
+        if (rootObj.Remove("extensionsRequired")) changed = true;
+
+        JsonArray images = rootObj["images"] as JsonArray;
+        if (images == null || images.Count == 0)
+        {
+            rootObj["images"] = new JsonArray { new JsonObject { ["uri"] = PngDataUri } };
+            changed = true;
+            images = rootObj["images"] as JsonArray;
+        }
+        else
+        {
+            for (int i = 0; i < images.Count; i++)
+            {
+                JsonNode img = images[i];
+                bool needReplace = img is null || img.GetValueKind() == JsonValueKind.Null;
+                if (!needReplace && img is JsonObject imgObj)
+                    needReplace = !ImageJsonObjectIsValid(imgObj);
+                else if (!needReplace)
+                    needReplace = true;
+                if (!needReplace) continue;
+                images[i] = new JsonObject { ["uri"] = PngDataUri };
+                changed = true;
+            }
+        }
+
+        int imageCount = (rootObj["images"] as JsonArray)?.Count ?? 0;
+        ClampTextureSourcesToImages(rootObj, imageCount, ref changed);
+
+        if (rootObj.Remove("skins")) changed = true;
+
+        if (rootObj["nodes"] is JsonArray nodes)
+        {
+            foreach (JsonNode node in nodes)
+            {
+                if (node is not JsonObject no) continue;
+                if (no.Remove("skin")) changed = true;
+                if (no.Remove("skeleton")) changed = true;
+            }
+        }
+
+        if (rootObj["meshes"] is JsonArray meshes)
+        {
+            foreach (JsonNode mesh in meshes)
+            {
+                if (mesh is not JsonObject mo || mo["primitives"] is not JsonArray prims) continue;
+                foreach (JsonNode prim in prims)
+                {
+                    if (prim is not JsonObject po || po["attributes"] is not JsonObject attrs) continue;
+                    if (attrs.Remove("JOINTS_0")) changed = true;
+                    if (attrs.Remove("WEIGHTS_0")) changed = true;
+                }
+            }
+        }
+
+        FixZeroCountAccessors(rootObj, ref binWorking, ref changed);
+
+        EnsureGltfDefaultSceneIndex(rootObj, ref changed);
+
+        if (stripMaterialTextures)
+        {
+            StripAllMaterialTextureRefs(rootObj, ref changed);
+            // RoF2/Lantern exports often trip Godot's glTF loader on subtle JSON quirks; always re-encode so we never
+            // AppendFromBuffer the raw file for these paths (still one parse pass — no AppendFromFile spam).
+            changed = true;
+        }
+
+        if (!changed)
+            return false;
+        try
+        {
+            string newJson = root.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+            mitigated = EncodeGlb2(Encoding.UTF8.GetBytes(newJson), binWorking);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Single Godot parse pass: avoid AppendFromFile on broken GLBs (each failure spams the debugger).</summary>
+    private static byte[] BuildGlbBufferForImport(byte[] raw, string glbPathForHeuristics)
+    {
+        bool eqsageLike = glbPathForHeuristics.IndexOf("eqsage", StringComparison.OrdinalIgnoreCase) >= 0
+            || glbPathForHeuristics.IndexOf("tradeskill_objects", StringComparison.OrdinalIgnoreCase) >= 0;
+        if (TryMitigateLanternGltf(raw, eqsageLike, out byte[] mitigated))
+            return mitigated;
+        return raw;
     }
 
     /// <summary>
@@ -173,69 +784,102 @@ public partial class ZoneObjectPlacer : RefCounted
     /// </summary>
     public PackedScene GetObjectScene(string modelName, string objectsDir)
     {
-        if (_objectSceneCache.TryGetValue(modelName, out var cached))
+        string cacheKey = GetObjectModelCacheKey(modelName);
+        if (string.IsNullOrEmpty(cacheKey))
+            return null;
+
+        if (_objectSceneCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        string glbPath = Path.Combine(objectsDir, $"{modelName}.glb");
-        if (!File.Exists(glbPath))
+        List<string> orderedPaths = BuildOrderedGlbPaths(objectsDir, modelName);
+        if (orderedPaths.Count == 0)
         {
-            // Try case-insensitive match
-            glbPath = FindFileCaseInsensitive(objectsDir, $"{modelName}.glb");
-            if (glbPath == null)
-            {
-                _objectSceneCache[modelName] = null; // Cache the miss too
-                return null;
-            }
+            _objectSceneCache[cacheKey] = null;
+            return null;
         }
 
         try
         {
-            // Load GLB at runtime using GltfDocument
-            var gltfDoc = new GltfDocument();
-            var gltfState = new GltfState();
-            
-            var err = gltfDoc.AppendFromFile(glbPath, gltfState);
-            if (err != Error.Ok)
+            foreach (string glbPath in orderedPaths)
             {
-                GD.PrintErr($"[ObjectPlacer] Failed to load GLB '{modelName}': {err}");
-                _objectSceneCache[modelName] = null;
-                return null;
+                string importBase = Path.GetDirectoryName(glbPath);
+                if (string.IsNullOrEmpty(importBase))
+                    importBase = objectsDir;
+                string importBaseGodot = importBase.Replace('\\', '/').TrimEnd('/');
+                string glbPathGodot = glbPath.Replace('\\', '/');
+
+                byte[] raw = File.ReadAllBytes(glbPath);
+                byte[] glbForImport = BuildGlbBufferForImport(raw, glbPath);
+                var gltfDoc = new GltfDocument();
+                var gltfState = new GltfState();
+                gltfState.BasePath = importBaseGodot;
+                Error err = gltfDoc.AppendFromBuffer(glbForImport, importBaseGodot, gltfState);
+
+                if (err != Error.Ok)
+                    continue;
+
+                Node scene = gltfDoc.GenerateScene(gltfState);
+                if (scene == null)
+                    continue;
+
+                SanitizeGltfMaterialsMissingTextures(scene);
+                int meshCountFixed = 0;
+                int surfaceCountFixed = 0;
+                WorldManager.BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed);
+
+                bool forceSolid = cacheKey.Contains("step") || cacheKey.Contains("ele") || cacheKey.Contains("ramp") ||
+                                  cacheKey.Contains("plat") || cacheKey.Contains("lift") || cacheKey.Contains("bridge");
+                GenerateCollisionRecursive(scene, scene, forceSolid);
+
+                var packed = new PackedScene();
+                packed.Pack(scene);
+                scene.QueueFree();
+
+                _objectSceneCache[cacheKey] = packed;
+                if (orderedPaths.Count > 1 && !string.Equals(orderedPaths[0], glbPath, StringComparison.OrdinalIgnoreCase))
+                    GD.Print($"[ObjectPlacer] Loaded '{modelName}' from {glbPath} (not first search candidate).");
+
+                return packed;
             }
 
-            var scene = gltfDoc.GenerateScene(gltfState);
-            if (scene == null)
-            {
-                _objectSceneCache[modelName] = null;
-                return null;
-            }
-
-            // Lantern object GLBs are exported with the same negative-scale basis issue as
-            // zones/characters, so flip baked normals once here to make omni/spot lighting
-            // behave consistently across props.
-            int meshCountFixed = 0;
-            int surfaceCountFixed = 0;
-            WorldManager.BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed);
-
-            bool forceSolid = modelName.ToLower().Contains("step") || modelName.ToLower().Contains("ele") || modelName.ToLower().Contains("ramp") || modelName.ToLower().Contains("plat") || modelName.ToLower().Contains("lift") || modelName.ToLower().Contains("bridge");
-            // Generate collision so that objects (e.g. ramps) are solid
-            GenerateCollisionRecursive(scene, scene, forceSolid);
-
-            // Animated materials are registered per Instantiate() — the template scene is Packed then freed;
-            // registering here would target materials that are not used by packed instances (export builds finalize frees reliably).
-
-            // Pack it so we can instantiate multiple copies efficiently
-            var packed = new PackedScene();
-            packed.Pack(scene);
-            scene.QueueFree(); // Free the template node
-
-            _objectSceneCache[modelName] = packed;
-            return packed;
+            string resolved = NormalizeObjectMeshModelName(modelName);
+            GD.PrintErr($"[ObjectPlacer] Failed to load GLB '{modelName}' (resolved '{resolved}'): no usable file among {orderedPaths.Count} path(s). Last tried: {Path.GetFileName(orderedPaths[^1])}.");
+            _objectSceneCache[cacheKey] = null;
+            return null;
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[ObjectPlacer] Error loading '{modelName}': {ex.Message}");
-            _objectSceneCache[modelName] = null;
+            _objectSceneCache[cacheKey] = null;
             return null;
+        }
+    }
+
+    /// <summary>Neutralize StandardMaterials that lost textures during glTF import (exporter quirks).</summary>
+    public static void SanitizeGltfMaterialsOnRoot(Node root) => SanitizeGltfMaterialsMissingTextures(root);
+
+    private static void SanitizeGltfMaterialsMissingTextures(Node root)
+    {
+        foreach (Node node in root.FindChildren("*", nameof(MeshInstance3D), true, false))
+        {
+            if (node is not MeshInstance3D mi || mi.Mesh == null)
+                continue;
+            var mesh = mi.Mesh;
+            int count = mesh.GetSurfaceCount();
+            for (int i = 0; i < count; i++)
+            {
+                Material mat = mi.GetActiveMaterial(i);
+                if (mat is not StandardMaterial3D sm)
+                    continue;
+                if (sm.AlbedoTexture != null || sm.NormalTexture != null || sm.RoughnessTexture != null ||
+                    sm.MetallicTexture != null || sm.AOTexture != null)
+                    continue;
+                var dup = (StandardMaterial3D)sm.Duplicate();
+                dup.AlbedoColor = new Color(0.55f, 0.52f, 0.48f);
+                dup.Roughness = 0.85f;
+                dup.Metallic = 0f;
+                mi.SetSurfaceOverrideMaterial(i, dup);
+            }
         }
     }
 
@@ -244,6 +888,8 @@ public partial class ZoneObjectPlacer : RefCounted
     {
         _objectSceneCache.Clear();
         _objectAnimDataCache.Clear();
+        _classicMeshRedirectsLoaded = false;
+        _classicMeshRedirects = null;
     }
 
     /// <summary>
@@ -260,18 +906,30 @@ public partial class ZoneObjectPlacer : RefCounted
 
     private bool TryGetObjectAnimData(string modelName, string objectsDir, out Dictionary<string, (string[] frames, float delay)> animData)
     {
-        if (_objectAnimDataCache.TryGetValue(modelName, out animData))
+        string cacheKey = GetObjectModelCacheKey(modelName);
+        if (string.IsNullOrEmpty(cacheKey))
+        {
+            animData = null;
+            return false;
+        }
+
+        if (_objectAnimDataCache.TryGetValue(cacheKey, out animData))
             return animData != null && animData.Count > 0;
 
         string matListDir = Path.Combine(objectsDir, "MaterialLists");
-        string matListFile = Path.Combine(matListDir, $"{modelName}.txt");
-        if (!File.Exists(matListFile))
-            matListFile = FindFileCaseInsensitive(matListDir, $"{modelName}.txt");
+        string matListFile = null;
+        foreach (string baseName in BuildGlbBaseNameCandidates(modelName))
+        {
+            matListFile = Path.Combine(matListDir, $"{baseName}.txt");
+            if (File.Exists(matListFile)) break;
+            matListFile = FindFileCaseInsensitive(matListDir, $"{baseName}.txt");
+            if (matListFile != null) break;
+        }
 
         animData = (matListFile != null && File.Exists(matListFile))
             ? ParseMaterialList(matListFile)
             : new Dictionary<string, (string[] frames, float delay)>();
-        _objectAnimDataCache[modelName] = animData;
+        _objectAnimDataCache[cacheKey] = animData;
         return animData.Count > 0;
     }
 

@@ -99,7 +99,7 @@ public partial class DoorEntity : Node3D, ITargetable
                 float angle = InvertState ? -90f : 90f;
                 
                 // Dynamically pick +90 or -90 to swing away from player
-                var wm = GetTree().Root.GetNodeOrNull<WorldManager>("MainScene/WorldManager") ?? GetParent().GetParent() as WorldManager;
+                var wm = WorldManager.ResolveFromDescendant(this);
                 if (wm != null && wm.PlayerPosition != Vector3.Zero)
                 {
                     Basis rotPlus90 = Basis.FromEuler(new Vector3(0, Mathf.Pi / 2f, 0));
@@ -215,7 +215,7 @@ public partial class DoorEntity : Node3D, ITargetable
         {
             if (mouseBtn.ButtonIndex == MouseButton.Left)
             {
-                var wm = GetTree().Root.GetNodeOrNull<WorldManager>("MainScene/WorldManager") ?? GetParent().GetParent() as WorldManager;
+                var wm = WorldManager.ResolveFromDescendant(this);
                 if (wm != null)
                 {
                     wm.SetTarget(this);
@@ -223,7 +223,7 @@ public partial class DoorEntity : Node3D, ITargetable
             }
             else if (mouseBtn.ButtonIndex == MouseButton.Right)
             {
-                var wm = GetTree().Root.GetNodeOrNull<WorldManager>("MainScene/WorldManager") ?? GetParent().GetParent() as WorldManager;
+                var wm = WorldManager.ResolveFromDescendant(this);
                 if (wm != null)
                 {
                     if (wm.CurrentTargetId == this.Name)

@@ -67,6 +67,17 @@ public partial class EQAssetCache : RefCounted
         return $"{GetZonePath(zoneId.ToLower())}/Objects";
     }
 
+    /// <summary>
+    /// Directory of global tradeskill station meshes (<c>IT*</c> <c>.glb</c>): optional path from <c>eq_config.json</c>, else session cache.
+    /// </summary>
+    public string GetSharedTradeskillObjectsDir()
+    {
+        string ext = EQAssetConfig.Instance.GetResolvedTradeskillObjectsDir();
+        if (!string.IsNullOrWhiteSpace(ext) && System.IO.Directory.Exists(ext))
+            return ext.TrimEnd('/', '\\');
+        return $"{_cacheRoot}/shared/tradeskill_objects/Objects";
+    }
+
     /// <summary>Mark a zone as extracted this session.</summary>
     public void MarkZoneExtracted(string zoneId)
     {

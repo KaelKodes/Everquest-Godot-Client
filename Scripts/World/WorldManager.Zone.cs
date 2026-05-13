@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 public partial class WorldManager : Node3D
 {
@@ -171,6 +172,15 @@ public partial class WorldManager : Node3D
             }
         }
         _spawnedDoors.Clear();
+        foreach (var child in _worldObjectsContainer.GetChildren())
+        {
+            if (GodotObject.IsInstanceValid(child))
+            {
+                child.GetParent()?.RemoveChild(child);
+                child.QueueFree();
+            }
+        }
+        _spawnedWorldObjects.Clear();
         _activeEntities.Clear();
         _currentTarget = null; // Clear target on world change
         if (_playerCapsule != null)
@@ -465,6 +475,8 @@ public partial class WorldManager : Node3D
             _zoneObjectsContainer = null;
         }
         _objectPlacer?.ClearCache();
+        _doorSceneLoadWarnedOnce.Clear();
+        _worldObjectSceneLoadWarnedOnce.Clear();
 
         if (_materialAnimator == null)
         {
@@ -534,8 +546,13 @@ public partial class WorldManager : Node3D
         {
             var gltfDoc = new GltfDocument();
             var gltfState = new GltfState();
+            string importBase = Path.GetDirectoryName(absolutePath);
+            string importBaseGodot = (importBase ?? "").Replace('\\', '/').TrimEnd('/');
+            string glbGodot = absolutePath.Replace('\\', '/');
+            if (!string.IsNullOrEmpty(importBaseGodot))
+                gltfState.BasePath = importBaseGodot;
 
-            var err = gltfDoc.AppendFromFile(absolutePath, gltfState);
+            var err = gltfDoc.AppendFromFile(glbGodot, gltfState, 0, importBaseGodot);
             if (err != Error.Ok)
             {
                 GD.PrintErr($"[WORLD] GLTF parse error for cached GLB: {err}");
@@ -548,6 +565,8 @@ public partial class WorldManager : Node3D
                 GD.PrintErr("[WORLD] GLTF generated null scene from cache");
                 return false;
             }
+
+            ZoneObjectPlacer.SanitizeGltfMaterialsOnRoot(scene);
 
             // Lantern bakes a mesh transform of scale=(-0.1,-0.1,-0.1) rot=(180,0,0)
             // which maps local vertices (x,y,z) → (-0.1x, 0.1y, 0.1z).

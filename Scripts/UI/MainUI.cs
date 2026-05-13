@@ -1407,6 +1407,22 @@ public partial class MainUI : Control
 					else
 					{
 						_isSelfTargeted = false;
+						string tid = wm.CurrentTargetId;
+						bool isWorldObjTarget = !string.IsNullOrEmpty(tid) && tid.StartsWith("worldobj_", StringComparison.Ordinal);
+						// Mobs rely on server TARGET_UPDATE. World objects use EntityName; match by id prefix too (Godot signal type quirks).
+						if (isWorldObjTarget || (!string.IsNullOrEmpty(name) && string.Equals(type, "world_object", StringComparison.Ordinal)))
+						{
+							_targetWindow.Visible = true;
+							_targetNameLabel.Text = string.IsNullOrEmpty(name) ? "World object" : name;
+							_targetHpBar.MaxValue = 1;
+							_targetHpBar.Value = 1;
+							_targetHpLabel.Text = "100%";
+							if (_targetsTargetWindow != null)
+								_targetsTargetWindow.Visible = false;
+							_activeTargetBuffs.Clear();
+							if (_targetBuffBar != null)
+								RenderBuffsToContainer(_targetBuffBar, _activeTargetBuffs);
+						}
 						_client.SendRaw($"{{\"type\": \"SET_TARGET\", \"targetId\": \"{wm.CurrentTargetId}\"}}");
 					}
 				}
@@ -2290,11 +2306,22 @@ public partial class MainUI : Control
 						string tType = tgt.TryGetProperty("type", out var tt) && tt.ValueKind != JsonValueKind.Null ? tt.GetString() : "";
 
 						_targetWindow.Visible = true;
-						_targetNameLabel.Text = tType == "mining_node" ? $"{tName} (T{tLevel})" : $"{tName} (Lv {tLevel})";
-						_targetHpBar.MaxValue = tMaxHp;
-						_targetHpBar.Value = Math.Max(0, tHp);
-						double pct = tMaxHp > 0 ? ((double)tHp / tMaxHp * 100) : 100;
-						_targetHpLabel.Text = $"{pct:F0}%";
+						_targetNameLabel.Text = tType == "mining_node"
+							? $"{tName} (T{tLevel})"
+							: (tType == "world_object" ? tName : $"{tName} (Lv {tLevel})");
+						if (tType == "world_object")
+						{
+							_targetHpBar.MaxValue = 1;
+							_targetHpBar.Value = 1;
+							_targetHpLabel.Text = "100%";
+						}
+						else
+						{
+							_targetHpBar.MaxValue = tMaxHp;
+							_targetHpBar.Value = Math.Max(0, tHp);
+							double pct = tMaxHp > 0 ? ((double)tHp / tMaxHp * 100) : 100;
+							_targetHpLabel.Text = $"{pct:F0}%";
+						}
 						
 						// --- Target Buffs ---
 						if (_isSelfTargeted)
@@ -3111,6 +3138,11 @@ public partial class MainUI : Control
 						if (dict.TryGetProperty("doors", out var doorsArray))
 						{
 							wm.ProcessDoors(doorsArray);
+						}
+
+						if (dict.TryGetProperty("worldObjects", out var worldObjectsArray))
+						{
+							wm.ProcessWorldObjects(worldObjectsArray);
 						}
 
 						_loadingBar.Value = 80;

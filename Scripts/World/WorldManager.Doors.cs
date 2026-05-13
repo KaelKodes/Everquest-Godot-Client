@@ -40,9 +40,12 @@ public partial class WorldManager : Node3D
             
             // Get the PackedScene from ZoneObjectPlacer
             var scene = _objectPlacer.GetObjectScene(modelName, objectsDir);
-            if (scene == null) 
+            if (scene == null)
             {
-                GD.PrintErr($"[WORLD] Failed to load door scene: {modelName}");
+                string resolved = ZoneObjectPlacer.NormalizeObjectMeshModelName(modelName);
+                string warnKey = string.IsNullOrEmpty(resolved) ? modelName : resolved.ToLowerInvariant();
+                if (_doorSceneLoadWarnedOnce.Add(warnKey))
+                    GD.PrintErr($"[WORLD] Failed to load door scene: {modelName} (resolved '{resolved}') — missing GLB or glTF import failed; see ObjectPlacer log.");
                 continue;
             }
 

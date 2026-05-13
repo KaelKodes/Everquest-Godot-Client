@@ -21,6 +21,25 @@ public partial class LanternExtractorRunner : RefCounted
     
     private readonly System.Threading.SemaphoreSlim _extractLock = new System.Threading.SemaphoreSlim(1, 1);
 
+    private static bool _warnedTradeskillEqgMissing;
+    private static bool _warnedTradeskillEqgNotLanternExportable;
+    private static bool _loggedTradeskillExternal;
+
+    /// <summary>Clears the session marker so tradeskill resolution re-runs after config changes.</summary>
+    public static void InvalidateTradeskillCacheMarker()
+    {
+        try
+        {
+            string marker = Path.Combine(EQAssetCache.Instance.CacheRoot, "shared", "tradeskill_objects", ".lantern_ok");
+            if (File.Exists(marker))
+                File.Delete(marker);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Lantern] Could not reset tradeskill marker: {ex.Message}");
+        }
+    }
+
     /// <summary>PEQ short_name → on-disk .s3d basename. Keep in sync with <c>LANTERN_ARCHIVE_ALIASES</c> in <c>server/eqemu_db.js</c>.</summary>
     private static readonly System.Collections.Generic.Dictionary<string, string> _zoneAliases = new()
     {
@@ -117,6 +136,7 @@ public partial class LanternExtractorRunner : RefCounted
         if (cache.HasZone(zoneId))
         {
             GD.Print($"[Lantern] Zone '{zoneId}' already cached, skipping extraction.");
+            await TryExtractTradeskillObjectsIfNeeded(cache);
             return true;
         }
 
@@ -206,6 +226,8 @@ public partial class LanternExtractorRunner : RefCounted
 
         GD.Print($"[Lantern] Zone '{zone}' extracted in {sw.Elapsed.TotalSeconds:F1}s");
 
+        await TryExtractTradeskillObjectsIfNeeded(cache);
+
         // Also copy zone music if available
         CopyZoneMusic(zone, config.EQPath);
 
@@ -258,6 +280,7 @@ public partial class LanternExtractorRunner : RefCounted
             }
 
             GD.Print($"[Lantern] Characters extracted in {sw.Elapsed.TotalSeconds:F1}s");
+            await TryExtractTradeskillObjectsIfNeeded(EQAssetCache.Instance);
             return true;
         }
         finally
@@ -267,6 +290,84 @@ public partial class LanternExtractorRunner : RefCounted
     }
 
     // ── Private ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// RoF2 ships crafting stations in <c>tradeskill_objects.eqg</c> (ZON/mod data). LanternExtractor only resolves
+    /// classic <c>.s3d</c> shortnames in <c>EqFileHelper</c>, so it cannot export this archive. Populate GLBs via
+    /// <c>tradeskillObjectsObjectsDir</c> in <c>user://eq_config.json</c> or copy <c>*.glb</c> into
+    /// <c>cache/shared/tradeskill_objects/Objects/</c>.
+    /// </summary>
+    private Task TryExtractTradeskillObjectsIfNeeded(EQAssetCache cache)
+    {
+        if (!EQAssetConfig.Instance.IsConfigured)
+            return Task.CompletedTask;
+
+        const string archiveBase = "tradeskill_objects";
+        string destRoot = Path.Combine(cache.CacheRoot, "shared", archiveBase);
+        string objectsDir = Path.Combine(destRoot, "Objects");
+        string marker = Path.Combine(destRoot, ".lantern_ok");
+
+        var cfg = EQAssetConfig.Instance;
+
+        // Configured folder wins over an old marker (so JSON/UI changes apply without manual marker delete).
+        string resolvedTs = cfg.GetResolvedTradeskillObjectsDir();
+        if (!string.IsNullOrWhiteSpace(resolvedTs) && Directory.Exists(resolvedTs))
+        {
+            Directory.CreateDirectory(destRoot);
+            File.WriteAllText(marker, "external\t" + resolvedTs);
+            if (!_loggedTradeskillExternal)
+            {
+                _loggedTradeskillExternal = true;
+                GD.Print($"[Lantern] Tradeskill props: using configured GLB folder ({resolvedTs}).");
+            }
+            return Task.CompletedTask;
+        }
+
+        if (Directory.Exists(objectsDir))
+        {
+            try
+            {
+                if (Directory.GetFiles(objectsDir, "*.glb", SearchOption.TopDirectoryOnly).Length > 0)
+                {
+                    Directory.CreateDirectory(destRoot);
+                    File.WriteAllText(marker, "cache-objects\t" + DateTime.UtcNow.ToString("o"));
+                    GD.Print($"[Lantern] Tradeskill props: found GLBs under cache ({objectsDir}).");
+                    return Task.CompletedTask;
+                }
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[Lantern] Could not scan tradeskill cache Objects: {ex.Message}");
+            }
+        }
+
+        if (File.Exists(marker))
+            return Task.CompletedTask;
+
+        string eqgPath = cfg.FindEqgPath(archiveBase);
+        if (eqgPath != null)
+        {
+            if (!_warnedTradeskillEqgNotLanternExportable)
+            {
+                _warnedTradeskillEqgNotLanternExportable = true;
+                GD.PrintErr(
+                    "[Lantern] tradeskill_objects.eqg is present but LanternExtractor cannot export this ZON-style archive " +
+                    "(only classic .s3d/.pfs shortnames are resolved). For IT* props, use <EQ>/eqsage/objects, EQ settings, " +
+                    "user://eq_config.json \"tradeskillObjectsObjectsDir\", or copy .glb files into " +
+                    $"'{objectsDir.Replace('\\', '/')}'.");
+            }
+            return Task.CompletedTask;
+        }
+
+        if (!_warnedTradeskillEqgMissing)
+        {
+            _warnedTradeskillEqgMissing = true;
+            GD.PrintErr($"[Lantern] tradeskill_objects.eqg not found under EQ path(s): {cfg.FormatZoneSearchRootsForDiagnostics()}. " +
+                "IT* props need <EQ>/eqsage/objects, a saved tradeskill folder in EQ settings, or tradeskillObjectsObjectsDir in eq_config.json.");
+        }
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Write the settings.txt file that LanternExtractor reads.

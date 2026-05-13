@@ -13,7 +13,11 @@ public partial class WorldManager : Node3D
     private ITargetable _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
     private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
+    private Dictionary<string, Node3D> _spawnedWorldObjects = new Dictionary<string, Node3D>();
+    private readonly HashSet<string> _doorSceneLoadWarnedOnce = new();
+    private readonly HashSet<string> _worldObjectSceneLoadWarnedOnce = new();
     private Node3D _doorsContainer;
+    private Node3D _worldObjectsContainer;
     private MaterialAnimator _materialAnimator;
     private string _currentVisionStyle = "normal";
     private GpuParticles3D _weatherParticles;
@@ -106,6 +110,23 @@ public partial class WorldManager : Node3D
     // Expose the current target ID for the attack system
     public string CurrentTargetId => (_currentTarget != null && GodotObject.IsInstanceValid(_currentTarget as Node)) ? ((Node)_currentTarget).Name : null;
 
+    /// <summary>
+    /// UI and <see cref="_Input"/> use the SubViewport <c>World3D</c> node; legacy scenes may still have <c>MainScene/WorldManager</c>.
+    /// Prefer walking ancestors so doors / world objects call <see cref="SetTarget"/> on the same instance MainUI listens to.
+    /// </summary>
+    public static WorldManager ResolveFromDescendant(Node node)
+    {
+        if (node == null) return null;
+        for (Node n = node; n != null; n = n.GetParent())
+        {
+            if (n is WorldManager wm) return wm;
+        }
+        SceneTree tree = node.GetTree();
+        if (tree?.Root == null) return null;
+        return tree.Root.GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D")
+            ?? tree.Root.GetNodeOrNull<WorldManager>("MainScene/WorldManager");
+    }
+
     // Range constants (in world units)
     public const float MELEE_RANGE = 9.0f;
     public const float BOW_RANGE = 30f;
@@ -156,6 +177,9 @@ public partial class WorldManager : Node3D
         
         _doorsContainer = new Node3D { Name = "Doors" };
         AddChild(_doorsContainer);
+
+        _worldObjectsContainer = new Node3D { Name = "WorldObjects" };
+        AddChild(_worldObjectsContainer);
 
         var oldArm = GetNode<Node3D>("CameraArm");
         _camera = oldArm.GetNode<Camera3D>("Camera3D");
@@ -1114,6 +1138,12 @@ public partial class WorldManager : Node3D
                             door.OnInputEvent(_camera, mouseBtnEvent, Vector3.Zero, Vector3.Zero, 0);
                             break; // Stop propagating once handled
                         }
+						else if (current is WorldObjectEntity worldObj)
+						{
+							if (mouseBtnEvent.ButtonIndex == MouseButton.Left || mouseBtnEvent.ButtonIndex == MouseButton.Right)
+								SetTarget(worldObj);
+							break;
+						}
                         else if (current is EntityCapsule capsule && current != _playerCapsule)
                         {
                             // Trigger target for entity

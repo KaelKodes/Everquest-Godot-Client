@@ -469,7 +469,8 @@ public partial class MainMenu : Control
     }
 
     /// <summary>Shared path row + link/unlink used by the login settings dialog and the mandatory post-server-select gate.</summary>
-    private void AddEverQuestLinkControls(VBoxContainer vbox, Button eqDirButtonForUpdates, Action onLinkStateChanged)
+    /// <param name="fileDialogParent">Parent for folder picker (avoids exclusive-window conflict with this dialog).</param>
+    private void AddEverQuestLinkControls(VBoxContainer vbox, Button eqDirButtonForUpdates, Action onLinkStateChanged, Window fileDialogParent = null)
     {
         var statusLabel = new Label();
         statusLabel.AddThemeFontSizeOverride("font_size", 13);
@@ -521,6 +522,9 @@ public partial class MainMenu : Control
 
                 var (zones, chars, music) = EQAssetConfig.Instance.GetAssetSummary();
                 resultLabel.Text += $"\nFound: {zones} zones, {chars} character sets, {music} music files";
+                string tsDir = EQAssetConfig.Instance.GetResolvedTradeskillObjectsDir();
+                if (!string.IsNullOrEmpty(tsDir))
+                    resultLabel.Text += $"\nTradeskill objects: {tsDir}";
             }
             else
             {
@@ -550,17 +554,120 @@ public partial class MainMenu : Control
         btnRow.AddChild(unlinkBtn);
 
         vbox.AddChild(btnRow);
+
+        var tsHead = new Label();
+        tsHead.Text = "Crafting stations (optional)";
+        tsHead.AddThemeFontSizeOverride("font_size", 12);
+        tsHead.AddThemeColorOverride("font_color", new Color(0.85f, 0.82f, 0.65f, 1f));
+        vbox.AddChild(tsHead);
+
+        var tsHint = new Label();
+        tsHint.Text = "If your client has EQ Sage output, IT*.glb are used automatically from <linked EQ>\\eqsage\\objects. " +
+            "Otherwise set a folder here (Lantern cannot read tradeskill_objects.eqg).";
+        tsHint.AutowrapMode = TextServer.AutowrapMode.Word;
+        tsHint.AddThemeFontSizeOverride("font_size", 11);
+        tsHint.AddThemeColorOverride("font_color", new Color(0.55f, 0.55f, 0.55f, 1f));
+        vbox.AddChild(tsHint);
+
+        var tsRow = new HBoxContainer();
+        tsRow.AddThemeConstantOverride("separation", 6);
+        var tsInput = new LineEdit();
+        tsInput.PlaceholderText = "Browse or paste path…";
+        tsInput.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        tsInput.Text = EQAssetConfig.Instance.TradeskillObjectsObjectsDir;
+        tsInput.AddThemeFontSizeOverride("font_size", 12);
+        tsRow.AddChild(tsInput);
+
+        var tsBrowse = new Button();
+        tsBrowse.Text = "Browse…";
+        tsBrowse.CustomMinimumSize = new Vector2(88, 30);
+        tsBrowse.AddThemeFontSizeOverride("font_size", 12);
+        tsBrowse.Pressed += () =>
+        {
+            var fd = new FileDialog();
+            fd.FileMode = FileDialog.FileModeEnum.OpenDir;
+            fd.Access = FileDialog.AccessEnum.Filesystem;
+            fd.Title = "Folder containing IT*.glb (tradeskill stations)";
+            fd.Exclusive = false;
+            Window host = fileDialogParent ?? GetWindow();
+            host.AddChild(fd);
+            fd.PopupCentered(new Vector2I(880, 620));
+            fd.DirSelected += (dir) =>
+            {
+                tsInput.Text = dir;
+                if (GodotObject.IsInstanceValid(fd))
+                    fd.QueueFree();
+            };
+            fd.Canceled += () =>
+            {
+                if (GodotObject.IsInstanceValid(fd))
+                    fd.QueueFree();
+            };
+        };
+        tsRow.AddChild(tsBrowse);
+        vbox.AddChild(tsRow);
+
+        var tsBtnRow = new HBoxContainer();
+        tsBtnRow.AddThemeConstantOverride("separation", 8);
+
+        var tsResult = new Label();
+        tsResult.AddThemeFontSizeOverride("font_size", 11);
+        tsResult.AutowrapMode = TextServer.AutowrapMode.Word;
+
+        var tsApply = new Button();
+        tsApply.Text = "Apply tradeskill folder";
+        tsApply.CustomMinimumSize = new Vector2(0, 28);
+        tsApply.AddThemeFontSizeOverride("font_size", 12);
+        tsApply.Pressed += () =>
+        {
+            string t = tsInput.Text.Trim();
+            if (string.IsNullOrEmpty(t))
+            {
+                EQAssetConfig.Instance.SetTradeskillObjectsObjectsDir("");
+                tsResult.Text = "Cleared tradeskill folder setting.";
+                tsResult.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f, 1f));
+                return;
+            }
+
+            if (EQAssetConfig.Instance.SetTradeskillObjectsObjectsDir(t))
+            {
+                tsResult.Text = "✓ Saved. IT* props load from this folder.";
+                tsResult.AddThemeColorOverride("font_color", new Color(0.4f, 0.75f, 0.45f, 1f));
+                tsInput.Text = EQAssetConfig.Instance.TradeskillObjectsObjectsDir;
+            }
+            else
+            {
+                tsResult.Text = "✗ Folder not found or invalid.";
+                tsResult.AddThemeColorOverride("font_color", new Color(0.9f, 0.35f, 0.3f, 1f));
+            }
+        };
+        tsBtnRow.AddChild(tsApply);
+
+        var tsClear = new Button();
+        tsClear.Text = "Clear";
+        tsClear.CustomMinimumSize = new Vector2(72, 28);
+        tsClear.AddThemeFontSizeOverride("font_size", 12);
+        tsClear.Pressed += () =>
+        {
+            tsInput.Text = "";
+            EQAssetConfig.Instance.SetTradeskillObjectsObjectsDir("");
+            tsResult.Text = "Cleared tradeskill folder setting.";
+            tsResult.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f, 1f));
+        };
+        tsBtnRow.AddChild(tsClear);
+        vbox.AddChild(tsBtnRow);
+        vbox.AddChild(tsResult);
     }
 
     private void ShowEQSetupDialog()
     {
         var dialog = new AcceptDialog();
         dialog.Title = "EverQuest Directory";
-        dialog.Size = new Vector2I(520, 280);
+        dialog.Size = new Vector2I(540, 460);
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", 10);
-        AddEverQuestLinkControls(vbox, _eqDirButton, null);
+        AddEverQuestLinkControls(vbox, _eqDirButton, null, dialog);
 
         dialog.AddChild(vbox);
         AddChild(dialog);
@@ -573,7 +680,7 @@ public partial class MainMenu : Control
         var win = new Window();
         win.Title = "Link Your EverQuest Copy";
         win.Unresizable = true;
-        win.Size = new Vector2I(580, 460);
+        win.Size = new Vector2I(580, 620);
         win.PopupWindow = true;
         win.Exclusive = true;
 
@@ -604,7 +711,7 @@ public partial class MainMenu : Control
         AddEverQuestLinkControls(vbox, _eqDirButton, () =>
         {
             continueBtn.Disabled = !EQAssetConfig.Instance.IsConfigured;
-        });
+        }, win);
 
         var footer = new HBoxContainer();
         footer.AddThemeConstantOverride("separation", 14);

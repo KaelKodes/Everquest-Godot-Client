@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Persists the player's EQ Live installation path across sessions.
@@ -21,9 +22,67 @@ public partial class EQAssetConfig : RefCounted
     /// <summary>Extra directories scanned for zone *.s3d (e.g. classic dump at D:\EQ while main path is RoF2).</summary>
     private readonly List<string> _zoneSearchPaths = new();
 
+    /// <summary>Optional folder of pre-exported crafting-station <c>*.glb</c> (Lantern cannot convert <c>tradeskill_objects.eqg</c>).</summary>
+    private string _tradeskillObjectsObjectsDir = "";
+
+    /// <summary>When true and no explicit path / <c>eqsage\\objects</c>, use EQ install root for <c>IT*.glb</c>.</summary>
+    private bool _tradeskillObjectsSameAsEqInstall;
+
+    private static bool _loggedTradeskillEqsageAuto;
+
     /// <summary>Whether the EQ path has been configured and validated.</summary>
     public bool IsConfigured => _isValidated;
     private bool _isValidated = false;
+
+    /// <summary>Absolute path to a directory containing <c>IT*.glb</c> when not using <see cref="TradeskillObjectsSameAsEqInstall"/>.</summary>
+    public string TradeskillObjectsObjectsDir => _tradeskillObjectsObjectsDir ?? "";
+
+    /// <summary>Load IT* meshes from the same directory as the linked EQ install.</summary>
+    public bool TradeskillObjectsSameAsEqInstall => _tradeskillObjectsSameAsEqInstall;
+
+    /// <summary>
+    /// Resolves the folder for tradeskill <c>IT*.glb</c> props: explicit saved path, else
+    /// <c>&lt;EQ or zone-search-root&gt;/eqsage/objects</c> when present (EQ Sage exporter), else EQ root if
+    /// <see cref="TradeskillObjectsSameAsEqInstall"/>.
+    /// </summary>
+    public string GetResolvedTradeskillObjectsDir()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_tradeskillObjectsObjectsDir) &&
+                System.IO.Directory.Exists(_tradeskillObjectsObjectsDir))
+                return NormalizeDir(_tradeskillObjectsObjectsDir);
+
+            foreach (var root in GetZoneSearchRoots())
+            {
+                string sage = System.IO.Path.Combine(root, "eqsage", "objects");
+                if (!System.IO.Directory.Exists(sage))
+                    continue;
+                if (!_loggedTradeskillEqsageAuto)
+                {
+                    _loggedTradeskillEqsageAuto = true;
+                    GD.Print($"[EQ Config] Tradeskill GLBs: using EQ Sage path ({sage}).");
+                }
+                return NormalizeDir(sage);
+            }
+
+            if (_tradeskillObjectsSameAsEqInstall && IsConfigured && !string.IsNullOrWhiteSpace(EQPath) &&
+                System.IO.Directory.Exists(EQPath))
+                return NormalizeDir(EQPath);
+
+            return "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static string NormalizeDir(string path)
+    {
+        return System.IO.Path.GetFullPath(path.Trim()).TrimEnd(
+            System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+    }
 
     // Key files that must exist in a valid EQ installation
     private static readonly string[] RequiredFiles = {
@@ -152,8 +211,60 @@ public partial class EQAssetConfig : RefCounted
     {
         EQPath = "";
         _zoneSearchPaths.Clear();
+        _tradeskillObjectsSameAsEqInstall = false;
         Save();
         GD.Print("[EQ Config] EQ path unlinked.");
+    }
+
+    /// <summary>Use the linked EQ directory for <c>IT*.glb</c> tradeskill props (same path as zones).</summary>
+    public void SetTradeskillObjectsSameAsEqInstall(bool same)
+    {
+        _tradeskillObjectsSameAsEqInstall = same;
+        if (same)
+            _tradeskillObjectsObjectsDir = "";
+        LanternExtractorRunner.InvalidateTradeskillCacheMarker();
+        Save();
+        GD.Print(same
+            ? "[EQ Config] Tradeskill GLBs: using EQ install folder."
+            : "[EQ Config] Tradeskill GLBs: separate folder (if set).");
+    }
+
+    /// <summary>
+    /// Optional folder of pre-exported crafting-station <c>IT*.glb</c> files. Empty <paramref name="path"/> clears the setting.
+    /// </summary>
+    public bool SetTradeskillObjectsObjectsDir(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _tradeskillObjectsObjectsDir = "";
+            _tradeskillObjectsSameAsEqInstall = false;
+            LanternExtractorRunner.InvalidateTradeskillCacheMarker();
+            Save();
+            GD.Print("[EQ Config] Tradeskill object GLB folder cleared.");
+            return true;
+        }
+
+        try
+        {
+            string full = System.IO.Path.GetFullPath(path.Trim());
+            if (!System.IO.Directory.Exists(full))
+            {
+                GD.PrintErr($"[EQ Config] Tradeskill GLB folder does not exist: {full}");
+                return false;
+            }
+
+            _tradeskillObjectsSameAsEqInstall = false;
+            _tradeskillObjectsObjectsDir = full;
+            LanternExtractorRunner.InvalidateTradeskillCacheMarker();
+            Save();
+            GD.Print($"[EQ Config] Tradeskill object GLB folder set to: {full}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[EQ Config] Tradeskill GLB folder invalid: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -188,6 +299,38 @@ public partial class EQAssetConfig : RefCounted
             {
                 var hit = SearchZoneS3dUnderRoot(root, name);
                 if (hit != null) return hit;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Locate a data archive (<c>.eqg</c>) such as <c>tradeskill_objects.eqg</c> under the EQ root and <see cref="_zoneSearchPaths"/>.
+    /// </summary>
+    public string FindEqgPath(string baseNameWithoutExtension)
+    {
+        if (!IsConfigured || string.IsNullOrWhiteSpace(baseNameWithoutExtension)) return null;
+        string want = baseNameWithoutExtension.Trim();
+        foreach (var root in GetZoneSearchRoots())
+        {
+            try
+            {
+                foreach (var ext in new[] { ".eqg", ".Eqg", ".EQG" })
+                {
+                    var direct = System.IO.Path.Combine(root, want + ext);
+                    if (System.IO.File.Exists(direct)) return direct;
+                }
+
+                foreach (var path in System.IO.Directory.EnumerateFiles(root, "*.eqg"))
+                {
+                    if (string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), want, StringComparison.OrdinalIgnoreCase))
+                        return path;
+                }
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[EQ Config] FindEqgPath scan error under '{root}': {ex.Message}");
             }
         }
 
@@ -389,12 +532,22 @@ public partial class EQAssetConfig : RefCounted
     {
         try
         {
-            string json;
-            var opts = new JsonSerializerOptions { WriteIndented = true };
+            var root = new JsonObject { ["eqPath"] = EQPath ?? "" };
             if (_zoneSearchPaths.Count > 0)
-                json = JsonSerializer.Serialize(new { eqPath = EQPath, zoneSearchPaths = _zoneSearchPaths.ToArray() }, opts);
-            else
-                json = JsonSerializer.Serialize(new { eqPath = EQPath }, opts);
+            {
+                var arr = new JsonArray();
+                foreach (var z in _zoneSearchPaths)
+                    arr.Add(z);
+                root["zoneSearchPaths"] = arr;
+            }
+
+            if (_tradeskillObjectsSameAsEqInstall)
+                root["tradeskillObjectsSameAsEqInstall"] = true;
+            else if (!string.IsNullOrWhiteSpace(_tradeskillObjectsObjectsDir))
+                root["tradeskillObjectsObjectsDir"] = _tradeskillObjectsObjectsDir.Trim();
+
+            var opts = new JsonSerializerOptions { WriteIndented = true };
+            string json = root.ToJsonString(opts);
 
             using var file = FileAccess.Open(ConfigPath, FileAccess.ModeFlags.Write);
             if (file != null)
@@ -456,6 +609,38 @@ public partial class EQAssetConfig : RefCounted
                 }
                 if (_zoneSearchPaths.Count > 0)
                     GD.Print($"[EQ Config] Extra zone search path(s): {string.Join(", ", _zoneSearchPaths)}");
+            }
+
+            _tradeskillObjectsObjectsDir = "";
+            _tradeskillObjectsSameAsEqInstall = false;
+            if (doc.RootElement.TryGetProperty("tradeskillObjectsSameAsEqInstall", out var tsSame) &&
+                tsSame.ValueKind == JsonValueKind.True)
+            {
+                _tradeskillObjectsSameAsEqInstall = true;
+                GD.Print("[EQ Config] Tradeskill GLBs: same folder as EQ install (saved preference).");
+            }
+            else if (doc.RootElement.TryGetProperty("tradeskillObjectsObjectsDir", out var tsDir) &&
+                tsDir.ValueKind == JsonValueKind.String)
+            {
+                string ts = tsDir.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(ts))
+                {
+                    try
+                    {
+                        string full = System.IO.Path.GetFullPath(ts);
+                        if (System.IO.Directory.Exists(full))
+                        {
+                            _tradeskillObjectsObjectsDir = full;
+                            GD.Print($"[EQ Config] Tradeskill object GLBs directory: {full}");
+                        }
+                        else
+                            GD.PrintErr($"[EQ Config] tradeskillObjectsObjectsDir not found (skipped): {full}");
+                    }
+                    catch (Exception ex)
+                    {
+                        GD.PrintErr($"[EQ Config] tradeskillObjectsObjectsDir invalid: {ex.Message}");
+                    }
+                }
             }
 
             if (resaveEqPath && _isValidated)

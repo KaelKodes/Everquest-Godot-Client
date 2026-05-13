@@ -716,10 +716,16 @@ public partial class MainUI
 			}
 			else
 			{
-				_targetWindow.Visible = false;
-				_targetsTargetWindow.Visible = false;
-				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.SetCombatTarget(null);
+				var wmStatus = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				string localTid = wmStatus?.CurrentTargetId;
+				bool localWorldObject = !string.IsNullOrEmpty(localTid) && localTid.StartsWith("worldobj_", StringComparison.Ordinal);
+				if (wmStatus != null)
+					wmStatus.SetCombatTarget(null);
+				if (!localWorldObject)
+				{
+					_targetWindow.Visible = false;
+					_targetsTargetWindow.Visible = false;
+				}
 			}
 
 			// ── Pet / Companion Status ──

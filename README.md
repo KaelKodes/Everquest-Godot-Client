@@ -7,7 +7,7 @@
 **EQ.gd** is an immersive, atmospheric reimagining of the classic EverQuest experience, built on the Godot engine. This is not just a trip down memory lane; it is a descent into a world where the night is long and the dangers are real.
 
 ### 📜 The Traveler's Code (Warnings)
-- **Bring Your Own Box:** This project **requires a legal EverQuest installation** (preferably RoF2). The engine dynamically extracts models, zones, and secrets directly from your own files at runtime.
+- **Bring Your Own Box:** This project **requires a legal EverQuest installation** (preferably LIVE). The engine dynamically extracts models, zones, and secrets directly from your own files at runtime.
 - **Zero Coinage:** This is a fan project with **zero monetization**. If you wish to support Norrath, please head to [EverQuest.com](https://www.everquest.com) and support the original developers.
 - **WIP:** We are currently in **Phase 1**. Expect bugs, ghosts in the machine, and shifting sands.
 

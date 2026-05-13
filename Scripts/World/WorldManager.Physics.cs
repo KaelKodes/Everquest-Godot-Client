@@ -157,13 +157,17 @@ public partial class WorldManager : Node3D
         {
             if (!_fallTracking)
             {
+                // First airborne frame — snapshot the launch height. We deliberately
+                // do NOT update this on later frames; otherwise a jump's upward arc
+                // would inflate "fall distance" to (apex - landing) instead of the
+                // real (launch - landing), and a flat-ground jump would register as
+                // a ~9-unit fall.
                 _fallTracking = true;
-                _fallPeakY = _playerCapsule.GlobalPosition.Y;
+                _fallStartY = _playerCapsule.GlobalPosition.Y;
                 _fallMaxDownSpeed = 0f;
             }
             else
             {
-                _fallPeakY = Mathf.Max(_fallPeakY, _playerCapsule.GlobalPosition.Y);
                 _fallMaxDownSpeed = Mathf.Max(_fallMaxDownSpeed, Mathf.Max(0f, -_playerCapsule.Velocity.Y));
             }
             return;
@@ -172,14 +176,19 @@ public partial class WorldManager : Node3D
         if (!_fallTracking)
             return;
 
-        float fallDist = _fallPeakY - _playerCapsule.GlobalPosition.Y;
+        // Net descent below launch point. Clamped because jumping up onto a
+        // higher ledge produces a negative raw value.
+        float fallDist = Mathf.Max(0f, _fallStartY - _playerCapsule.GlobalPosition.Y);
         float peakSpeed = _fallMaxDownSpeed;
         _fallTracking = false;
 
         if (_zoneImmunityTimer > 0f)
             return;
 
-        if (fallDist < FallMinHeightReport && peakSpeed < 22f)
+        // Speed threshold sits comfortably above the natural jump impact
+        // velocity (≈30 m/s with jump_velocity=30, gravity=50) so a flat-ground
+        // jump never trips this branch.
+        if (fallDist < FallMinHeightReport && peakSpeed < 36f)
             return;
 
         double nowSec = Time.GetTicksMsec() * 0.001;

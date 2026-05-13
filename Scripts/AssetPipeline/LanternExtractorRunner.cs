@@ -76,6 +76,17 @@ public partial class LanternExtractorRunner : RefCounted
         return z;
     }
 
+    public static int GetZoneIdFromShortName(string shortName)
+    {
+        if (string.IsNullOrWhiteSpace(shortName)) return 0;
+        var sn = shortName.Trim().ToLowerInvariant();
+        foreach (var kvp in s_zoneIdNumberToShort)
+        {
+            if (kvp.Value == sn) return kvp.Key;
+        }
+        return 0; // Fallback
+    }
+
     public LanternExtractorRunner()
     {
         // Locate LanternExtractor — shipped alongside the game.

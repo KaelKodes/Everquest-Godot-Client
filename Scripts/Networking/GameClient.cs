@@ -47,6 +47,10 @@ public partial class GameClient : Node
     [Signal] public delegate void SpellAnimationReceivedEventHandler(Variant data);
     [Signal] public delegate void ScribeScrollReceivedEventHandler(Variant data);
     [Signal] public delegate void MemorizeSpellReceivedEventHandler(Variant data);
+    
+    // Movement Relay Signals
+    [Signal] public delegate void RelayConnectedEventHandler();
+    [Signal] public delegate void RelayDisconnectedEventHandler();
 
     public static GameClient Instance { get; private set; }
     
@@ -59,6 +63,8 @@ public partial class GameClient : Node
     public string LastBuffsPayload { get; private set; }
 
     private WebSocketPeer _socket = new WebSocketPeer();
+    private WebSocketPeer _relaySocket = new WebSocketPeer();
+    private string _relayUrl = "";
     private string _url = "ws://localhost:3005";
     // Host portion of the URL the user picked at Server Select time (e.g.
     // "24.33.88.252" or "127.0.0.1"). All subsequent HANDOFFs (login → world →
@@ -169,11 +175,48 @@ public partial class GameClient : Node
                 }
             }
         }
+
+        // --- Handle Movement Relay ---
+        _relaySocket.Poll();
+        var relayState = _relaySocket.GetReadyState();
+        if (relayState == WebSocketPeer.State.Open)
+        {
+            if (!_relayConnected)
+            {
+                _relayConnected = true;
+                GD.Print("[NET] Movement Relay Connected!");
+                EmitSignal(SignalName.RelayConnected);
+            }
+
+            while (_relaySocket.GetAvailablePacketCount() > 0)
+            {
+                byte[] packet = _relaySocket.GetPacket();
+                string message = Encoding.UTF8.GetString(packet);
+                HandleMessage(message); // Movement messages can be handled by the same logic
+            }
+        }
+        else if (relayState == WebSocketPeer.State.Closed)
+        {
+            if (_relayConnected)
+            {
+                _relayConnected = false;
+                GD.Print("[NET] Movement Relay Closed.");
+                EmitSignal(SignalName.RelayDisconnected);
+                
+                // Try to reconnect if we have a relay URL
+                if (!string.IsNullOrEmpty(_relayUrl))
+                {
+                    GetTree().CreateTimer(5.0).Timeout += () => ConnectToRelay(_relayUrl);
+                }
+            }
+        }
     }
 
     private string _handoffToken = null;
     private bool _isHandoff = false;
     private bool _handoffInProgress = false;
+    private bool _relayConnected = false;
+    public bool IsRelayConnected => _relayConnected;
 
     private void HandleMessage(string message)
     {
@@ -226,6 +269,15 @@ public partial class GameClient : Node
                     {
                         CharacterId = idProp.GetInt32();
                         GD.Print($"[NET] Logged in as Character ID: {CharacterId}");
+                        
+                        // Extract Relay URL if present
+                        if (charProp.TryGetProperty("relayUrl", out var relayProp))
+                        {
+                            string rawUrl = relayProp.GetString();
+                            _relayUrl = RewriteHostForCluster(rawUrl);
+                            GD.Print($"[NET] Found Movement Relay: {_relayUrl}");
+                            ConnectToRelay(_relayUrl);
+                        }
                     }
                     EmitSignal(SignalName.LoginOkReceived, message);
                     EmitSignal(SignalName.CharacterStatusReceived, message);
@@ -436,6 +488,39 @@ public partial class GameClient : Node
     {
         if (_socket.GetReadyState() == WebSocketPeer.State.Open)
             _socket.SendText(json);
+    }
+
+    public void SendRelayRaw(string json)
+    {
+        if (_relaySocket.GetReadyState() == WebSocketPeer.State.Open)
+            _relaySocket.SendText(json);
+    }
+
+    public void ConnectToRelay(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return;
+        
+        if (_relaySocket.GetReadyState() != WebSocketPeer.State.Closed)
+        {
+            _relaySocket.Close();
+        }
+        
+        GD.Print($"[NET] Connecting to Movement Relay: {url}...");
+        _relaySocket.InboundBufferSize = 1 * 1024 * 1024;
+        _relaySocket.OutboundBufferSize = 512 * 1024;
+        Error err = _relaySocket.ConnectToUrl(url);
+        if (err != Error.Ok)
+        {
+            GD.PrintErr($"[NET] Could not connect to relay: {err}");
+        }
+    }
+
+    public void DisconnectFromRelay()
+    {
+        if (_relaySocket.GetReadyState() != WebSocketPeer.State.Closed)
+        {
+            _relaySocket.Close();
+        }
     }
 
     /// <summary>

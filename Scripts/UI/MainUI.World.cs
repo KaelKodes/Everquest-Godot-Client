@@ -492,6 +492,21 @@ public partial class MainUI
 			var root = doc.RootElement;
 			var character = root.GetProperty("character");
 
+			if (character.TryGetProperty("zoneNumericId", out var zoneNumericIdPropStatus))
+			{
+				_currentZoneNumericId = zoneNumericIdPropStatus.GetInt32();
+				GD.Print($"[UI] Status: Zone Numeric ID = {_currentZoneNumericId}");
+			}
+			else if (character.TryGetProperty("zoneId", out var zoneIdPropStatus))
+			{
+				// Fallback to lookup numeric ID if server didn't provide it
+				if (zoneIdPropStatus.ValueKind == JsonValueKind.Number)
+					_currentZoneNumericId = zoneIdPropStatus.GetInt32();
+				else if (zoneIdPropStatus.ValueKind == JsonValueKind.String)
+					_currentZoneNumericId = LanternExtractorRunner.GetZoneIdFromShortName(zoneIdPropStatus.GetString());
+				GD.Print($"[UI] Status: Fallback Zone Numeric ID = {_currentZoneNumericId}");
+			}
+
 			bool isGmFlag = character.TryGetProperty("isGm", out var isGmEl) && isGmEl.ValueKind == JsonValueKind.True;
 			ApplyGmStatusFromServer(isGmFlag);
 
@@ -1019,7 +1034,23 @@ public partial class MainUI
 			// Zone connections â€” rebuild buttons only when zone changes
 			if (character.TryGetProperty("zoneId", out var zoneIdProp))
 			{
-				string zoneId = LanternExtractorRunner.NormalizeZoneId(zoneIdProp.GetString());
+				string zoneId = zoneIdProp.ValueKind == JsonValueKind.String ? LanternExtractorRunner.NormalizeZoneId(zoneIdProp.GetString()) : "";
+				GD.Print($"[UI] Status: Raw ZoneId = {zoneIdProp}, Normalized = {zoneId}");
+
+				if (character.TryGetProperty("zoneNumericId", out var znidProp))
+					_currentZoneNumericId = znidProp.GetInt32();
+				else if (zoneIdProp.ValueKind == JsonValueKind.Number)
+					_currentZoneNumericId = zoneIdProp.GetInt32();
+				else if (!string.IsNullOrEmpty(zoneId))
+					_currentZoneNumericId = LanternExtractorRunner.GetZoneIdFromShortName(zoneId);
+				
+				if (!string.IsNullOrEmpty(zoneId) && _currentZoneId != zoneId)
+				{
+					_currentZoneId = zoneId;
+					GD.Print($"[UI] Zone changed to: {_currentZoneId}");
+					RebuildZoneData(character);
+				}
+
 				if (character.TryGetProperty("zoneArchiveBase", out var zArch) && zArch.ValueKind == JsonValueKind.String)
 				{
 					string zb = zArch.GetString();

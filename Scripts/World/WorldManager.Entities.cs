@@ -13,6 +13,7 @@ public partial class WorldManager : Node3D
             float rawY = ent.TryGetProperty("y", out var yProp) ? (float)yProp.GetDouble() : 0f;
             float rawZ = ent.TryGetProperty("z", out var zProp) ? (float)zProp.GetDouble() : 0f;
             float rawHeading = ent.TryGetProperty("heading", out var hProp) ? (float)hProp.GetDouble() : 0f;
+            long serverTime = ent.TryGetProperty("time", out var tProp) ? tProp.GetInt64() : 0;
 
             float x = -rawX;
             float z = -rawY;
@@ -21,10 +22,21 @@ public partial class WorldManager : Node3D
 
             if (_activeEntities.TryGetValue(id, out Node3D entNode) && entNode is EntityCapsule ec)
             {
+                // Discard late/out-of-order packets to prevent jitter and rubberbanding
+                if (serverTime > 0 && ec.LastServerTime > serverTime)
+                {
+                    return;
+                }
+
                 if (ec.ChaseTarget == null)
                 {
                     ec.TargetYaw = godotYaw;
-                    ec.TargetPosition = new Vector3(x, y, z);
+                    ec.SetTargetPosition(new Vector3(x, y, z), serverTime);
+                }
+
+                if (ent.TryGetProperty("hasLightSource", out var hlProp))
+                {
+                    ec.SetLightSource(hlProp.GetBoolean());
                 }
             }
         }
@@ -138,13 +150,14 @@ public partial class WorldManager : Node3D
                             // Teleport/snap if we are way out of sync
                             ec.GlobalPosition = newPos;
                             ec.TargetPosition = null;
+                            ec.SetTargetPosition(newPos, 0); // Reset DR velocity
                             ec.TargetYaw = godotYaw;
                         }
                         else if (dist > 0.5f)
                         {
                             // Interpolate if we are somewhat out of sync
                             ec.TargetYaw = godotYaw;
-                            ec.TargetPosition = newPos;
+                            ec.SetTargetPosition(newPos, 0);
                         }
                         else
                         {

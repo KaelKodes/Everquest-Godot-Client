@@ -210,7 +210,7 @@ public partial class WorldManager : Node3D
         
         ApplyTimeOfDayVisuals();
     }
-    public void SetPlayerCasting(bool casting)
+    public void SetPlayerCastingAnimation(bool casting)
     {
         if (_playerCapsule == null) return;
         if (casting)

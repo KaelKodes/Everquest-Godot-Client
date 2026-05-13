@@ -239,6 +239,8 @@ public partial class MainUI : Control
 	public static MainUI Instance { get; private set; }
 	private bool _autoFight = false;
 	private bool _isSitting = false;
+	private int _currentZoneNumericId = -1;
+	private double _lastMainServerPosSync = 0;
 	private bool _isSinging = false;
 	private string _lastPlayerEquipVisuals = "";
 	private bool _isSelfTargeted = false;
@@ -500,6 +502,7 @@ public partial class MainUI : Control
 		// ── Connection Recovery ──
 		_client.Connected += OnClientConnected;
 		_client.Disconnected += OnClientDisconnected;
+		_client.RelayConnected += OnRelayConnected;
 		_client.AccountOkReceived += OnAccountOkReceived;
 
 		if (_client.IsSocketConnected)
@@ -1366,10 +1369,21 @@ public partial class MainUI : Control
 		if (wm != null)
 		{
 			wm.PlayerMoved += (x, y, z, heading) => {
-				// Send raw payload to server natively mapping Godot Z to Server Y, negating Godot's axes back to EQ's axes
-				// Godot (-X = East, +Y = Up, -Z = North). EQ (-X = East, +Y = North, +Z = Up).
-				_client.SendRaw($"{{\"type\": \"UPDATE_POS\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"heading\": {heading}}}");
+				HandlePlayerSync(x, y, z, heading);
 			};
+
+			var player = wm.GetPlayerCapsule();
+			if (player != null)
+			{
+				player.LightSourceChanged += (hasLight) => {
+					// Trigger a position sync (effectively a state sync) when light toggles
+					// to ensure it happens immediately even if standing still.
+					var gPos = player.GlobalPosition;
+					float heading = (player.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
+					if (heading < 0) heading += 512.0f;
+					HandlePlayerSync(-gPos.X, -gPos.Z, gPos.Y, heading);
+				};
+			}
 			
 			wm.SneakToggled += (isSneaking) => {
 				_client.SendRaw($"{{\"type\": \"UPDATE_SNEAK\", \"sneaking\": {isSneaking.ToString().ToLower()}}}");
@@ -2076,16 +2090,27 @@ public partial class MainUI : Control
 					GD.Print($"[UI] Received CAST_START: {json}");
 					using var doc = JsonDocument.Parse(json);
 					var root = doc.RootElement;
-					_castingSpellName = root.TryGetProperty("spellName", out var n) ? n.GetString() : "Casting...";
-					_castTimeTotal = root.TryGetProperty("castTime", out var ct) ? GetJsonSingle(ct, 1.5f) : 1.5f;
-					_castTimeElapsed = 0;
-					_isCasting = true;
-					_castBar.Value = 0;
-					_castBarLabel.Text = $"{_castingSpellName} ({_castTimeTotal:F1}s)";
-					_castBarPanel.Show();
-					_castBarPanel.MoveToFront();
+					
+					string casterId = root.TryGetProperty("casterId", out var cp) ? cp.GetString() : "player_self";
+					string selfPlayerId = $"player_{GameClient.Instance.CharacterId}";
+					bool isSelf = casterId == "player_self" || casterId == selfPlayerId;
 
-					// Trigger casting animation on 3D model
+					string spellName = root.TryGetProperty("spellName", out var n) ? n.GetString() : "Casting...";
+					float castTime = root.TryGetProperty("castTime", out var ct) ? GetJsonSingle(ct, 1.5f) : 1.5f;
+
+					if (isSelf)
+					{
+						_castingSpellName = spellName;
+						_castTimeTotal = castTime;
+						_castTimeElapsed = 0;
+						_isCasting = true;
+						_castBar.Value = 0;
+						_castBarLabel.Text = $"{_castingSpellName} ({_castTimeTotal:F1}s)";
+						_castBarPanel.Show();
+						_castBarPanel.MoveToFront();
+					}
+
+					// Trigger casting animation on 3D model (for self or remote)
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
 					if (wm != null) 
 					{
@@ -2098,39 +2123,81 @@ public partial class MainUI : Control
 							_ => 1   // Default
 						};
 						
-						wm.SetPlayerCasting(true);
-						wm.TriggerEntityAction("You", $"cast:{castType}");
+						if (isSelf)
+						{
+   				wm.SetPlayerCastingAnimation(true);
+							wm.TriggerEntityAction("You", $"cast:{castType}");
+						}
+						else
+						{
+							var cap = wm.GetEntityById(casterId);
+							if (cap != null)
+							{
+								cap.IsCasting = true;
+								wm.TriggerEntityActionById(casterId, $"cast:{castType}");
+							}
+						}
 					}
 					break;
 				}
 				case "CAST_COMPLETE":
 				{
-					_isCasting = false;
-					_castBar.Value = 100;
-					_castBarPanel.Hide();
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string casterId = root.TryGetProperty("casterId", out var cp) ? cp.GetString() : "player_self";
+					string selfPlayerId = $"player_{GameClient.Instance.CharacterId}";
+					bool isSelf = casterId == "player_self" || casterId == selfPlayerId;
+
+					if (isSelf)
+					{
+						_isCasting = false;
+						_castBar.Value = 100;
+						_castBarPanel.Hide();
+					}
 
 					// Stop casting animation
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-					if (wm != null) wm.SetPlayerCasting(false);
+					if (wm != null)
+					{
+						if (isSelf)
+  					wm.SetPlayerCastingAnimation(false);
+						else
+							wm.StopEntityCasting(casterId);
+					}
 					break;
 				}
 				case "CAST_INTERRUPTED":
 				{
-					_isCasting = false;
-					_castBarLabel.Text = "Interrupted!";
-					// Flash red briefly then hide
-					var fillStyle = _castBar.GetThemeStylebox("fill") as StyleBoxFlat;
-					if (fillStyle != null) fillStyle.BgColor = new Color(0.9f, 0.2f, 0.2f, 0.9f);
-					// Hide after a short delay
-					GetTree().CreateTimer(0.8).Timeout += () => {
-						_castBarPanel.Hide();
-						// Restore fill color
-						if (fillStyle != null) fillStyle.BgColor = new Color(0.85f, 0.65f, 0.15f, 0.9f);
-					};
+					using var doc = JsonDocument.Parse(json);
+					var root = doc.RootElement;
+					string casterId = root.TryGetProperty("casterId", out var cp) ? cp.GetString() : "player_self";
+					string selfPlayerId = $"player_{GameClient.Instance.CharacterId}";
+					bool isSelf = casterId == "player_self" || casterId == selfPlayerId;
+
+					if (isSelf)
+					{
+						_isCasting = false;
+						_castBarLabel.Text = "Interrupted!";
+						// Flash red briefly then hide
+						var fillStyle = _castBar.GetThemeStylebox("fill") as StyleBoxFlat;
+						if (fillStyle != null) fillStyle.BgColor = new Color(0.9f, 0.2f, 0.2f, 0.9f);
+						// Hide after a short delay
+						GetTree().CreateTimer(0.8).Timeout += () => {
+							_castBarPanel.Hide();
+							// Restore fill color
+							if (fillStyle != null) fillStyle.BgColor = new Color(0.85f, 0.65f, 0.15f, 0.9f);
+						};
+					}
 
 					// Stop casting animation
 					var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-					if (wm != null) wm.SetPlayerCasting(false);
+					if (wm != null)
+					{
+						if (isSelf)
+  					wm.SetPlayerCastingAnimation(false);
+						else
+							wm.StopEntityCasting(casterId);
+					}
 					break;
 				}
 				case "EMOTE":
@@ -3261,6 +3328,53 @@ public partial class MainUI : Control
 		}
 	}
 
+	private void HandlePlayerSync(float x, float y, float z, float heading)
+	{
+		var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+		// Send raw payload to server natively mapping Godot Z to Server Y, negating Godot's axes back to EQ's axes
+		// Godot (-X = East, +Y = Up, -Z = North). EQ (-X = East, +Y = North, +Z = Up).
+		bool hasLight = wm.GetPlayerCapsule()?.HasLightSource ?? false;
+		string payload = $"{{\"type\": \"UPDATE_POS\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"heading\": {heading}, \"hasLightSource\": {hasLight.ToString().ToLower()}}}";
+
+		bool forceMainSync = false;
+		double now = Time.GetTicksMsec() / 1000.0;
+
+		// If this is a "force stop" (zero delta sent from WorldManager), ensure main server gets it too
+		// so our final idle position is consistent for ZONE_STATE backstops.
+		if (x == 0 && y == 0 && z == 0)
+		{
+			forceMainSync = true;
+			// Resolve actual coordinates for the final stop packet
+			if (wm != null)
+			{
+				var gPos = wm.GetPlayerCapsule()?.GlobalPosition ?? Vector3.Zero;
+				x = -gPos.X;
+				y = -gPos.Z;
+				z = gPos.Y;
+				payload = $"{{\"type\": \"UPDATE_POS\", \"x\": {x}, \"y\": {y}, \"z\": {z}, \"heading\": {heading}, \"hasLightSource\": {hasLight.ToString().ToLower()}}}";
+			}
+		}
+
+		if (_client.IsRelayConnected)
+		{
+			_client.SendRelayRaw(payload);
+
+			// Periodically sync to main server even if relay is active (1Hz)
+			// This keeps 'session.char' coordinates warm so ZONE_STATE (sent every 10s)
+			// doesn't rubber-band players back to stale positions.
+			if (forceMainSync || (now - _lastMainServerPosSync) >= 1.0)
+			{
+				_client.SendRaw(payload);
+				_lastMainServerPosSync = now;
+			}
+		}
+		else
+		{
+			_client.SendRaw(payload);
+			_lastMainServerPosSync = now;
+		}
+	}
+
 	private void OnMobMoveReceived(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -3576,6 +3690,15 @@ public partial class MainUI : Control
 	private void OnClientDisconnected()
 	{
 		GD.Print("[MAINUI] Disconnected from server. Waiting for auto-reconnect...");
+	}
+
+	private void OnRelayConnected()
+	{
+		GD.Print("[UI] Connected to Movement Relay. Sending AUTH...");
+		if (_client.CharacterId != -1 && _currentZoneNumericId != -1)
+		{
+			_client.SendRelayRaw($"{{\"type\": \"RELAY_AUTH\", \"charId\": {_client.CharacterId}, \"zoneId\": {_currentZoneNumericId}}}");
+		}
 	}
 
 	private void OnAccountOkReceived(Variant data)

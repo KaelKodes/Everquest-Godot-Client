@@ -9,7 +9,8 @@ public partial class WorldManager : Node3D
     private SpringArm3D _cameraArm;
     private Camera3D _camera;
     private EntityCapsule _playerCapsule;
-    public Vector3 PlayerPosition => _playerCapsule?.GlobalPosition ?? Vector3.Zero;
+   	public Vector3 PlayerPosition => _playerCapsule?.GlobalPosition ?? Vector3.Zero;
+   	public EntityCapsule GetPlayerCapsule() => _playerCapsule;
     private ITargetable _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
     private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
@@ -55,6 +56,19 @@ public partial class WorldManager : Node3D
     private Vector3 _lastSentPos = Vector3.Zero;
     private float _lastSentHeading = 0f;
     private double _posSyncTimer = 0.0;
+    private bool _sentStopPacket = false;
+    // Cadence at which the local player ships UPDATE_POS to the server (and
+    // the server fans it out as MOB_MOVE to every other client in the zone).
+    // EntityCapsule._PhysicsProcess interpolates remote players toward
+    // TargetPosition with `Mathf.Clamp(targetDist * 5f, 2f, 25f)` — that 5×
+    // factor is explicitly tuned for ~5 updates/sec on the receive side.
+    // We previously shipped at 1Hz, so remote entities raced to the next
+    // server point in ~0.5s and then idled for ~0.5s, snapping their walk
+    // anim back to `p01` between every update. Anyone watching the player
+    // saw a body sliding silently across the terrain with no walking
+    // animation. 0.2s matches the receiver's tuning and keeps `l01` looping
+    // continuously while the player is actually moving.
+    private const double POS_SYNC_INTERVAL_SEC = 0.05; // Increased to 20Hz since we now have server-side backpressure handling
     private Node3D _boundariesContainer;
     private bool _isAutoRunning = false;
     public void SetAutoRun(bool val) => _isAutoRunning = val;
@@ -87,7 +101,11 @@ public partial class WorldManager : Node3D
 
     private bool _playerLevitating = false;
     private bool _fallTracking = false;
-    private float _fallPeakY = 0f;
+    // Y coordinate at the moment the player last left the ground. Fall damage is
+    // measured against this (launch height), NOT against the airborne apex —
+    // otherwise a vanilla jump in place looks like a fall equal to the jump
+    // height and trips the damage threshold.
+    private float _fallStartY = 0f;
     private float _fallMaxDownSpeed = 0f;
     private double _lastFallImpactSentAt = -1000.0;
     private const float FallMinHeightReport = 14f;
@@ -380,6 +398,24 @@ public partial class WorldManager : Node3D
             {
                 GD.Print($"[WorldManager] Failed to load light model {modelName} for Tuner.");
             }
+        }
+    }
+
+    public void SetPlayerCasting(bool casting)
+    {
+        if (_playerCapsule != null)
+        {
+            _playerCapsule.IsCasting = casting;
+        }
+    }
+
+    public void StopEntityCasting(string id)
+    {
+        var entity = GetEntityById(id);
+        if (entity != null)
+        {
+            entity.IsCasting = false;
+            entity.StopEmote();
         }
     }
 
@@ -1032,19 +1068,34 @@ public partial class WorldManager : Node3D
         // ── Footstep Sounds ──
         UpdateFootstepSounds(_playerCapsule.Velocity, _playerCapsule.IsOnFloor(), isSprinting, delta);
 
-        // Sync position to server if moved > 0.1 units, throttled to 1 update per second
+        // Sync position to server if moved > 0.1 units. Throttled to
+        // POS_SYNC_INTERVAL_SEC (10Hz) to match the receiver's interpolation
+        // tuning so remote viewers see continuous walk/run animations.
         _posSyncTimer += delta;
-        if (_posSyncTimer >= 1.0)
+        if (_posSyncTimer >= POS_SYNC_INTERVAL_SEC)
         {
             float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
             if (currentHeading < 0) currentHeading += 512.0f;
 
-            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f || Mathf.Abs(currentHeading - _lastSentHeading) > 1.0f)
+            float dist = _playerCapsule.GlobalPosition.DistanceTo(_lastSentPos);
+            float dHeading = Mathf.Abs(currentHeading - _lastSentHeading);
+
+            if (dist > 0.1f || dHeading > 1.0f)
             {
                 _lastSentPos = _playerCapsule.GlobalPosition;
                 _lastSentHeading = currentHeading;
                 // EQ coords: EQ.X = -Godot.X, EQ.Y = -Godot.Z, EQ.Z = Godot.Y (feet)
                 EmitSignal(SignalName.PlayerMoved, -_lastSentPos.X, -_lastSentPos.Z, _lastSentPos.Y, currentHeading);
+                _sentStopPacket = false;
+            }
+            else if (!_sentStopPacket && dist < 0.05f)
+            {
+                // Send one final packet with current position to "force stop" remote dead reckoning.
+                // We send special x=0,y=0,z=0 coordinates as a "force stop" signal for the MainUI router.
+                EmitSignal(SignalName.PlayerMoved, 0, 0, 0, currentHeading);
+                _sentStopPacket = true;
+                _lastSentPos = _playerCapsule.GlobalPosition;
+                _lastSentHeading = currentHeading;
             }
             _posSyncTimer = 0.0;
         }
@@ -1676,17 +1727,31 @@ public partial class WorldManager : Node3D
             _isCrouching);
         UpdateFootstepSounds(_playerCapsule.Velocity, _playerCapsule.IsOnFloor(), false, delta);
 
+        // Same 5Hz cadence as the standard movement path — see comment on
+        // POS_SYNC_INTERVAL_SEC. Fly-mode players still need their motion
+        // broadcast smoothly so spectators get continuous animations.
         _posSyncTimer += delta;
-        if (_posSyncTimer >= 1.0)
+        if (_posSyncTimer >= POS_SYNC_INTERVAL_SEC)
         {
             float currentHeading = (_playerCapsule.Rotation.Y / (Mathf.Pi * 2.0f)) * 512.0f;
             if (currentHeading < 0) currentHeading += 512.0f;
 
-            if (_playerCapsule.GlobalPosition.DistanceTo(_lastSentPos) > 0.1f || Mathf.Abs(currentHeading - _lastSentHeading) > 1.0f)
+            float dist = _playerCapsule.GlobalPosition.DistanceTo(_lastSentPos);
+            float dHeading = Mathf.Abs(currentHeading - _lastSentHeading);
+
+            if (dist > 0.1f || dHeading > 1.0f)
             {
                 _lastSentPos = _playerCapsule.GlobalPosition;
                 _lastSentHeading = currentHeading;
                 EmitSignal(SignalName.PlayerMoved, -_lastSentPos.X, -_lastSentPos.Z, _lastSentPos.Y, currentHeading);
+                _sentStopPacket = false;
+            }
+            else if (!_sentStopPacket && dist < 0.05f)
+            {
+                EmitSignal(SignalName.PlayerMoved, -_playerCapsule.GlobalPosition.X, -_playerCapsule.GlobalPosition.Z, _playerCapsule.GlobalPosition.Y, currentHeading);
+                _sentStopPacket = true;
+                _lastSentPos = _playerCapsule.GlobalPosition;
+                _lastSentHeading = currentHeading;
             }
             _posSyncTimer = 0.0;
         }

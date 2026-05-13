@@ -45,6 +45,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     // Torch / Light Source
     private OmniLight3D _torchLight;
     private bool _hasLightSource = false;
+    public bool HasLightSource => _hasLightSource;
     /// <summary>Pharos A/B only: server <c>lightPharosVariant</c> (0–4+); -1 = default (player / normal mobs).</summary>
     private int _lightPharosVariant = -1;
     private float _torchFlickerTimer = 0f;
@@ -90,6 +91,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     
     // Swimming State
     public bool IsInWater { get; private set; } = false;
+    public bool IsCasting { get; set; } = false;
     public void SetInWater(bool inWater)
     {
         IsInWater = inWater;
@@ -233,10 +235,59 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
     }
 
-    // Chase AI
+    public void SetTargetPosition(Vector3 newPos, long serverTime = 0)
+    {
+        double now = Time.GetTicksMsec() / 1000.0;
+        if (TargetPosition.HasValue)
+        {
+            float dt;
+            if (serverTime > 0 && _lastServerTime > 0)
+            {
+                dt = (float)((serverTime - _lastServerTime) / 1000.0);
+            }
+            else
+            {
+                dt = (float)(now - _lastTargetTime);
+            }
+
+            if (dt > 0.01f)
+            {
+                // Calculate velocity from the last two targets
+                Vector3 vel = (newPos - TargetPosition.Value) / dt;
+                
+                // If the new position is nearly identical to the old one, it's an explicit stop or a heading-only update
+                if ((newPos - TargetPosition.Value).Length() < 0.05f)
+                {
+                    LastMoveVelocity = Vector3.Zero;
+                }
+                // Sanity check velocity (max run speed is ~25)
+                else if (vel.Length() < 40.0f)
+                {
+                    LastMoveVelocity = vel;
+                }
+                else
+                {
+                    LastMoveVelocity = Vector3.Zero;
+                }
+            }
+        }
+        else
+        {
+            LastMoveVelocity = Vector3.Zero;
+        }
+
+        TargetPosition = newPos;
+        _lastTargetTime = now;
+        _lastServerTime = serverTime;
+    }
+    public long LastServerTime => _lastServerTime;
     public Node3D ChaseTarget { get; set; }
     public float? TargetYaw { get; set; }
     public Vector3? TargetPosition { get; set; }
+    public Vector3 LastMoveVelocity { get; private set; } = Vector3.Zero;
+    private Vector3 _lastTargetPos = Vector3.Zero;
+    private double _lastTargetTime = 0;
+    private long _lastServerTime = 0;
     public float ChaseSpeed { get; set; } = 5f;
     public float ChaseStopDistance { get; set; } = 3f; // stop just inside melee range
     public bool IsAggro => ChaseTarget != null;
@@ -518,6 +569,13 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_isDead) return;
         _emoteTimer = 2.0;
         PlayAnimation("p05"); // loot/kneel
+    }
+
+    public void StopEmote()
+    {
+        _emoteTimer = 0;
+        _queuedEmote = null;
+        _currentAnim = null; // Force animation update in next _PhysicsProcess
     }
 
     public void PlayEmote(string emote)
@@ -950,7 +1008,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 }
                 else
                 {
-                    float newRad = Mathf.LerpAngle(currentRad, targetRad, 5f * (float)delta);
+                    float newRad = Mathf.LerpAngle(currentRad, targetRad, 15f * (float)delta); // Increased slerp speed
                     RotationDegrees = new Vector3(0, Mathf.RadToDeg(newRad), 0);
                 }
             }
@@ -964,24 +1022,44 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 Vector2 target2D = new Vector2(targetPos.X, targetPos.Z);
                 float targetDist = current2D.DistanceTo(target2D);
 
-                if (targetDist > 0.1f)
+                if (targetDist > 0.05f) // Tightened threshold
                 {
                     Vector2 dir = (target2D - current2D).Normalized();
                     
-                    // Dynamically scale speed to server tick rate (~5 updates per sec)
-                    // This smooths out stutter-stepping by matching approach speed to arrival distance
-                    float moveSpeed = Mathf.Clamp(targetDist * 5.0f, 2.0f, 25.0f);
+                    // Prediction/Dead Reckoning: If we have a known velocity, use it to inform speed
+                    float baseSpeed = LastMoveVelocity.Length();
+                    float moveSpeed;
+                    
+                    if (baseSpeed > 1.0f)
+                    {
+                        // Match predicted speed, but allow it to accelerate if we're falling behind
+                        // Using a factor of 20.0f to match our 20Hz sync rate.
+                        // Clamp baseSpeed to 35.0f to prevent ArgumentException if server sends a burst
+                        float effectiveMinSpeed = Mathf.Min(baseSpeed, 35.0f);
+                        moveSpeed = Mathf.Clamp(targetDist * 20.0f, effectiveMinSpeed, 35.0f);
+                    }
+                    else
+                    {
+                        // Fallback to distance-based if standing still or first update
+                        moveSpeed = Mathf.Clamp(targetDist * 20.0f, 2.0f, 25.0f);
+                    }
                     
                     velocity.X = dir.X * moveSpeed;
                     velocity.Z = dir.Y * moveSpeed;
 
                     if (_emoteTimer <= 0)
                     {
-                        PlayAnimation("l01"); // walk
+                        if (moveSpeed >= 14.0f)
+                            PlayAnimation("l02"); // run
+                        else
+                            PlayAnimation("l01"); // walk
                     }
                 }
                 else
                 {
+                    // We've arrived at the target position. 
+                    // To prevent overshoot during dead reckoning, we should zero velocity 
+                    // unless we are still expecting to move (which would be handled by a new packet).
                     velocity.X = 0;
                     velocity.Z = 0;
                     TargetPosition = null;
@@ -989,6 +1067,29 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                     {
                         PlayAnimation("p01"); // idle
                     }
+                }
+            }
+            else if (LastMoveVelocity.Length() > 1.0f)
+            {
+                // Continued Dead Reckoning when TargetPosition is null but velocity persists
+                float drSpeed = LastMoveVelocity.Length();
+                velocity.X = LastMoveVelocity.X;
+                velocity.Z = LastMoveVelocity.Z;
+
+                // Prediction damping
+                double now = Time.GetTicksMsec() / 1000.0;
+                float predictionTime = (float)(now - _lastTargetTime);
+                if (predictionTime > 0.15f) {
+                    float damp = Mathf.Max(0, 1.0f - (predictionTime - 0.15f) * 10.0f);
+                    velocity *= damp;
+                }
+                
+                if (_emoteTimer <= 0)
+                {
+                    if (drSpeed >= 14.0f)
+                        PlayAnimation("l02");
+                    else
+                        PlayAnimation("l01");
                 }
             }
             else
@@ -2526,6 +2627,8 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         _torchLight.RotationDegrees = Vector3.Zero;
     }
 
+    [Signal] public delegate void LightSourceChangedEventHandler(bool hasLight);
+
     /// <summary>
     /// Show or hide a warm OmniLight3D on this entity to simulate an
     /// equipped torch, lantern, or lightstone. Called by WorldManager
@@ -2533,12 +2636,15 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     /// </summary>
     public void SetLightSource(bool hasLight)
     {
+        if (hasLight == _hasLightSource) return;
+
         if (!hasLight)
         {
             _hasLightSource = false;
             if (_torchLight != null && GodotObject.IsInstanceValid(_torchLight))
                 _torchLight.Visible = false;
             SetHeldLanternEmissiveLit(false);
+            EmitSignal(SignalName.LightSourceChanged, false);
             return;
         }
 
@@ -2547,6 +2653,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         ApplyTorchLightVariantSettings();
         TryAttachTorchLightToHand();
         SetHeldLanternEmissiveLit(true);
+        EmitSignal(SignalName.LightSourceChanged, true);
     }
 
     /// <summary>Call before the first <see cref="SetLightSource"/> in <see cref="WorldManager.SpawnEntityAt"/> so variant-specific omni settings apply on first attach.</summary>

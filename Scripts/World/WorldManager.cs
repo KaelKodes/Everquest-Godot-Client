@@ -1003,6 +1003,7 @@ public partial class WorldManager : Node3D
                     _isCrouching = false;
                     _isSneaking = false;
                     _playerCapsule.SetSneakState(false, true);
+                    _playerCapsule.SetCrouchState(false);
                     EmitSignal(SignalName.SneakToggled, false);
                     if (_isHiding)
                     {
@@ -1183,6 +1184,9 @@ public partial class WorldManager : Node3D
             if (keyEvent.Keycode == Key.Ctrl && !_dmLanternTuneActive)
             {
                 _isCrouching = !_isCrouching;
+
+                // Shrink/restore the player's physics capsule so low doorways actually clear the head.
+                _playerCapsule.SetCrouchState(_isCrouching);
 
                 // Tie into sneak
                 _isSneaking = _isCrouching;

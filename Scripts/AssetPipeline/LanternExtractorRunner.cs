@@ -78,13 +78,17 @@ public partial class LanternExtractorRunner : RefCounted
 
     public LanternExtractorRunner()
     {
-        // Locate LanternExtractor — shipped alongside the game
-        // Try multiple possible locations
+        // Locate LanternExtractor — shipped alongside the game.
+        // In exported builds it lives next to the exe at <exe_dir>/LanternExtractor/.
+        // In the editor we mirror that layout via <res://>/../LanternExtractor/ so the
+        // dev workspace and the exported build share the same relative shape.
         string appDir = OS.GetExecutablePath().GetBaseDir();
         string[] searchPaths = {
             Path.Combine(appDir, "LanternExtractor"),
             Path.Combine(appDir, "tools", "LanternExtractor"),
-            // Development path
+            // Development path — workspace-root sibling of the Godot project folder
+            Path.Combine(ProjectSettings.GlobalizePath("res://"), "..", "LanternExtractor"),
+            // Legacy development path — kept as a fallback for older checkouts
             Path.Combine(ProjectSettings.GlobalizePath("res://"), "..", "server", "tools", "LanternExtractor"),
         };
 

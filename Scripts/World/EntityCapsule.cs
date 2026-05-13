@@ -77,6 +77,16 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private float _boneRecalcTimer = 0f;
     private float _targetLabelY = 6.8f;
     private float _targetClickY = 3.1f;
+
+    // Stand/Crouch physics capsule sizing — kept in sync with race scale in Setup()
+    // so SetCrouchState() can shrink the capsule without losing the standing values.
+    // Standing values match the defaults applied in _Ready() (Height 4.7, center Y 3.85).
+    private float _standingCapsuleHeight = 4.7f;
+    private float _standingCapsuleCenterY = 3.85f;
+    private bool _crouchPhysicsActive = false;
+    // Crouching collapses the capsule down to this fraction of standing height,
+    // anchored at the bottom — low enough to clear classic EQ doorways.
+    private const float CrouchHeightFactor = 0.55f;
     
     // Swimming State
     public bool IsInWater { get; private set; } = false;
@@ -100,6 +110,8 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 Position = new Vector3(0, 3.85f, 0) // Shifted up to make room for stair ray
             };
             AddChild(col);
+            _standingCapsuleHeight = 4.7f;
+            _standingCapsuleCenterY = 3.85f;
         }
 
         // Separation ray acts as a "spring leg" to glide up stairs seamlessly
@@ -1341,11 +1353,19 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         // Scale physics collision capsule to match race scale (always anchored to ground for gravity)
                         var col = GetNodeOrNull<CollisionShape3D>("Collision");
                         if (col != null) {
-                            col.Position = new Vector3(0, 3.85f * raceScale, 0);
+                            _standingCapsuleHeight = 4.7f * raceScale;
+                            _standingCapsuleCenterY = 3.85f * raceScale;
+                            col.Position = new Vector3(0, _standingCapsuleCenterY, 0);
                             col.Shape = new CapsuleShape3D {
                                 Radius = 1.0f * raceScale,
-                                Height = 4.7f * raceScale
+                                Height = _standingCapsuleHeight
                             };
+                            // Re-apply crouch sizing if the entity was already crouched when the model loaded.
+                            if (_crouchPhysicsActive)
+                            {
+                                _crouchPhysicsActive = false; // Force re-apply against new standing values.
+                                SetCrouchState(true);
+                            }
                         }
 
                         var stairRay = GetNodeOrNull<CollisionShape3D>("StairRay");
@@ -2138,6 +2158,39 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         {
             if (_targetRing != null)
                 _targetRing.Visible = false;
+        }
+    }
+
+    /// <summary>
+    /// Shrink/restore the physics collision capsule for ducking. The capsule keeps its bottom
+    /// anchored at the standing bottom (so the model stays planted on the ground), but the
+    /// top drops by ~45% — letting tall characters fit under low doorways and short ceilings.
+    /// Animation/visual crouching is handled separately in <see cref="UpdateAnimationFromVelocity"/>.
+    /// </summary>
+    public void SetCrouchState(bool isCrouching)
+    {
+        if (_crouchPhysicsActive == isCrouching) return;
+        _crouchPhysicsActive = isCrouching;
+
+        var col = GetNodeOrNull<CollisionShape3D>("Collision");
+        if (col == null) return;
+        var cap = col.Shape as CapsuleShape3D;
+        if (cap == null) return;
+
+        float bottomY = _standingCapsuleCenterY - _standingCapsuleHeight * 0.5f;
+        // Capsule.Height must be at least 2 * Radius (Godot constraint); clamp accordingly.
+        float minHeight = cap.Radius * 2.0f + 0.01f;
+
+        if (isCrouching)
+        {
+            float crouchHeight = Mathf.Max(_standingCapsuleHeight * CrouchHeightFactor, minHeight);
+            cap.Height = crouchHeight;
+            col.Position = new Vector3(col.Position.X, bottomY + crouchHeight * 0.5f, col.Position.Z);
+        }
+        else
+        {
+            cap.Height = _standingCapsuleHeight;
+            col.Position = new Vector3(col.Position.X, _standingCapsuleCenterY, col.Position.Z);
         }
     }
 

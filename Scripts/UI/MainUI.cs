@@ -370,6 +370,15 @@ public partial class MainUI : Control
 	private int _scribeRightLastSlot = -1;
 	private ulong _scribeRightLastMs = 0;
 
+	// Spellbook -> spellbar memorize (server-timed; reuses the scribe progress bar UI).
+	// Flow mirrors scribing: client sends BEGIN_MEMORIZE_SPELL, server validates and ticks
+	// the timer (half of the scribe duration), then completes with MEMORIZE_COMPLETE and a
+	// fresh SPELLBOOK_UPDATE whose gem carries a starting cooldown.
+	private bool _isMemorizing = false;
+	private float _memorizeTimeTotal = 0;
+	private float _memorizeTimeElapsed = 0;
+	private string _memorizingSpellName = "";
+
 	// Options state
 	private bool _showPlayerName = false;
 	private bool _dynamicShadows = true;
@@ -485,6 +494,7 @@ public partial class MainUI : Control
 		_client.DoorStateChanged += OnDoorStateChanged;
 		_client.SpellAnimationReceived += OnSpellAnimationReceived;
 		_client.ScribeScrollReceived += OnScribeScrollReceived;
+		_client.MemorizeSpellReceived += OnMemorizeSpellReceived;
 		_client.MessageReceived += OnGenericMessage;
 
 		// ── Connection Recovery ──
@@ -1002,17 +1012,13 @@ public partial class MainUI : Control
 				{
 					if (_pendingMemorizeSpellKey != null)
 					{
-						if (!_isSitting)
-						{
-							Log("SYSTEM", "You must be sitting to memorize spells.");
-							_pendingMemorizeSpellKey = null;
-							_pendingMemorizeSpellName = null;
-							return;
-						}
-						_client.SendRaw($"{{\"type\":\"MEMORIZE_SPELL\",\"spellKey\":\"{_pendingMemorizeSpellKey}\",\"slot\":{slotIndex}}}");
-						Log("SYSTEM", $"[color=cyan]Memorizing {_pendingMemorizeSpellName} in gem {slotIndex + 1}...[/color]");
+						string keyToMemorize = _pendingMemorizeSpellKey;
+						string nameToMemorize = _pendingMemorizeSpellName;
 						_pendingMemorizeSpellKey = null;
 						_pendingMemorizeSpellName = null;
+						// Server resolves the spell from the key — works for any scribed
+						// spell, including ones not currently on the bar.
+						BeginMemorizeSpellTimed(slotIndex, keyToMemorize, nameToMemorize);
 						return;
 					}
 					OnSpellSlotPressed(slotIndex);
@@ -1746,6 +1752,7 @@ public partial class MainUI : Control
 			_client.CampComplete -= OnCampComplete;
 			_client.SpellAnimationReceived -= OnSpellAnimationReceived;
 			_client.ScribeScrollReceived -= OnScribeScrollReceived;
+			_client.MemorizeSpellReceived -= OnMemorizeSpellReceived;
 			_client.MessageReceived -= OnGenericMessage;
 			_client.Connected -= OnClientConnected;
 			_client.Disconnected -= OnClientDisconnected;
@@ -1868,6 +1875,17 @@ public partial class MainUI : Control
 				_scribeBar.Value = Math.Min(100.0, (_scribeTimeElapsed / _scribeTimeTotal) * 100.0);
 			float rem = Math.Max(0, _scribeTimeTotal - _scribeTimeElapsed);
 			_scribeBarLabel.Text = $"Scribing: {_scribingSpellName} ({rem:F1}s)";
+		}
+		else if (_isMemorizing)
+		{
+			// Reuses the scribe progress bar — scribe and memorize both require sitting
+			// and cannot happen simultaneously. Server-authoritative: MEMORIZE_COMPLETE
+			// or MEMORIZE_CANCELLED clears _isMemorizing.
+			_memorizeTimeElapsed += dt;
+			if (_memorizeTimeTotal > 0)
+				_scribeBar.Value = Math.Min(100.0, (_memorizeTimeElapsed / _memorizeTimeTotal) * 100.0);
+			float rem = Math.Max(0, _memorizeTimeTotal - _memorizeTimeElapsed);
+			_scribeBarLabel.Text = $"Memorizing: {_memorizingSpellName} ({rem:F1}s)";
 		}
 
 		// Tick buff durations
@@ -3284,7 +3302,7 @@ public partial class MainUI : Control
 				_spellbookUI?.ClearScribingStatus();
 				CancelHeldItem();
 				SyncInventorySlotsWithGiveNPC();
-				if (!_isScribing && _scribeBarPanel != null) _scribeBarPanel.Hide();
+				if (!_isScribing && !_isMemorizing && _scribeBarPanel != null) _scribeBarPanel.Hide();
 			}
 			else if (type == "SCRIBE_COMPLETE" || type == "SCRIBE_CANCELLED")
 			{
@@ -3294,12 +3312,55 @@ public partial class MainUI : Control
 				_spellbookUI?.ClearScribingStatus();
 				CancelHeldItem();
 				SyncInventorySlotsWithGiveNPC();
-				if (_scribeBarPanel != null) _scribeBarPanel.Hide();
+				// Keep the bar visible if a memorize timer is also using it.
+				if (!_isMemorizing && _scribeBarPanel != null) _scribeBarPanel.Hide();
 			}
 		}
 		catch (Exception ex)
 		{
 			GD.PrintErr($"[UI] OnScribeScrollReceived error: {ex.Message}");
+		}
+	}
+
+	private void OnMemorizeSpellReceived(Variant data)
+	{
+		if (!IsInstanceValid(this)) return;
+		try
+		{
+			using var doc = System.Text.Json.JsonDocument.Parse(data.ToString());
+			var root = doc.RootElement;
+			string type = root.GetProperty("type").GetString();
+			if (type == "MEMORIZE_STARTED")
+			{
+				_memorizingSpellName = root.TryGetProperty("spellName", out var sn) ? sn.GetString() : "Spell";
+				int durationMs = root.TryGetProperty("durationMs", out var dm) ? dm.GetInt32() : 2500;
+				_memorizeTimeTotal = durationMs / 1000f;
+				_memorizeTimeElapsed = 0;
+				_isMemorizing = true;
+				if (_scribeBar != null) _scribeBar.Value = 0;
+				if (_scribeBarPanel != null) _scribeBarPanel.Show();
+			}
+			else if (type == "MEMORIZE_REJECTED")
+			{
+				_isMemorizing = false;
+				_memorizeTimeTotal = 0;
+				_memorizeTimeElapsed = 0;
+				_memorizingSpellName = "";
+				// Keep the bar visible if a scribe is still in progress.
+				if (!_isScribing && _scribeBarPanel != null) _scribeBarPanel.Hide();
+			}
+			else if (type == "MEMORIZE_COMPLETE" || type == "MEMORIZE_CANCELLED")
+			{
+				_isMemorizing = false;
+				_memorizeTimeTotal = 0;
+				_memorizeTimeElapsed = 0;
+				_memorizingSpellName = "";
+				if (!_isScribing && _scribeBarPanel != null) _scribeBarPanel.Hide();
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[UI] OnMemorizeSpellReceived error: {ex.Message}");
 		}
 	}
 

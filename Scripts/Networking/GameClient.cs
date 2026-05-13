@@ -46,6 +46,7 @@ public partial class GameClient : Node
     [Signal] public delegate void DoorStateChangedEventHandler(Variant data);
     [Signal] public delegate void SpellAnimationReceivedEventHandler(Variant data);
     [Signal] public delegate void ScribeScrollReceivedEventHandler(Variant data);
+    [Signal] public delegate void MemorizeSpellReceivedEventHandler(Variant data);
 
     public static GameClient Instance { get; private set; }
     
@@ -338,6 +339,12 @@ public partial class GameClient : Node
                 case "SCRIBE_CANCELLED":
                 case "SCRIBE_REJECTED":
                     EmitSignal(SignalName.ScribeScrollReceived, message);
+                    break;
+                case "MEMORIZE_STARTED":
+                case "MEMORIZE_COMPLETE":
+                case "MEMORIZE_CANCELLED":
+                case "MEMORIZE_REJECTED":
+                    EmitSignal(SignalName.MemorizeSpellReceived, message);
                     break;
                 case "TELEPORT":
                 {

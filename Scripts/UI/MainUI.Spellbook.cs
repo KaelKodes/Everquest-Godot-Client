@@ -72,7 +72,10 @@ public partial class MainUI
 			popup.IdPressed += (id) =>
 			{
 				if (id >= 0 && id < _knownSpells.Count)
-					MemorizeSpellToSlot(slotIndex, _knownSpells[(int)id]);
+				{
+					var picked = _knownSpells[(int)id];
+					BeginMemorizeSpellTimed(slotIndex, picked.SpellKey, picked.Name);
+				}
 				popup.QueueFree();
 			};
 		}
@@ -96,7 +99,10 @@ public partial class MainUI
 				subMenu.IdPressed += (id) =>
 				{
 					if (id >= 0 && id < capturedList.Count)
-						MemorizeSpellToSlot(slotIndex, capturedList[(int)id]);
+					{
+						var picked = capturedList[(int)id];
+						BeginMemorizeSpellTimed(slotIndex, picked.SpellKey, picked.Name);
+					}
 					popup.QueueFree();
 				};
 
@@ -273,49 +279,34 @@ public partial class MainUI
 		dialog.PopupCentered();
 	}
 
-	private void MemorizeSpellToSlot(int slotIndex, KnownSpell sp)
+	/// <summary>
+	/// Kick off a server-timed memorize. Works for any scribed spell — even ones that
+	/// aren't currently on the spellbar — because the server resolves everything else
+	/// (definition, cast time, duration, cooldown) from the spellKey.
+	/// </summary>
+	private void BeginMemorizeSpellTimed(int slotIndex, string spellKey, string spellName)
 	{
-		_client.SendRaw($"{{\"type\": \"MEMORIZE_SPELL\", \"spellKey\": \"{sp.SpellKey}\", \"slot\": {slotIndex}}}");
+		if (string.IsNullOrEmpty(spellKey)) return;
+		if (slotIndex < 0 || slotIndex >= 8) return;
 
-		// Optimistic UI update
-		_spells[slotIndex] = new MemorizedSpell
+		if (_isMemorizing)
 		{
-			SpellId = sp.SpellId,
-			Name = sp.Name,
-			ManaCost = sp.ManaCost,
-			CastTime = sp.CastTime,
-			CooldownRemaining = 0,
-			Description = sp.Description,
-			MemIcon = sp.MemIcon
-		};
-
-		var slotBtn = _spellSlotButtons[slotIndex];
-		slotBtn.Text = "";
-		string descTip = !string.IsNullOrEmpty(sp.Description) ? $"\n{sp.Description}" : "";
-		slotBtn.TooltipText = $"{sp.Name} [{sp.ManaCost}m] Cast: {sp.CastTime:F1}s{descTip}";
-		slotBtn.Disabled = _currentMana < sp.ManaCost;
-
-		_spellSlotLabels[slotIndex].Text = sp.Name;
-		_spellSlotLabels[slotIndex].AddThemeColorOverride("font_color", new Color(0.75f, 0.85f, 1.0f));
-
-		var iconMgr = IconManager.Instance;
-		if (iconMgr != null) {
-			// GD.Print($"[SPELLBOOK DEBUG] Rendering {sp.Name} with memIcon: {sp.MemIcon}");
-			var icon = iconMgr.GetSpellGem(sp.MemIcon);
-			if (icon != null) {
-				slotBtn.Icon = icon;
-				slotBtn.ExpandIcon = true;
-			} else {
-				var atlas = new AtlasTexture();
-				atlas.Atlas = _spellGemTexture;
-				atlas.Region = GetSpellIconRect(sp.Name);
-				slotBtn.Icon = atlas;
-				slotBtn.ExpandIcon = false;
-			}
+			Log("SYSTEM", "You are already memorizing a spell.");
+			return;
 		}
-		slotBtn.IconAlignment = HorizontalAlignment.Right;
+		if (_isCasting)
+		{
+			Log("SYSTEM", "You cannot memorize while casting.");
+			return;
+		}
+		if (!_isSitting)
+		{
+			Log("SYSTEM", "You must be sitting to memorize spells.");
+			return;
+		}
 
-		Log("SYSTEM", $"[color=cyan]Memorizing {sp.Name} in gem {slotIndex + 1}...[/color]");
+		string safeKey = spellKey.Replace("\\", "\\\\").Replace("\"", "\\\"");
+		_client.SendRaw($"{{\"type\":\"BEGIN_MEMORIZE_SPELL\",\"spellKey\":\"{safeKey}\",\"slot\":{slotIndex}}}");
 	}
 
 	private string FormatEffectCategory(string effect)
@@ -348,6 +339,16 @@ public partial class MainUI
 			var root = doc.RootElement;
 
 			if (!root.TryGetProperty("spells", out var spells)) return;
+
+			// Snapshot existing cooldowns by SpellId so we can preserve them across a
+			// server refresh (e.g., the SPELLBOOK_UPDATE that immediately follows a
+			// MEMORIZE_SPELL must not wipe the freshly-applied "just memorized" cooldown).
+			var preservedCooldowns = new Dictionary<int, float>();
+			for (int i = 0; i < _spells.Length; i++)
+			{
+				if (_spells[i].SpellId > 0 && _spells[i].CooldownRemaining > 0f)
+					preservedCooldowns[_spells[i].SpellId] = _spells[i].CooldownRemaining;
+			}
 
 			// Reset all slots
 			for (int i = 0; i < 8; i++)
@@ -397,13 +398,25 @@ public partial class MainUI
 
 				if (slot < 0 || slot >= 8) continue;
 
+				// Server is authoritative for cooldowns when it sends one. If the field is
+				// absent (older payload), preserve whatever the client was already ticking.
+				float cooldown = 0f;
+				if (spell.TryGetProperty("cooldownRemaining", out var cdProp) && cdProp.ValueKind == JsonValueKind.Number)
+				{
+					cooldown = (float)cdProp.GetDouble();
+				}
+				else if (preservedCooldowns.TryGetValue(spellId, out float kept))
+				{
+					cooldown = kept;
+				}
+
 				_spells[slot] = new MemorizedSpell
 				{
 					SpellId = spellId,
 					Name = name,
 					ManaCost = manaCost,
 					CastTime = castTime,
-					CooldownRemaining = 0,
+					CooldownRemaining = cooldown,
 					Description = description,
 					MemIcon = memIcon,
 					Icon = iconId

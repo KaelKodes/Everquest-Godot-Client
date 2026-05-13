@@ -17,15 +17,18 @@ public partial class UISoundPlayer : Node
     {
         _instance = this;
 
+        // MainUI can initialize before WorldManager; create buses so Bus = "SFX" is valid.
+        ZoneMusicPlayer.EnsureAudioBuses();
+
         _player = new AudioStreamPlayer();
         _player.Name = "UISfx1";
-        _player.Bus = "Master";
+        _player.Bus = "SFX";
         _player.VolumeDb = -6f; // Slightly below full to avoid clipping
         AddChild(_player);
 
         _secondaryPlayer = new AudioStreamPlayer();
         _secondaryPlayer.Name = "UISfx2";
-        _secondaryPlayer.Bus = "Master";
+        _secondaryPlayer.Bus = "SFX";
         _secondaryPlayer.VolumeDb = -6f;
         AddChild(_secondaryPlayer);
     }
@@ -44,6 +47,23 @@ public partial class UISoundPlayer : Node
         player.VolumeDb = volumeDb;
         player.Stream = stream;
         player.Play();
+    }
+
+    /// <summary>Play the first available file from <paramref name="soundFiles"/> (EQ <c>sounds/</c> names).</summary>
+    public void PlaySoundFirstAvailable(float volumeDb, params string[] soundFiles)
+    {
+        if (soundFiles == null || soundFiles.Length == 0) return;
+        foreach (string name in soundFiles)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var stream = EQAssetCache.Instance.GetSound(name.Trim());
+            if (stream == null) continue;
+            var player = _player.Playing ? _secondaryPlayer : _player;
+            player.VolumeDb = volumeDb;
+            player.Stream = stream;
+            player.Play();
+            return;
+        }
     }
 
     // ── Convenience Methods ─────────────────────────────────────
@@ -76,6 +96,42 @@ public partial class UISoundPlayer : Node
     public void PlayOpen()
     {
         PlaySound("cst_opn.wav", -6f);
+    }
+
+    /// <summary>Inventory / bank bag window open (classic UI).</summary>
+    public void PlayBagOpen()
+    {
+        PlaySoundFirstAvailable(-5f, "wind_opn.wav", "windowopen.wav", "invopen.wav", "gen_open.wav", "cst_opn.wav");
+    }
+
+    /// <summary>Inventory / bank bag window close.</summary>
+    public void PlayBagClose()
+    {
+        PlaySoundFirstAvailable(-5f, "wind_cls.wav", "windowclose.wav", "invclose.wav", "gen_close.wav", "cst_cls.wav");
+    }
+
+    /// <summary>Picking up a normal item onto the cursor.</summary>
+    public void PlayItemPickUp()
+    {
+        PlaySoundFirstAvailable(-6f, "gen_pickup.wav", "pickup.wav", "item_pickup.wav", "btn_flp.wav");
+    }
+
+    /// <summary>Dropping a held item into a slot (or swap).</summary>
+    public void PlayItemPutDown()
+    {
+        PlaySoundFirstAvailable(-6f, "gen_drop.wav", "putdown.wav", "item_drop.wav", "btn_flp.wav");
+    }
+
+    /// <summary>Picking up coin currency.</summary>
+    public void PlayCoinPickUp()
+    {
+        PlaySoundFirstAvailable(-4f, "coins.wav", "coin.wav", "money.wav", "gen_pickup.wav");
+    }
+
+    /// <summary>Dropping coin into a slot.</summary>
+    public void PlayCoinPutDown()
+    {
+        PlaySoundFirstAvailable(-4f, "dropcoins.wav", "coins.wav", "coin.wav", "gen_drop.wav");
     }
 
     // ── Weapon Impact Sounds (2D fallback for when entity is out of range) ──

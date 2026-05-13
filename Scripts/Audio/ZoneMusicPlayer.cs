@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 /// <summary>
@@ -37,6 +38,8 @@ public partial class ZoneMusicPlayer : Node
 
     public override void _Ready()
     {
+        EnsureAudioBuses();
+
         _currentPlayer = new AudioStreamPlayer();
         _currentPlayer.Name = "MusicCurrent";
         _currentPlayer.Bus = "Music"; // Route to Music bus if it exists
@@ -50,14 +53,41 @@ public partial class ZoneMusicPlayer : Node
 
         _ambiencePlayer = new AudioStreamPlayer();
         _ambiencePlayer.Name = "AmbienceCurrent";
-        _ambiencePlayer.Bus = "SFX";
+        _ambiencePlayer.Bus = "Ambience";
         _ambiencePlayer.VolumeDb = LinearToDb(_ambienceVolume);
         AddChild(_ambiencePlayer);
 
         _ambienceFadeOutPlayer = new AudioStreamPlayer();
         _ambienceFadeOutPlayer.Name = "AmbienceFadeOut";
-        _ambienceFadeOutPlayer.Bus = "SFX";
+        _ambienceFadeOutPlayer.Bus = "Ambience";
         AddChild(_ambienceFadeOutPlayer);
+
+        ApplySfxBusVolume();
+    }
+
+    /// <summary>Ensures named mix buses exist (projects without default_bus_layout.tres). Idempotent.</summary>
+    public static void EnsureAudioBuses()
+    {
+        EnsureBus("Music", "Master");
+        EnsureBus("SFX", "Master");
+        EnsureBus("Ambience", "Master");
+    }
+
+    private static void EnsureBus(string name, StringName sendTo)
+    {
+        if (AudioServer.GetBusIndex(name) >= 0) return;
+        AudioServer.AddBus();
+        int idx = AudioServer.GetBusCount() - 1;
+        AudioServer.SetBusName(idx, name);
+        AudioServer.SetBusSend(idx, sendTo);
+    }
+
+    private void ApplySfxBusVolume()
+    {
+        int bus = AudioServer.GetBusIndex("SFX");
+        if (bus < 0) return;
+        float db = _sfxMuted ? -80f : LinearToDb(_sfxVolume);
+        AudioServer.SetBusVolumeDb(bus, db);
     }
 
     public override void _Process(double delta)
@@ -206,36 +236,42 @@ public partial class ZoneMusicPlayer : Node
 
     public void PlayZoneAmbience(string trackName)
     {
-        if (trackName == _currentAmbience && _ambiencePlayer.Playing) return;
-
-        string zone = trackName.ToLower();
-        var cache = EQAssetCache.Instance;
-        var config = EQAssetConfig.Instance;
-
-        string musicPath = null;
-        if (config.IsConfigured)
+        if (string.IsNullOrWhiteSpace(trackName))
         {
-            string directMp3 = Path.Combine(config.EQPath, $"{zone}.mp3");
-            if (File.Exists(directMp3)) musicPath = directMp3;
-        }
-
-        if (musicPath == null)
-        {
-            string cacheMp3 = $"{cache.CacheRoot}/music/{zone}.mp3";
-            if (File.Exists(cacheMp3)) musicPath = cacheMp3;
-        }
-
-        if (musicPath == null)
-        {
-            if (_ambiencePlayer.Playing) StopAmbience();
-            _currentAmbience = zone;
+            StopAmbience();
+            _currentAmbience = "";
             return;
         }
 
-        AudioStream stream = LoadMp3(musicPath);
+        string zone = trackName.ToLowerInvariant().Trim();
+        if (zone == _currentAmbience && _ambiencePlayer.Playing) return;
+
+        var cache = EQAssetCache.Instance;
+        var config = EQAssetConfig.Instance;
+
+        AudioStream stream = null;
+        string sourceLabel = null;
+        string formatTag = null;
+
+        // Server may send fallbacks: "sfx_amb_forest_day_01|amb_forest_lp" (live client first, then RoF2/classic).
+        string[] pipeSegments = zone.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var seg in pipeSegments)
+        {
+            string segLower = seg.ToLowerInvariant().Trim();
+            if (string.IsNullOrEmpty(segLower)) continue;
+            foreach (var stem in BuildAmbienceStemCandidates(segLower))
+            {
+                if (TryResolveAmbienceForStem(stem, cache, config, out stream, out sourceLabel, out formatTag))
+                    goto ResolvedAmbience;
+            }
+        }
+
+    ResolvedAmbience:
 
         if (stream == null)
         {
+            GD.Print($"[Music] No ambience found for '{zone}' (tried sounds/, EQ roots, cache/music; pipe fallbacks live|RoF2)");
+            if (_ambiencePlayer.Playing) StopAmbience();
             _currentAmbience = zone;
             return;
         }
@@ -256,6 +292,97 @@ public partial class ZoneMusicPlayer : Node
         _ambiencePlayer.Play();
 
         _currentAmbience = zone;
+        GD.Print($"[Music] Playing zone ambience ({formatTag}): {Path.GetFileName(sourceLabel ?? zone)}");
+    }
+
+    /// <summary>Classic <c>gfaydarkam</c> / <c>gfaydark_am</c>; live <c>sfx_amb_*</c> under <c>sounds/</c>; RoF2 <c>amb_*</c> at install root.</summary>
+    private static List<string> BuildAmbienceStemCandidates(string zone)
+    {
+        var list = new List<string> { zone };
+        if (zone.Length > 2 && zone.EndsWith("am", StringComparison.Ordinal))
+        {
+            string zBase = zone.Substring(0, zone.Length - 2);
+            if (zBase.Length > 0)
+                list.Add(zBase + "_am");
+        }
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ordered = new List<string>();
+        foreach (var s in list)
+        {
+            if (string.IsNullOrWhiteSpace(s)) continue;
+            if (seen.Add(s)) ordered.Add(s);
+        }
+        return ordered;
+    }
+
+    private bool TryResolveAmbienceForStem(string stem, EQAssetCache cache, EQAssetConfig config, out AudioStream stream, out string sourceLabel, out string formatTag)
+    {
+        stream = null;
+        sourceLabel = null;
+        formatTag = null;
+        string musicCache = $"{cache.CacheRoot}/music/";
+
+        string ResolvePath(string file)
+        {
+            if (config.IsConfigured)
+            {
+                string hit = config.FindLooseFileInEqInstall(file);
+                if (hit != null) return hit;
+            }
+            string c = musicCache + file;
+            return File.Exists(c) ? c : null;
+        }
+
+        string pMp3 = ResolvePath(stem + ".mp3");
+        if (pMp3 != null)
+        {
+            var s = LoadMp3(pMp3);
+            if (s != null) { stream = s; sourceLabel = pMp3; formatTag = "MP3"; return true; }
+        }
+
+        string pOgg = ResolvePath(stem + ".ogg");
+        if (pOgg != null)
+        {
+            var s = LoadOgg(pOgg);
+            if (s != null) { stream = s; sourceLabel = pOgg; formatTag = "OGG"; return true; }
+        }
+
+        // Live client: packed under sounds/sfx_amb_*.wav (RoF2 often has only root-level amb_*).
+        if (config.IsConfigured)
+        {
+            foreach (string sndDir in new[] { "sounds", "Sounds" })
+            {
+                string rel = Path.Combine(sndDir, stem + ".wav");
+                string pS = config.FindLooseFileUnderEqInstall(rel);
+                if (pS == null) continue;
+                var sw = cache.LoadWavFileIfExists(pS, loop: true);
+                if (sw != null) { stream = sw; sourceLabel = pS; formatTag = "WAV"; return true; }
+            }
+        }
+
+        string pWav = ResolvePath(stem + ".wav");
+        if (pWav != null)
+        {
+            var s = cache.LoadWavFileIfExists(pWav, loop: true);
+            if (s != null) { stream = s; sourceLabel = pWav; formatTag = "WAV"; return true; }
+        }
+
+        string pXmi = ResolvePath(stem + ".xmi");
+        if (pXmi != null)
+        {
+            var x = LoadXmi(pXmi);
+            if (x != null) { stream = x; sourceLabel = pXmi; formatTag = "XMI→MIDI"; return true; }
+        }
+
+        stream = cache.GetSound(stem + ".wav", loop: true);
+        if (stream != null)
+        {
+            sourceLabel = stem + ".wav (EQ sounds)";
+            formatTag = "WAV";
+            return true;
+        }
+
+        return false;
     }
 
     public void StopAmbience()
@@ -277,10 +404,11 @@ public partial class ZoneMusicPlayer : Node
     /// <summary>Get current music volume (0..1).</summary>
     public float GetVolume() => _masterVolume;
 
-    /// <summary>Set SFX volume (0..1). Affects all AudioStreamPlayer3D nodes in the scene.</summary>
+    /// <summary>Set SFX volume (0..1). Drives the SFX mix bus (UISoundPlayer, footsteps, entity SFX, etc.).</summary>
     public void SetSfxVolume(float volume)
     {
         _sfxVolume = Mathf.Clamp(volume, 0f, 1f);
+        ApplySfxBusVolume();
     }
 
     /// <summary>Get current SFX volume (0..1).</summary>
@@ -301,6 +429,7 @@ public partial class ZoneMusicPlayer : Node
     public void SetSfxMuted(bool muted)
     {
         _sfxMuted = muted;
+        ApplySfxBusVolume();
     }
 
     /// <summary>Is SFX muted?</summary>
@@ -340,6 +469,23 @@ public partial class ZoneMusicPlayer : Node
         catch (Exception ex)
         {
             GD.PrintErr($"[Music] Error loading MP3: {ex.Message}");
+            return null;
+        }
+    }
+
+    private AudioStream LoadOgg(string path)
+    {
+        try
+        {
+            byte[] data = File.ReadAllBytes(path);
+            var ogg = AudioStreamOggVorbis.LoadFromBuffer(data);
+            if (ogg == null) return null;
+            ogg.Loop = true;
+            return ogg;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Music] Error loading OGG: {ex.Message}");
             return null;
         }
     }

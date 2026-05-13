@@ -103,10 +103,10 @@ public partial class WorldManager : Node3D
             // Use the global UI sound player for local player footsteps/jumps
             // since we know its audio pipeline is 100% functional and local sounds
             // don't need 3D spatial attenuation.
-            float sfxVol = _musicPlayer?.GetSfxVolume() ?? 0.8f;
             bool sfxMuted = _musicPlayer?.IsSfxMuted ?? false;
-            
-            if (!sfxMuted && sfxVol > 0f)
+
+            // Volume is applied on the SFX bus; only skip work when muted.
+            if (!sfxMuted)
             {
                 float finalVol = 2f; // Base volume (+2dB)
                 

@@ -110,7 +110,7 @@ public partial class MainUI
 		return true;
 	}
 
-	public void CloseBag(int hostItemInstanceId)
+	public void CloseBag(int hostItemInstanceId, bool playCloseSound = true)
 	{
 		if (!_openBags.TryGetValue(hostItemInstanceId, out var win))
 			return;
@@ -121,9 +121,11 @@ public partial class MainUI
 			win.Hide();
 			win.QueueFree();
 		}
+		if (playCloseSound)
+			UISoundPlayer.Instance?.PlayBagClose();
 	}
 
-	public void OpenBag(int slotId, JsonElement itemData)
+	public void OpenBag(int slotId, JsonElement itemData, bool playOpenSound = true)
 	{
 		if (!itemData.TryGetProperty("item_id", out var instProp))
 			return;
@@ -140,6 +142,8 @@ public partial class MainUI
 		AddChild(bagWin);
 		bagWin.Init(slotId, hostInstId, bagslots, bagName, cascadeIdx);
 		_openBags[hostInstId] = bagWin;
+		if (playOpenSound)
+			UISoundPlayer.Instance?.PlayBagOpen();
 		
 		// Refresh inventory to populate bag contents
 		_client.SendRaw("{\"type\": \"GET_INVENTORY\"}");
@@ -170,6 +174,7 @@ public partial class MainUI
 
 		if (anyBagClosed)
 		{
+			UISoundPlayer.Instance?.PlayBagOpen();
 			for (int slotId = 22; slotId <= 29; slotId++)
 			{
 				int idx = slotId - 22;
@@ -178,7 +183,7 @@ public partial class MainUI
 				{
 					if (ItemIsOpenableContainer(itemData))
 					{
-						OpenBag(slotId, itemData);
+						OpenBag(slotId, itemData, playOpenSound: false);
 					}
 				}
 			}
@@ -192,8 +197,30 @@ public partial class MainUI
 					&& kvp.Value.ParentSlotId >= 22 && kvp.Value.ParentSlotId <= 29)
 					toClose.Add(kvp.Key);
 			}
-			foreach (var hostId in toClose) CloseBag(hostId);
+			foreach (var hostId in toClose) CloseBag(hostId, playCloseSound: false);
+			if (toClose.Count > 0)
+				UISoundPlayer.Instance?.PlayBagClose();
 		}
+	}
+
+	private void ToggleMainInventoryWindow()
+	{
+		if (_inventoryWindow == null) return;
+		if (_inventoryWindow.Visible)
+			HideMainInventoryWindow();
+		else
+		{
+			_inventoryWindow.Visible = true;
+			UISoundPlayer.Instance?.PlayBagOpen();
+		}
+	}
+
+	private void HideMainInventoryWindow()
+	{
+		if (_inventoryWindow != null && _inventoryWindow.Visible)
+			UISoundPlayer.Instance?.PlayBagClose();
+		_inventoryWindow?.Hide();
+		_activeMerchantId = null;
 	}
 
 	/// <summary>Place an item into whichever open bag window owns this <paramref name="slotId"/> (by <see cref="BagWindow.BaseBagSlot"/> range).</summary>
@@ -492,6 +519,7 @@ public partial class MainUI
 				if (_heldItem.HasValue) {
 					int itemId = _heldItem.Value.GetProperty("item_id").GetInt32();
 					_client.SendRaw($"{{\"type\": \"AUTO_EQUIP\", \"itemId\": {itemId}}}");
+					PlayInvPutDownSound(_heldItem.Value);
 					CancelHeldItem();
 				}
 			}
@@ -570,6 +598,31 @@ public partial class MainUI
 		}
 	}
 
+	private static bool InventoryItemIsCoin(JsonElement itemData)
+	{
+		if (!itemData.TryGetProperty("itemName", out var n) || n.ValueKind != JsonValueKind.String)
+			return false;
+		return ItemNameIsCurrency(n.GetString());
+	}
+
+	private static bool ItemNameIsCurrency(string name)
+	{
+		if (string.IsNullOrEmpty(name)) return false;
+		string l = name.ToLowerInvariant();
+		return l.Contains("platinum piece") || l.Contains("gold piece")
+			|| l.Contains("silver piece") || l.Contains("copper piece");
+	}
+
+	private static void PlayInvPutDownSound(JsonElement itemData)
+	{
+		var sfx = UISoundPlayer.Instance;
+		if (sfx == null) return;
+		if (InventoryItemIsCoin(itemData))
+			sfx.PlayCoinPutDown();
+		else
+			sfx.PlayItemPutDown();
+	}
+
 	private void PickUpItem(JsonElement itemData, int slotId, Button sourceBtn)
 	{
 		_heldItem = itemData;
@@ -579,21 +632,25 @@ public partial class MainUI
 		_cursorIcon.Texture = (pIconId > 0 && iconMgr2 != null) ? iconMgr2.GetItemIcon(pIconId) : null;
 		_cursorIcon.Visible = true;
 		sourceBtn.Modulate = new Color(0.4f, 0.4f, 0.4f, 0.6f); // dim the source
+		if (InventoryItemIsCoin(itemData))
+			UISoundPlayer.Instance?.PlayCoinPickUp();
+		else
+			UISoundPlayer.Instance?.PlayItemPickUp();
 	}
 
 	private void PlaceHeldItem(int targetSlotId, Button targetBtn, bool shiftPressed = false)
 	{
 		if (!_heldItem.HasValue) return;
 		int fromSlot = _heldFromSlotId;
+		JsonElement heldSnapshot = _heldItem.Value;
 
 		if (fromSlot == -100 && _heldPetSource != null) {
 			// Taking an item from pet to player inventory
-			bool targetIsBag = targetSlotId >= 251;
-			bool targetIsInv = targetSlotId >= 22 && targetSlotId <= 29;
 			// For MVP, just send take action without specifying exact target slot, server auto-places it
 			string takeMsg = $"{{\"type\": \"PET_INVENTORY_ACTION\", \"action\": \"take\", " +
 							 $"\"location\": {{\"type\":\"{_heldPetSource.Value.type}\", \"slot\":\"{_heldPetSource.Value.slot}\"}}}}";
 			_client.SendRaw(takeMsg);
+			PlayInvPutDownSound(heldSnapshot);
 			CancelHeldItem();
 			return;
 		}
@@ -625,6 +682,7 @@ public partial class MainUI
 			_client.SendRaw($"{{\"type\": \"EQUIP_ITEM\", \"itemId\": {itemId}, \"slot\": {targetSlotId}}}");
 		}
 
+		PlayInvPutDownSound(heldSnapshot);
 		CancelHeldItem();
 	}
 
@@ -725,6 +783,8 @@ public partial class MainUI
 		if (n < 1 || n >= _splitHeldQuantity) return;
 		_client.SendRaw($"{{\"type\": \"SPLIT_MOVE_ITEM\", \"fromSlot\": {_splitPendingFrom}, \"toSlot\": {_splitPendingTo}, \"count\": {n}}}");
 		_splitStackWindow.Hide();
+		if (_heldItem.HasValue)
+			PlayInvPutDownSound(_heldItem.Value);
 		CancelHeldItem();
 	}
 

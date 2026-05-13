@@ -359,6 +359,45 @@ public partial class EQAssetConfig : RefCounted
         }
     }
 
+    /// <summary>Find a loose file (e.g. <c>gfaydark.xmi</c>, <c>amb_forest_lp.mp3</c>) under the EQ install root or zone search paths.</summary>
+    public string FindLooseFileInEqInstall(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return null;
+        foreach (var root in GetZoneSearchRoots())
+        {
+            try
+            {
+                string p = System.IO.Path.Combine(root, fileName);
+                if (System.IO.File.Exists(p)) return p;
+            }
+            catch
+            {
+                // ignore path errors from bad config
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Find a file under the EQ root using a relative path (e.g. <c>sounds/sfx_amb_forest_day_01.wav</c>).</summary>
+    public string FindLooseFileUnderEqInstall(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return null;
+        string norm = relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar).TrimStart(System.IO.Path.DirectorySeparatorChar);
+        foreach (var root in GetZoneSearchRoots())
+        {
+            try
+            {
+                string p = System.IO.Path.Combine(root, norm);
+                if (System.IO.File.Exists(p)) return p;
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+        return null;
+    }
+
     /// <summary>Comma-separated roots scanned for zone .s3d (for logs).</summary>
     public string FormatZoneSearchRootsForDiagnostics()
     {

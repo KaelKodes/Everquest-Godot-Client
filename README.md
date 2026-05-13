@@ -27,5 +27,6 @@ The current build of EQ.gd supports connecting to the Dev Servers as well as you
 - **[EQ.gd Launcher:](https://github.com/KaelKodes/Everquest-Godot-Launcher)** This is the real face of the project. Right now it just handles the Client-side but includes everything needed
 - **[Optional][Everquest.godot Server:](https://github.com/KaelKodes/Everquest-Godot-Server)** I have tried to provide instructions as best I can at this time, things are still moving around quickly.
 - **Support:** Please be have patience and expect much better documentation once EQ.gd is closer to 100% stable!
+- **Discord** [dxvAvKg7FZ](https://discord.gg/dxvAvKg7FZ)
 ---
 *Safe travels, and keep your torch lit.*

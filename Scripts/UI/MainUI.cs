@@ -613,8 +613,8 @@ public partial class MainUI : Control
 		BuildInventorySlots();
 		
 		// Close / Done buttons
-		_inventoryWindow.GetNode<Button>("MainVBox/TitleBar/HBox/CloseBtn").Pressed += () => { _inventoryWindow.Hide(); _activeMerchantId = null; };
-		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DoneBtn").Pressed += () => { _inventoryWindow.Hide(); _activeMerchantId = null; };
+		_inventoryWindow.GetNode<Button>("MainVBox/TitleBar/HBox/CloseBtn").Pressed += HideMainInventoryWindow;
+		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DoneBtn").Pressed += HideMainInventoryWindow;
 		_inventoryWindow.GetNode<Button>("MainVBox/ButtonBar/DestroyBtn").Pressed += () => {
 			Log("SYSTEM", "[color=yellow]Click the X on an item to destroy it.[/color]");
 		};
@@ -1215,7 +1215,7 @@ public partial class MainUI : Control
 		// Connect buttons
 		if (_sitStandBtn != null) _sitStandBtn.Pressed += OnSitStandPressed;
 		if (_autoFightBtn != null) _autoFightBtn.Pressed += OnAutoFightPressed;
-		if (_bagsBtn != null) _bagsBtn.Pressed += () => _inventoryWindow.Visible = !_inventoryWindow.Visible;
+		if (_bagsBtn != null) _bagsBtn.Pressed += ToggleMainInventoryWindow;
 
 		// Wire SPELLS button on Simple Panel to toggle Spellbook
 		var spellsBtn = GetNodeOrNull<Button>("MenuWindow/VBox/SpellsBtn");
@@ -1632,7 +1632,7 @@ public partial class MainUI : Control
 				// Key I toggles Inventory
 				if (_inventoryWindow != null)
 				{
-					_inventoryWindow.Visible = !_inventoryWindow.Visible;
+					ToggleMainInventoryWindow();
 					GD.Print($"[UI] Inventory toggled: {_inventoryWindow.Visible}");
 				}
 			}
@@ -1941,7 +1941,10 @@ public partial class MainUI : Control
 
 		// ── Escape to cancel held item or hide popups ──
 		if (Input.IsActionJustPressed("ui_cancel")) {
-			if (_heldItem.HasValue) CancelHeldItem();
+			if (_heldItem.HasValue) {
+				PlayInvPutDownSound(_heldItem.Value);
+				CancelHeldItem();
+			}
 			if (_itemDetailPopup.Visible) _itemDetailPopup.Visible = false;
 			if (_spellDetailPopup.Visible) _spellDetailPopup.Visible = false;
 		}
@@ -3219,6 +3222,13 @@ public partial class MainUI : Control
 						// Wire up player light source from server vision data
 						bool hasLight = visionDict.TryGetProperty("hasLightSource", out var hlProp) && hlProp.GetBoolean();
 						wm.SetPlayerLightSource(hasLight);
+					}
+
+					if (dict.TryGetProperty("ambience", out var ambSync) && ambSync.ValueKind == JsonValueKind.String)
+					{
+						string ambStr = ambSync.GetString();
+						if (!string.IsNullOrEmpty(ambStr))
+							wm.PlayZoneAmbience(ambStr);
 					}
 				}
 			}

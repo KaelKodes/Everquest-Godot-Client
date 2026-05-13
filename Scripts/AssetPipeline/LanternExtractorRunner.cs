@@ -439,23 +439,40 @@ LoggerVerbosity=0
         string musicDir = Path.Combine(EQAssetCache.Instance.CacheRoot, "music");
         Directory.CreateDirectory(musicDir);
 
-        // Try MP3 first
-        string mp3Source = Path.Combine(eqPath, $"{zoneId}.mp3");
+        CopyOneMusicStem(zoneId, eqPath, musicDir, "zone music");
+
+        // Classic / live loose per-zone ambience (e.g. gfaydarkam.xmi). RoF2 often has no loose *am file — use server zone_client_ambience.json → amb_*.
+        foreach (string ambStem in new[] { zoneId + "am", zoneId + "_am" })
+            CopyOneMusicStem(ambStem, eqPath, musicDir, "zone ambience");
+    }
+
+    /// <summary>Copy first available MP3, else XMI, else WAV for <paramref name="stem"/> into session cache/music.</summary>
+    private static void CopyOneMusicStem(string stem, string eqPath, string musicDir, string logLabel)
+    {
+        string mp3Source = Path.Combine(eqPath, $"{stem}.mp3");
         if (File.Exists(mp3Source))
         {
-            string dest = Path.Combine(musicDir, $"{zoneId}.mp3");
+            string dest = Path.Combine(musicDir, $"{stem}.mp3");
             File.Copy(mp3Source, dest, overwrite: true);
-            GD.Print($"[Lantern] Copied zone music: {zoneId}.mp3");
+            GD.Print($"[Lantern] Copied {logLabel}: {stem}.mp3");
             return;
         }
 
-        // Fallback: XMI (MIDI)
-        string xmiSource = Path.Combine(eqPath, $"{zoneId}.xmi");
+        string xmiSource = Path.Combine(eqPath, $"{stem}.xmi");
         if (File.Exists(xmiSource))
         {
-            string dest = Path.Combine(musicDir, $"{zoneId}.xmi");
+            string dest = Path.Combine(musicDir, $"{stem}.xmi");
             File.Copy(xmiSource, dest, overwrite: true);
-            GD.Print($"[Lantern] Copied zone music: {zoneId}.xmi");
+            GD.Print($"[Lantern] Copied {logLabel}: {stem}.xmi");
+            return;
+        }
+
+        string wavSource = Path.Combine(eqPath, $"{stem}.wav");
+        if (File.Exists(wavSource))
+        {
+            string dest = Path.Combine(musicDir, $"{stem}.wav");
+            File.Copy(wavSource, dest, overwrite: true);
+            GD.Print($"[Lantern] Copied {logLabel}: {stem}.wav");
         }
     }
 

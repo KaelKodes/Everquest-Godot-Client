@@ -198,12 +198,14 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         }
         if (GetNodeOrNull<AudioStreamPlayer3D>("SfxPlayer") == null)
         {
-            var sp = new AudioStreamPlayer3D { Name = "SfxPlayer" };
+            var sp = new AudioStreamPlayer3D { Name = "SfxPlayer", Bus = "SFX" };
             sp.MaxDistance = 80.0f;
             sp.UnitSize = 10.0f;
             AddChild(sp);
         }
-        
+        var sfxPlayer = GetNodeOrNull<AudioStreamPlayer3D>("SfxPlayer");
+        if (sfxPlayer != null) sfxPlayer.Bus = "SFX";
+
         // Click targeting is handled by the ClickArea Area3D (see above)
     }
 

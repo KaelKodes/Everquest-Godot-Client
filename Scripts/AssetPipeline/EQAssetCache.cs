@@ -245,6 +245,14 @@ public partial class EQAssetCache : RefCounted
         return wav;
     }
 
+    /// <summary>Load a WAV from an absolute path (e.g. cache/music/zoneam.wav). Not keyed in <see cref="GetSound"/> cache.</summary>
+    public AudioStream LoadWavFileIfExists(string absolutePath, bool loop = false)
+    {
+        if (string.IsNullOrEmpty(absolutePath) || !System.IO.File.Exists(absolutePath))
+            return null;
+        return LoadWav(absolutePath, loop);
+    }
+
     private AudioStreamWav LoadWav(string path, bool loop)
     {
         try

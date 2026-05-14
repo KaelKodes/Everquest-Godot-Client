@@ -367,10 +367,9 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         var anim = _animPlayer.GetAnimation(resolved);
         bool isCombatOrEmote = animName.StartsWith("d") || animName.StartsWith("s") || animName.StartsWith("t") || animName.StartsWith("c") || animName == "p02" || animName == "p05";
         
-        if (isCombatOrEmote)
-            anim.LoopMode = Animation.LoopModeEnum.None;
-        else
-            anim.LoopMode = Animation.LoopModeEnum.Linear;
+        var targetLoopMode = isCombatOrEmote ? Animation.LoopModeEnum.None : Animation.LoopModeEnum.Linear;
+        if (anim.LoopMode != targetLoopMode)
+            anim.LoopMode = targetLoopMode;
         bool isImportantTrace = IsPlayerControlled || (ChaseTarget is EntityCapsule ec && ec.IsPlayerControlled);
         // if (isImportantTrace)
         // {
@@ -397,6 +396,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private double _emoteTimer = 0;
     private string _queuedEmote = null;
     private double _airborneTime = 0;
+    private double _idleSnapTimer = 0; // Hysteresis to prevent walk/idle flickering
 
     // --- Auto-attack animation loop (client-driven, matches server combat tick) ---
     private bool _isAutoAttacking = false;
@@ -694,7 +694,6 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
         if (_animPlayer != null)
             _animPlayer.SpeedScale = 1.0f;
 
-        GD.Print($"[AUTOATK] PlayAnimation({animCode}) called. SpeedScale={_animPlayer?.SpeedScale}");
         PlayAnimation(animCode);
         
         if (_animPlayer != null)
@@ -703,7 +702,6 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             {
                 // Actual playback time = reported length / speedScale
                 _emoteTimer = _animPlayer.GetAnimation(animCode).Length / _animPlayer.SpeedScale;
-                GD.Print($"[AUTOATK] emoteTimer set to {_emoteTimer:F3} (Length was {_animPlayer.GetAnimation(animCode).Length:F3})");
             }
         }
         
@@ -1022,7 +1020,8 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 Vector2 target2D = new Vector2(targetPos.X, targetPos.Z);
                 float targetDist = current2D.DistanceTo(target2D);
 
-                if (targetDist > 0.05f) // Tightened threshold
+                float arrivalThreshold = (EntityType == "player") ? 0.05f : 0.2f;
+                if (targetDist > arrivalThreshold)
                 {
                     Vector2 dir = (target2D - current2D).Normalized();
                     
@@ -1030,18 +1029,18 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                     float baseSpeed = LastMoveVelocity.Length();
                     float moveSpeed;
                     
+                    // Players need high responsiveness (20Hz match); Mobs need smooth interpolation (8Hz)
+                    float multiplier = (EntityType == "player") ? 20.0f : 8.0f;
+                    
                     if (baseSpeed > 1.0f)
                     {
-                        // Match predicted speed, but allow it to accelerate if we're falling behind
-                        // Using a factor of 20.0f to match our 20Hz sync rate.
-                        // Clamp baseSpeed to 35.0f to prevent ArgumentException if server sends a burst
                         float effectiveMinSpeed = Mathf.Min(baseSpeed, 35.0f);
-                        moveSpeed = Mathf.Clamp(targetDist * 20.0f, effectiveMinSpeed, 35.0f);
+                        moveSpeed = Mathf.Clamp(targetDist * multiplier, effectiveMinSpeed, 35.0f);
                     }
                     else
                     {
-                        // Fallback to distance-based if standing still or first update
-                        moveSpeed = Mathf.Clamp(targetDist * 20.0f, 2.0f, 25.0f);
+                        float minSpeed = (EntityType == "player") ? 2.0f : 4.0f;
+                        moveSpeed = Mathf.Clamp(targetDist * multiplier, minSpeed, 25.0f);
                     }
                     
                     velocity.X = dir.X * moveSpeed;
@@ -1049,6 +1048,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
                     if (_emoteTimer <= 0)
                     {
+                        _idleSnapTimer = 0.25; // Keep walking for 0.25s after stopping to avoid jitter
                         if (moveSpeed >= 14.0f)
                             PlayAnimation("l02"); // run
                         else
@@ -1058,14 +1058,20 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 else
                 {
                     // We've arrived at the target position. 
-                    // To prevent overshoot during dead reckoning, we should zero velocity 
-                    // unless we are still expecting to move (which would be handled by a new packet).
                     velocity.X = 0;
                     velocity.Z = 0;
                     TargetPosition = null;
+                    
                     if (_emoteTimer <= 0)
                     {
-                        PlayAnimation("p01"); // idle
+                        if (_idleSnapTimer > 0)
+                        {
+                            _idleSnapTimer -= delta;
+                        }
+                        else
+                        {
+                            PlayAnimation("p01"); // idle
+                        }
                     }
                 }
             }
@@ -1086,6 +1092,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 
                 if (_emoteTimer <= 0)
                 {
+                    _idleSnapTimer = 0.25;
                     if (drSpeed >= 14.0f)
                         PlayAnimation("l02");
                     else
@@ -1098,7 +1105,14 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 velocity.Z = 0;
                 if (_emoteTimer <= 0)
                 {
-                    PlayAnimation("p01"); // idle
+                    if (_idleSnapTimer > 0)
+                    {
+                        _idleSnapTimer -= delta;
+                    }
+                    else
+                    {
+                        PlayAnimation("p01"); // idle
+                    }
                 }
             }
 

@@ -178,7 +178,7 @@ public partial class WorldManager : Node3D
     private Sprite3D _moonSprite;
     private ShaderMaterial _moonMaterial;
     private WorldEnvironment _environment;
-    
+
     // Time state
     private float _currentWorldHour = 12f;
     private float _targetWorldHour = 12f;
@@ -188,6 +188,7 @@ public partial class WorldManager : Node3D
     private bool _timeInitialized = false;
     private string _currentZoneId = "";
     private bool _isIndoorZone = false;
+    private float _lastVisualsHour = -100f; // Track last hour to throttle updates
 
     public override void _Ready()
     {
@@ -248,6 +249,8 @@ public partial class WorldManager : Node3D
         _moonMaterial.Shader = GD.Load<Shader>("res://Assets/Shaders/MoonPhase.gdshader");
         _moonMaterial.SetShaderParameter("moon_texture", _moonSprite.Texture);
         _moonSprite.MaterialOverride = _moonMaterial;
+
+        // Find Cloud Effect in environment - REMOVED
 
         // Initialize Audio Subsystems
         _musicPlayer = new ZoneMusicPlayer();
@@ -448,10 +451,11 @@ public partial class WorldManager : Node3D
     public void SetIndoorZone(bool indoor)
     {
         _isIndoorZone = indoor;
+        _lastVisualsHour = -100f; // Force refresh
         ApplyTimeOfDayVisuals();
     }
 
-    private void ApplyTimeOfDayVisuals()
+    public void ApplyTimeOfDayVisuals()
     {
         if (_sun == null || _moon == null) return;
 
@@ -471,12 +475,12 @@ public partial class WorldManager : Node3D
                 if (_currentVisionStyle == "ultravision")
                 {
                     bgEnergy = 2.0f;
-                    ambEnergy = 15.0f; // Turn pitch black night into day (0.05 * 15 = 0.75 ambient)
+                    ambEnergy = 15.0f;
                 }
                 else if (_currentVisionStyle == "infravision")
                 {
                     bgEnergy = 1.0f;
-                    ambEnergy = 6.0f; // Bright enough to see clearly but still dark
+                    ambEnergy = 6.0f;
                 }
 
                 _environment.Environment.BackgroundMode = Godot.Environment.BGMode.Color;
@@ -493,26 +497,16 @@ public partial class WorldManager : Node3D
         _moon.Visible = true;
         if (_moonSprite != null) _moonSprite.Visible = true;
 
-        // Progress 0 to 1 over 24 hours. 0 = midnight, 0.5 = noon
         float progress = _currentWorldHour / 24f;
-        
-        // Pitch mapping: 
-        // 0 (Midnight): Sun is straight UP from under ground (90 degrees)
-        // 6 (Dawn): Sun is at horizon (0 degrees)
-        // 12 (Noon): Sun is straight DOWN from sky (-90 degrees)
-        // 18 (Dusk): Sun is at horizon (-180 degrees)
-        
         float sunPitchDegrees = 90f - (progress * 360f); 
         _sun.RotationDegrees = new Vector3(sunPitchDegrees, -45f, 0f);
         
-        // Moon is opposite of sun
         float moonPitchDegrees = sunPitchDegrees - 180f;
         _moon.RotationDegrees = new Vector3(moonPitchDegrees, -45f, 0f);
 
-        // Update Moon Phase Shader
         if (_moonMaterial != null)
         {
-            float phaseVal = 0.5f; // Full
+            float phaseVal = 0.5f;
             switch (_currentMoonPhase)
             {
                 case "New": phaseVal = 0.0f; break;
@@ -527,7 +521,6 @@ public partial class WorldManager : Node3D
             _moonMaterial.SetShaderParameter("phase", phaseVal);
         }
 
-        // Skybox Colors
         Color dayTopColor = new Color(0.2f, 0.4f, 0.6f);
         Color dayHorizonColor = new Color(0.6f, 0.7f, 0.8f);
         Color nightTopColor = new Color(0.01f, 0.02f, 0.05f);
@@ -539,93 +532,59 @@ public partial class WorldManager : Node3D
             skyMat = _environment.Environment.Sky.SkyMaterial as ProceduralSkyMaterial;
         }
 
-        // Lighting intensity
         float dayDuration = _duskHour - _dawnHour;
         float dayProgress = 0f;
         
         if (_currentWorldHour >= _dawnHour && _currentWorldHour <= _duskHour)
         {
-            // Daytime
             dayProgress = (_currentWorldHour - _dawnHour) / dayDuration;
-            
-            // Parabola: peaks at 1.0 at noon (midday), 0 at dawn/dusk
-            float sunIntensity = 1.0f - Mathf.Pow((dayProgress - 0.5f) * 2f, 2f);
-            sunIntensity = Mathf.Clamp(sunIntensity, 0f, 1f);
+            float sunIntensity = Mathf.Clamp(1.0f - Mathf.Pow((dayProgress - 0.5f) * 2f, 2f), 0f, 1f);
             
             _sun.LightEnergy = sunIntensity;
             _moon.LightEnergy = 0f;
             
-            // Adjust environment ambient/sky energy if it exists
             if (_environment != null && _environment.Environment != null)
             {
                 float bgEnergy = Mathf.Max(0.2f, sunIntensity);
                 float ambEnergy = Mathf.Max(0.1f, sunIntensity);
                 
-                if (_currentVisionStyle == "ultravision")
-                {
-                    bgEnergy = Mathf.Max(bgEnergy, 2.0f);
-                    ambEnergy = Mathf.Max(ambEnergy, 4.0f);
-                }
-                else if (_currentVisionStyle == "infravision")
-                {
-                    bgEnergy = Mathf.Max(bgEnergy, 1.0f);
-                    ambEnergy = Mathf.Max(ambEnergy, 1.5f);
-                }
+                if (_currentVisionStyle == "ultravision") { bgEnergy = Mathf.Max(bgEnergy, 2.0f); ambEnergy = Mathf.Max(ambEnergy, 4.0f); }
+                else if (_currentVisionStyle == "infravision") { bgEnergy = Mathf.Max(bgEnergy, 1.0f); ambEnergy = Mathf.Max(ambEnergy, 1.5f); }
                 
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
                 _environment.Environment.AmbientLightEnergy = ambEnergy;
             }
-            
             if (skyMat != null)
             {
                 Color currentTop = nightTopColor.Lerp(dayTopColor, sunIntensity);
                 Color currentHorizon = nightHorizonColor.Lerp(dayHorizonColor, sunIntensity);
                 skyMat.SkyTopColor = currentTop;
                 skyMat.SkyHorizonColor = currentHorizon;
-                
-                if (_environment != null && _environment.Environment != null)
-                {
-                    _environment.Environment.FogEnabled = true;
-                    _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
-                    _environment.Environment.FogDensity = 0.001f; // Classic depth haze, heavily reduced for daytime visibility
-                    _environment.Environment.FogLightColor = currentHorizon;
-                    _environment.Environment.FogSunScatter = 0.1f;
-                }
+            }
+
+            // Fog logic should run regardless of sky material (for dungeons/custom zones)
+            if (_environment != null && _environment.Environment != null)
+            {
+                _environment.Environment.FogEnabled = true;
+                _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
+                _environment.Environment.FogDensity = 0.0002f;
+                _environment.Environment.FogLightColor = (skyMat != null) ? skyMat.SkyHorizonColor : dayHorizonColor;
+                _environment.Environment.FogSunScatter = 0.1f;
             }
         }
         else
         {
-            // Nighttime
             _sun.LightEnergy = 0f;
-            
-            // Moon peaks at midnight
-            float nightProgress;
-            if (_currentWorldHour > _duskHour)
-                nightProgress = (_currentWorldHour - _duskHour) / (24f - _duskHour + _dawnHour);
-            else
-                nightProgress = (_currentWorldHour + (24f - _duskHour)) / (24f - _duskHour + _dawnHour);
-
-            float moonIntensity = 1.0f - Mathf.Pow((nightProgress - 0.5f) * 2f, 2f);
-            moonIntensity = Mathf.Clamp(moonIntensity, 0f, 1f);
-            
-            _moon.LightEnergy = moonIntensity * 0.3f; // Moon is max 30% as bright as sun
+            float nightProgress = _currentWorldHour > _duskHour ? (_currentWorldHour - _duskHour) / (24f - _duskHour + _dawnHour) : (_currentWorldHour + (24f - _duskHour)) / (24f - _duskHour + _dawnHour);
+            float moonIntensity = Mathf.Clamp(1.0f - Mathf.Pow((nightProgress - 0.5f) * 2f, 2f), 0f, 1f);
+            _moon.LightEnergy = moonIntensity * 0.3f;
             
             if (_environment != null && _environment.Environment != null)
             {
                 float bgEnergy = Mathf.Max(0.1f, moonIntensity * 0.3f);
                 float ambEnergy = Mathf.Max(0.05f, moonIntensity * 0.3f);
-                
-                if (_currentVisionStyle == "ultravision")
-                {
-                    bgEnergy = Mathf.Max(bgEnergy, 2.0f);
-                    ambEnergy = Mathf.Max(ambEnergy, 4.0f);
-                }
-                else if (_currentVisionStyle == "infravision")
-                {
-                    bgEnergy = Mathf.Max(bgEnergy, 1.0f);
-                    ambEnergy = Mathf.Max(ambEnergy, 1.5f);
-                }
-                
+                if (_currentVisionStyle == "ultravision") { bgEnergy = Mathf.Max(bgEnergy, 2.0f); ambEnergy = Mathf.Max(ambEnergy, 4.0f); }
+                else if (_currentVisionStyle == "infravision") { bgEnergy = Mathf.Max(bgEnergy, 1.0f); ambEnergy = Mathf.Max(ambEnergy, 1.5f); }
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
                 _environment.Environment.AmbientLightEnergy = ambEnergy;
             }
@@ -634,15 +593,15 @@ public partial class WorldManager : Node3D
             {
                 skyMat.SkyTopColor = nightTopColor;
                 skyMat.SkyHorizonColor = nightHorizonColor;
-                
-                if (_environment != null && _environment.Environment != null)
-                {
-                    _environment.Environment.FogEnabled = true;
-                    _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
-                    _environment.Environment.FogDensity = 0.003f; // Slightly thicker at night
-                    _environment.Environment.FogLightColor = nightHorizonColor;
-                    _environment.Environment.FogSunScatter = 0.0f;
-                }
+            }
+
+            if (_environment != null && _environment.Environment != null)
+            {
+                _environment.Environment.FogEnabled = true;
+                _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
+                _environment.Environment.FogDensity = 0.001f; // Reverting to slightly thinner night fog
+                _environment.Environment.FogLightColor = nightHorizonColor;
+                _environment.Environment.FogSunScatter = 0.0f;
             }
         }
     }
@@ -805,7 +764,12 @@ public partial class WorldManager : Node3D
                 _currentWorldHour = _targetWorldHour;
             }
 
-            ApplyTimeOfDayVisuals();
+            // Only update visuals if the hour has changed significantly
+            if (Mathf.Abs(_currentWorldHour - _lastVisualsHour) > 0.005f)
+            {
+                ApplyTimeOfDayVisuals();
+                _lastVisualsHour = _currentWorldHour;
+            }
         }
     }
 

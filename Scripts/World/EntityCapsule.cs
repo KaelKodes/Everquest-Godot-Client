@@ -87,7 +87,37 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     private bool _crouchPhysicsActive = false;
     // Crouching collapses the capsule down to this fraction of standing height,
     // anchored at the bottom — low enough to clear classic EQ doorways.
+    // Playable-race GLBs: mesh AABB omits boot soles; physics capsule also sits above the feet.
+    private const float PlayableModelFeetVisualLift = 0.22f;
     private const float CrouchHeightFactor = 0.55f;
+
+    // PC race GLBs plus EQ NPC bases that wear the same rig (e.g. race 127 ivm for plate guards).
+    private static readonly HashSet<string> s_feetLiftModelCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hum", "huf", "bam", "baf", "erm", "erf", "elm", "elf", "him", "hif", "dam", "daf",
+        "ham", "haf", "dwm", "dwf", "trm", "trf", "ogm", "ogf", "hom", "hof", "gnm", "gnf",
+        "ikm", "ikf", "kem", "kef", "frm", "frf",
+        "ivm", "com", "cof",
+        // City guard / citizen rigs (not playable race IDs — e.g. Fayguard 112, Felguard 106)
+        "fem", "fef", "gfm", "gff", "qcm", "qcf", "ngm", "egm", "rim", "rif",
+        "hlm", "hlf", "grm", "grf", "okm", "okf", "kam", "kaf", "fpm", "hhm", "icm", "icf", "vsg",
+    };
+
+    /// <summary>
+    /// EQ races used for city guards and citizens (see EQemu NPC::IsGuard / races.h).
+    /// Wood elf guards are Fayguard (112), dark elf Felguard (106), not races 4/6.
+    /// </summary>
+    private static bool IsCityGuardOrCitizenRace(int race) => race switch
+    {
+        44 or 77 or 81 or 90 or 92 or 93 or 94 or 106 or 112 or 127 or 139 or 239 or 600 => true,
+        _ => false
+    };
+
+    private static bool UsesPlayerStyleModelCode(string modelCode) =>
+        !string.IsNullOrEmpty(modelCode) && s_feetLiftModelCodes.Contains(modelCode);
+
+    private static bool NeedsFeetVisualLift(int race, string modelCode) =>
+        UsesPlayerStyleModelCode(modelCode) || IsCityGuardOrCitizenRace(race);
     
     // Swimming State
     public bool IsInWater { get; private set; } = false;
@@ -1453,9 +1483,12 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         float finalScaleY = raceScale * modelCorrection;
                         _characterModel.Scale = new Vector3(finalScaleY, finalScaleY, finalScaleY);
                         
-                        // Shift model up so its lowest vertex sits exactly at Y=0 (the capsule floor)
-                        // This handles humanoids (origin at waist) and creatures (origin at bottom) seamlessly.
-                        _characterModel.Position = new Vector3(0, -rawAabb.Position.Y * finalScaleY, 0);
+                        // Shift model up so its lowest vertex sits at Y=0 (body origin / floor contact).
+                        // PC + ivm-style NPC rigs need a small lift so boot soles aren't below the capsule floor.
+                        float feetVisualLift = NeedsFeetVisualLift(race, modelCode)
+                            ? PlayableModelFeetVisualLift * raceScale
+                            : 0f;
+                        RefloorCharacterModel(feetVisualLift, finalScaleY, rawAabb);
 
                         // Now that the model is positioned and scaled, measure its FINAL visual bounds
                         // so we can properly place the NameLabel and ClickArea (especially for flying bats)
@@ -1538,6 +1571,8 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                         {
                             ApplyArmorTextures(_characterModel, modelCode, equipVisualsJson);
                             AttachWeapons(_characterModel, equipVisualsJson);
+                            if (feetVisualLift > 0f)
+                                RefloorCharacterModel(feetVisualLift, finalScaleY);
                         }
                         else if (_hasLightSource)
                         {
@@ -2108,6 +2143,25 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
             GD.PrintErr($"[MODEL] Failed to attach {idfile}: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Align character model feet to capsule floor (Y=0) plus optional sole lift.
+    /// Pass <paramref name="preScaleAabb"/> on first placement before the node is in-tree.
+    /// </summary>
+    private void RefloorCharacterModel(float feetVisualLift, float finalScaleY, Aabb? preScaleAabb = null)
+    {
+        if (_characterModel == null) return;
+
+        if (preScaleAabb.HasValue)
+        {
+            var aabb = preScaleAabb.Value;
+            _characterModel.Position = new Vector3(0, -aabb.Position.Y * finalScaleY + feetVisualLift, 0);
+            return;
+        }
+
+        var visualAabb = GetCombinedAABB(_characterModel);
+        _characterModel.Position = new Vector3(0, feetVisualLift - visualAabb.Position.Y * finalScaleY, 0);
     }
 
     private Aabb GetCombinedAABB(Node root)

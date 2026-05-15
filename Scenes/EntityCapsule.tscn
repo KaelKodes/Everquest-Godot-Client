@@ -1,29 +1,40 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://bdp1qimnd6r6h"]
 
-[ext_resource type="Script" path="res://Scripts/World/EntityCapsule.cs" id="1_ecaps"]
-[ext_resource type="Shader" path="res://Scenes/CapsuleClothes.gdshader" id="2_clothes"]
+[ext_resource type="Script" uid="uid://bjtgp3y5m2pu" path="res://Scripts/World/EntityCapsule.cs" id="1_ecaps"]
+[ext_resource type="Shader" uid="uid://c0iwro57dm28x" path="res://Scenes/CapsuleClothes.gdshader" id="2_clothes"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_shp"]
+height = 1.5195313
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_clothes"]
 render_priority = 0
 shader = ExtResource("2_clothes")
+shader_parameter/color_hat = Color(0.9, 0.8, 0.6, 1)
+shader_parameter/color_skin = Color(0, 0.7, 0.9, 1)
+shader_parameter/color_torso = Color(0.9, 0.8, 0.6, 1)
+shader_parameter/color_legs = Color(0.5, 0.5, 0.5, 1)
+shader_parameter/color_feet = Color(0.5, 0.3, 0.2, 1)
+shader_parameter/band_hat = 0.15
+shader_parameter/band_skin = 0.35
+shader_parameter/band_torso = 0.65
+shader_parameter/band_legs = 0.9
+shader_parameter/sneak_alpha = 1.0
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_msh"]
 material = SubResource("ShaderMaterial_clothes")
 
-[node name="EntityCapsule" type="CharacterBody3D"]
+[node name="EntityCapsule" type="CharacterBody3D" unique_id=2046289342]
 script = ExtResource("1_ecaps")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=2111729841]
+transform = Transform3D(1.25, 0, 0, 0, 1.25, 0, 0, 0, 1.25, 0, 0.96702623, 0)
 shape = SubResource("CapsuleShape3D_shp")
 
-[node name="Mesh" type="MeshInstance3D" parent="."]
+[node name="Mesh" type="MeshInstance3D" parent="." unique_id=1446416548]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 mesh = SubResource("CapsuleMesh_msh")
 
-[node name="NameLabel" type="Label3D" parent="."]
+[node name="NameLabel" type="Label3D" parent="." unique_id=1636606732]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
 billboard = 1
 double_sided = false

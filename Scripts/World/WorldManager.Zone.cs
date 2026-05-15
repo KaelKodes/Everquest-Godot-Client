@@ -595,10 +595,9 @@ public partial class WorldManager : Node3D
             // BacklightEnabled in FixZoneMaterials, which only papered over directional
             // sun lighting and actively fights local point lights.
             //
-            // Fix: walk the freshly-loaded zone scene and bake corrected normals (and
-            // matching reversed winding) directly into the mesh data. After this, each
-            // surface's stored normals point outward in world space, so omnis behave
-            // correctly and the BacklightEnabled hack can be turned off.
+            // Fix: negate baked normals so Godot's M^-T transform yields outward-facing
+            // world normals for omni / point lights. (World-space recompute breaks torches.)
+            // Directional sun/moon is handled separately via light orientation in WorldManager.
             //
             // LanternExtractor's baked negative-scale transform is not zone-specific:
             // apply the normal correction to every extracted GLB zone.
@@ -920,7 +919,10 @@ public partial class WorldManager : Node3D
                     }
                     else
                     {
-                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+                        // With corrected outward normals, back-face cull hides underside glow on platforms.
+                        mat.CullMode = _zoneNormalsCorrectedThisLoad
+                            ? BaseMaterial3D.CullModeEnum.Back
+                            : BaseMaterial3D.CullModeEnum.Disabled;
                     }
                     
                     // Legacy "fake fill on back-faces" hack to compensate for the inverted zone
@@ -972,10 +974,11 @@ public partial class WorldManager : Node3D
                             newMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
                         }
                     }
-                    // We purposefully DO NOT disable culling for solid materials anymore!
-                    // Disabling culling on solids caused inward-facing developer textures (like zone lines or "GOTO" walls)
-                    // to become visible from the outside, appearing inside-out. Default Godot culling (Back) hides them properly.
-                    
+                    else if (_zoneNormalsCorrectedThisLoad)
+                    {
+                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Back;
+                    }
+
                     if (_zoneNormalsCorrectedThisLoad)
                     {
                         newMat.BacklightEnabled = false;
@@ -1041,10 +1044,6 @@ public partial class WorldManager : Node3D
                     {
                         var arrays = src.SurfaceGetArrays(s);
 
-                        // Rebuild normals from triangle geometry first. Some Lantern-exported
-                        // surfaces carry broken/misaligned normal streams (especially terrain),
-                        // which causes omni lights to look hemispheric on the ground only.
-                        // Recomputing from vertices+winding gives consistent per-vertex normals.
                         if (recomputeNormals && 0 < arrays.Count && arrays[0].VariantType == Variant.Type.PackedVector3Array)
                         {
                             var vertices = (Vector3[])arrays[0];
@@ -1054,8 +1053,8 @@ public partial class WorldManager : Node3D
                             arrays[1] = RecalculateNormals(vertices, indices);
                         }
 
-                        // Negate normals after recompute (or import) to compensate the negative-
-                        // determinant transform chain from Lantern export + zone basis mapping.
+                        // Single negate for Lantern negative-scale chain — correct for omnis/point lights.
+                        // Do not use world-space outward recompute here; it inverts omni response.
                         if (1 < arrays.Count && arrays[1].VariantType == Variant.Type.PackedVector3Array)
                         {
                             var normals = (Vector3[])arrays[1];
@@ -1138,6 +1137,12 @@ public partial class WorldManager : Node3D
             }
         }
 
+        NormalizeNormalArray(normals);
+        return normals;
+    }
+
+    private static void NormalizeNormalArray(Vector3[] normals)
+    {
         for (int i = 0; i < normals.Length; i++)
         {
             if (normals[i].LengthSquared() > 0.000001f)
@@ -1145,8 +1150,6 @@ public partial class WorldManager : Node3D
             else
                 normals[i] = Vector3.Up;
         }
-
-        return normals;
     }
 
     private void CalculateAabbRecursive(Node node, ref Aabb combined, ref bool first)

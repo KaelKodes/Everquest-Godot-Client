@@ -495,7 +495,6 @@ public partial class MainUI
 			if (character.TryGetProperty("zoneNumericId", out var zoneNumericIdPropStatus))
 			{
 				_currentZoneNumericId = zoneNumericIdPropStatus.GetInt32();
-				GD.Print($"[UI] Status: Zone Numeric ID = {_currentZoneNumericId}");
 			}
 			else if (character.TryGetProperty("zoneId", out var zoneIdPropStatus))
 			{
@@ -504,7 +503,6 @@ public partial class MainUI
 					_currentZoneNumericId = zoneIdPropStatus.GetInt32();
 				else if (zoneIdPropStatus.ValueKind == JsonValueKind.String)
 					_currentZoneNumericId = LanternExtractorRunner.GetZoneIdFromShortName(zoneIdPropStatus.GetString());
-				GD.Print($"[UI] Status: Fallback Zone Numeric ID = {_currentZoneNumericId}");
 			}
 
 			bool isGmFlag = character.TryGetProperty("isGm", out var isGmEl) && isGmEl.ValueKind == JsonValueKind.True;
@@ -1035,7 +1033,6 @@ public partial class MainUI
 			if (character.TryGetProperty("zoneId", out var zoneIdProp))
 			{
 				string zoneId = zoneIdProp.ValueKind == JsonValueKind.String ? LanternExtractorRunner.NormalizeZoneId(zoneIdProp.GetString()) : "";
-				GD.Print($"[UI] Status: Raw ZoneId = {zoneIdProp}, Normalized = {zoneId}");
 
 				if (character.TryGetProperty("zoneNumericId", out var znidProp))
 					_currentZoneNumericId = znidProp.GetInt32();
@@ -1043,13 +1040,6 @@ public partial class MainUI
 					_currentZoneNumericId = zoneIdProp.GetInt32();
 				else if (!string.IsNullOrEmpty(zoneId))
 					_currentZoneNumericId = LanternExtractorRunner.GetZoneIdFromShortName(zoneId);
-				
-				if (!string.IsNullOrEmpty(zoneId) && _currentZoneId != zoneId)
-				{
-					_currentZoneId = zoneId;
-					GD.Print($"[UI] Zone changed to: {_currentZoneId}");
-					RebuildZoneData(character);
-				}
 
 				if (character.TryGetProperty("zoneArchiveBase", out var zArch) && zArch.ValueKind == JsonValueKind.String)
 				{
@@ -1059,9 +1049,11 @@ public partial class MainUI
 				else
 					_lanternArchiveBase = null;
 
-				if (zoneId != _currentZoneId)
+				if (!string.IsNullOrEmpty(zoneId) && zoneId != _currentZoneId)
 				{
 					_currentZoneId = zoneId;
+					_lastAmbienceTrack = "";
+					GD.Print($"[UI] Zone changed to: {_currentZoneId}");
 					RebuildZoneData(character);
 				}
 			}

@@ -125,6 +125,7 @@ public partial class MainUI : Control
 	private Label _zoneLabel;
 	private HBoxContainer _zoneConnections;
 	private string _currentZoneId = "";
+	private string _lastAmbienceTrack = "";
 	/// <summary>Optional .s3d basename from server STATUS when it differs from <see cref="_currentZoneId"/> (PEQ short_name).</summary>
 	private string _lanternArchiveBase = null;
 	
@@ -3217,7 +3218,11 @@ public partial class MainUI : Control
 						{
 							ambienceTrack = ambVariant.GetString();
 						}
-						wm.PlayZoneAmbience(ambienceTrack);
+						if (!string.IsNullOrEmpty(ambienceTrack) && ambienceTrack != _lastAmbienceTrack)
+						{
+							_lastAmbienceTrack = ambienceTrack;
+							wm.PlayZoneAmbience(ambienceTrack);
+						}
 						
 						_loadingBar.Value = 70;
 						if (_flavorLabel != null) _flavorLabel.Text = "Loading doors...";
@@ -3312,8 +3317,11 @@ public partial class MainUI : Control
 					if (dict.TryGetProperty("ambience", out var ambSync) && ambSync.ValueKind == JsonValueKind.String)
 					{
 						string ambStr = ambSync.GetString();
-						if (!string.IsNullOrEmpty(ambStr))
+						if (!string.IsNullOrEmpty(ambStr) && ambStr != _lastAmbienceTrack)
+						{
+							_lastAmbienceTrack = ambStr;
 							wm.PlayZoneAmbience(ambStr);
+						}
 					}
 				}
 			}

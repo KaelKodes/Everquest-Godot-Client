@@ -468,9 +468,32 @@ public partial class MainMenu : Control
         }
     }
 
+    private void PopupFolderPicker(Window host, string title, Action<string> onSelected)
+    {
+        var fd = new FileDialog();
+        fd.FileMode = FileDialog.FileModeEnum.OpenDir;
+        fd.Access = FileDialog.AccessEnum.Filesystem;
+        fd.Title = title;
+        fd.Exclusive = false;
+        host.AddChild(fd);
+        fd.PopupCentered(new Vector2I(880, 620));
+        fd.DirSelected += (dir) =>
+        {
+            onSelected?.Invoke(dir);
+            if (GodotObject.IsInstanceValid(fd))
+                fd.QueueFree();
+        };
+        fd.Canceled += () =>
+        {
+            if (GodotObject.IsInstanceValid(fd))
+                fd.QueueFree();
+        };
+    }
+
     /// <summary>Shared path row + link/unlink used by the login settings dialog and the mandatory post-server-select gate.</summary>
     /// <param name="fileDialogParent">Parent for folder picker (avoids exclusive-window conflict with this dialog).</param>
-    private void AddEverQuestLinkControls(VBoxContainer vbox, Button eqDirButtonForUpdates, Action onLinkStateChanged, Window fileDialogParent = null)
+    /// <param name="includeTradeskillOptions">When false (first-launch gate), only EQ install path is shown — tradeskill/EQ Sage is optional in settings.</param>
+    private void AddEverQuestLinkControls(VBoxContainer vbox, Button eqDirButtonForUpdates, Action onLinkStateChanged, Window fileDialogParent = null, bool includeTradeskillOptions = true)
     {
         var statusLabel = new Label();
         statusLabel.AddThemeFontSizeOverride("font_size", 13);
@@ -495,6 +518,20 @@ public partial class MainMenu : Control
         pathInput.Text = EQAssetConfig.Instance.EQPath;
         pathInput.AddThemeFontSizeOverride("font_size", 13);
         pathRow.AddChild(pathInput);
+
+        var eqBrowse = new Button();
+        eqBrowse.Text = "Browse…";
+        eqBrowse.CustomMinimumSize = new Vector2(88, 32);
+        eqBrowse.AddThemeFontSizeOverride("font_size", 13);
+        eqBrowse.Pressed += () =>
+        {
+            Window host = fileDialogParent ?? GetWindow();
+            PopupFolderPicker(host, "Select your EverQuest installation folder", dir =>
+            {
+                pathInput.Text = dir;
+            });
+        };
+        pathRow.AddChild(eqBrowse);
         vbox.AddChild(pathRow);
 
         var resultLabel = new Label();
@@ -555,6 +592,9 @@ public partial class MainMenu : Control
 
         vbox.AddChild(btnRow);
 
+        if (!includeTradeskillOptions)
+            return;
+
         var tsHead = new Label();
         tsHead.Text = "Crafting stations (optional)";
         tsHead.AddThemeFontSizeOverride("font_size", 12);
@@ -562,8 +602,7 @@ public partial class MainMenu : Control
         vbox.AddChild(tsHead);
 
         var tsHint = new Label();
-        tsHint.Text = "If your client has EQ Sage output, IT*.glb are used automatically from <linked EQ>\\eqsage\\objects. " +
-            "Otherwise set a folder here (Lantern cannot read tradeskill_objects.eqg).";
+        tsHint.Text = "Only needed for some crafting-station meshes. If you use EQ Sage later, exports can go under <linked EQ>\\eqsage\\objects and are picked up automatically. You can also browse to any folder of IT*.glb here.";
         tsHint.AutowrapMode = TextServer.AutowrapMode.Word;
         tsHint.AddThemeFontSizeOverride("font_size", 11);
         tsHint.AddThemeColorOverride("font_color", new Color(0.55f, 0.55f, 0.55f, 1f));
@@ -584,25 +623,11 @@ public partial class MainMenu : Control
         tsBrowse.AddThemeFontSizeOverride("font_size", 12);
         tsBrowse.Pressed += () =>
         {
-            var fd = new FileDialog();
-            fd.FileMode = FileDialog.FileModeEnum.OpenDir;
-            fd.Access = FileDialog.AccessEnum.Filesystem;
-            fd.Title = "Folder containing IT*.glb (tradeskill stations)";
-            fd.Exclusive = false;
             Window host = fileDialogParent ?? GetWindow();
-            host.AddChild(fd);
-            fd.PopupCentered(new Vector2I(880, 620));
-            fd.DirSelected += (dir) =>
+            PopupFolderPicker(host, "Folder containing IT*.glb (tradeskill stations)", dir =>
             {
                 tsInput.Text = dir;
-                if (GodotObject.IsInstanceValid(fd))
-                    fd.QueueFree();
-            };
-            fd.Canceled += () =>
-            {
-                if (GodotObject.IsInstanceValid(fd))
-                    fd.QueueFree();
-            };
+            });
         };
         tsRow.AddChild(tsBrowse);
         vbox.AddChild(tsRow);
@@ -680,7 +705,7 @@ public partial class MainMenu : Control
         var win = new Window();
         win.Title = "Link Your EverQuest Copy";
         win.Unresizable = true;
-        win.Size = new Vector2I(580, 620);
+        win.Size = new Vector2I(580, 420);
         win.PopupWindow = true;
         win.Exclusive = true;
 
@@ -711,7 +736,7 @@ public partial class MainMenu : Control
         AddEverQuestLinkControls(vbox, _eqDirButton, () =>
         {
             continueBtn.Disabled = !EQAssetConfig.Instance.IsConfigured;
-        }, win);
+        }, win, includeTradeskillOptions: false);
 
         var footer = new HBoxContainer();
         footer.AddThemeConstantOverride("separation", 14);
@@ -1864,17 +1889,18 @@ public partial class MainMenu : Control
             _statMinusBtns[i].Disabled = _allocStats[i] <= 0;
         }
 
-        // Update HP/Mana preview (approximate)
+        int previewLevel = GameState.IsCreatingStudent ? Math.Max(1, GameState.PendingStudentLevel) : 1;
         int sta = _baseStats[1] + _allocStats[1];
-        _previewHp.Text = (sta + 10).ToString(); // Simplified L1 HP preview
         int wis = _baseStats[4] + _allocStats[4];
         int intel = _baseStats[5] + _allocStats[5];
-        bool hasMana = _totalPool > 0; // Classes with alloc points typically have mana (rough heuristic)
-        // Check if current class is a non-mana class
+
         int curClassId = _currentClassIds.Length > 0 && _classSelect.Selected >= 0 && _classSelect.Selected < _currentClassIds.Length
-            ? _currentClassIds[_classSelect.Selected] : 0;
-        bool isMelee = curClassId == 1 || curClassId == 7 || curClassId == 9 || curClassId == 16; // war/monk/rog/ber
-        _previewMana.Text = isMelee ? "—" : Math.Max(wis, intel).ToString();
+            ? _currentClassIds[_classSelect.Selected] : 1;
+        string classKey = ClassKeys.TryGetValue(curClassId, out string ck) ? ck : "warrior";
+
+        _previewHp.Text = CharacterStatsPreview.CalcMaxHp(classKey, previewLevel, sta).ToString();
+        int previewMana = CharacterStatsPreview.CalcMaxMana(classKey, previewLevel, wis, intel);
+        _previewMana.Text = previewMana > 0 ? previewMana.ToString() : "—";
     }
 
     // ═══════════════════════════════════════════════════════════════

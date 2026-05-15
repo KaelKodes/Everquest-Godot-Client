@@ -20,6 +20,7 @@ public partial class ZoneMusicPlayer : Node
     private AudioStreamPlayer _ambiencePlayer;
     private AudioStreamPlayer _ambienceFadeOutPlayer;
     private string _currentAmbience = "";
+    private bool _ambienceResolveFailed;
     private float _ambienceVolume = 0.8f;
     private bool _ambienceMuted = false;
     private float _ambienceFadeTimer = 0;
@@ -244,7 +245,15 @@ public partial class ZoneMusicPlayer : Node
         }
 
         string zone = trackName.ToLowerInvariant().Trim();
-        if (zone == _currentAmbience && _ambiencePlayer.Playing) return;
+        if (zone == _currentAmbience)
+        {
+            if (_ambiencePlayer.Playing) return;
+            if (_ambienceResolveFailed) return;
+        }
+        else
+        {
+            _ambienceResolveFailed = false;
+        }
 
         var cache = EQAssetCache.Instance;
         var config = EQAssetConfig.Instance;
@@ -270,11 +279,15 @@ public partial class ZoneMusicPlayer : Node
 
         if (stream == null)
         {
-            GD.Print($"[Music] No ambience found for '{zone}' (tried sounds/, EQ roots, cache/music; pipe fallbacks live|RoF2)");
+            if (!_ambienceResolveFailed)
+                GD.Print($"[Music] No ambience found for '{zone}' (tried sounds/, EQ roots, cache/music; pipe fallbacks live|RoF2)");
+            _ambienceResolveFailed = true;
             if (_ambiencePlayer.Playing) StopAmbience();
             _currentAmbience = zone;
             return;
         }
+
+        _ambienceResolveFailed = false;
 
         if (_ambiencePlayer.Playing)
         {
@@ -391,6 +404,7 @@ public partial class ZoneMusicPlayer : Node
         _ambiencePlayer.Stop();
         _ambienceFadeOutPlayer.Stop();
         _currentAmbience = "";
+        _ambienceResolveFailed = false;
     }
 
     /// <summary>Set music volume (0..1).</summary>

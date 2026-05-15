@@ -223,12 +223,15 @@ public partial class WorldManager : Node3D
 
         // Environment Setup
         _sun = GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D");
+        if (_sun != null)
+            _sun.SkyMode = DirectionalLight3D.SkyModeEnum.LightOnly;
         _environment = GetNodeOrNull<WorldEnvironment>("WorldEnvironment");        // Spawn Moon
         _moon = new DirectionalLight3D { Name = "MoonLight" };
         _moon.LightColor = new Color(0.6f, 0.7f, 1.0f); // Pale blue
         _moon.LightEnergy = 0.0f;
         _moon.ShadowEnabled = false; // Disable shadows for moon for performance
         _moon.SkyMode = DirectionalLight3D.SkyModeEnum.LightOnly; // Don't draw a black disk in the sky
+        _moon.LightSpecular = 0f; // Directional moon off at night; spec on foliage = glowing trees
         AddChild(_moon);
 
         // Vision Manager
@@ -241,7 +244,7 @@ public partial class WorldManager : Node3D
         _moonSprite.Texture = GD.Load<Texture2D>("res://Assets/Textures/drinal_full_moon.jpg");
         _moonSprite.Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
         _moonSprite.PixelSize = 5.0f; // Large scale for the sky at distance
-        _moonSprite.Position = new Vector3(0, 0, -15000f); // Positioned far in the world space
+        _moonSprite.Position = new Vector3(0, 0, 15000f);
         _moon.AddChild(_moonSprite);
 
         // Load Moon Phase Shader
@@ -494,15 +497,12 @@ public partial class WorldManager : Node3D
         }
 
         _sun.Visible = true;
-        _moon.Visible = true;
-        if (_moonSprite != null) _moonSprite.Visible = true;
 
         float progress = _currentWorldHour / 24f;
-        float sunPitchDegrees = 90f - (progress * 360f); 
+        float sunPitchDegrees = 90f - (progress * 360f);
         _sun.RotationDegrees = new Vector3(sunPitchDegrees, -45f, 0f);
-        
-        float moonPitchDegrees = sunPitchDegrees - 180f;
-        _moon.RotationDegrees = new Vector3(moonPitchDegrees, -45f, 0f);
+
+        _moon.RotationDegrees = new Vector3(sunPitchDegrees, -45f, 0f);
 
         if (_moonMaterial != null)
         {
@@ -542,6 +542,8 @@ public partial class WorldManager : Node3D
             
             _sun.LightEnergy = sunIntensity;
             _moon.LightEnergy = 0f;
+            _moon.Visible = false;
+            if (_moonSprite != null) _moonSprite.Visible = false;
             
             if (_environment != null && _environment.Environment != null)
             {
@@ -551,6 +553,7 @@ public partial class WorldManager : Node3D
                 if (_currentVisionStyle == "ultravision") { bgEnergy = Mathf.Max(bgEnergy, 2.0f); ambEnergy = Mathf.Max(ambEnergy, 4.0f); }
                 else if (_currentVisionStyle == "infravision") { bgEnergy = Mathf.Max(bgEnergy, 1.0f); ambEnergy = Mathf.Max(ambEnergy, 1.5f); }
                 
+                _environment.Environment.AmbientLightSource = Godot.Environment.AmbientSource.Sky;
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
                 _environment.Environment.AmbientLightEnergy = ambEnergy;
             }
@@ -560,6 +563,8 @@ public partial class WorldManager : Node3D
                 Color currentHorizon = nightHorizonColor.Lerp(dayHorizonColor, sunIntensity);
                 skyMat.SkyTopColor = currentTop;
                 skyMat.SkyHorizonColor = currentHorizon;
+                skyMat.GroundBottomColor = nightTopColor;
+                skyMat.GroundHorizonColor = currentHorizon.Lerp(nightHorizonColor, 0.35f);
             }
 
             // Fog logic should run regardless of sky material (for dungeons/custom zones)
@@ -574,17 +579,21 @@ public partial class WorldManager : Node3D
         }
         else
         {
+            // "Best ever" = zone negate bake + torches/omnis. No directional moon (it fights that bake).
             _sun.LightEnergy = 0f;
-            float nightProgress = _currentWorldHour > _duskHour ? (_currentWorldHour - _duskHour) / (24f - _duskHour + _dawnHour) : (_currentWorldHour + (24f - _duskHour)) / (24f - _duskHour + _dawnHour);
-            float moonIntensity = Mathf.Clamp(1.0f - Mathf.Pow((nightProgress - 0.5f) * 2f, 2f), 0f, 1f);
-            _moon.LightEnergy = moonIntensity * 0.3f;
-            
+            _moon.LightEnergy = 0f;
+            _moon.Visible = false;
+            if (_moonSprite != null) _moonSprite.Visible = false;
+
             if (_environment != null && _environment.Environment != null)
             {
-                float bgEnergy = Mathf.Max(0.1f, moonIntensity * 0.3f);
-                float ambEnergy = Mathf.Max(0.05f, moonIntensity * 0.3f);
+                float bgEnergy = 0.06f;
+                float ambEnergy = 0.06f;
                 if (_currentVisionStyle == "ultravision") { bgEnergy = Mathf.Max(bgEnergy, 2.0f); ambEnergy = Mathf.Max(ambEnergy, 4.0f); }
                 else if (_currentVisionStyle == "infravision") { bgEnergy = Mathf.Max(bgEnergy, 1.0f); ambEnergy = Mathf.Max(ambEnergy, 1.5f); }
+                // Flat ambient — sky hemisphere was lighting distant trees/horizon while near ground stayed black.
+                _environment.Environment.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                _environment.Environment.AmbientLightColor = new Color(0.03f, 0.04f, 0.07f);
                 _environment.Environment.BackgroundEnergyMultiplier = bgEnergy;
                 _environment.Environment.AmbientLightEnergy = ambEnergy;
             }
@@ -593,13 +602,15 @@ public partial class WorldManager : Node3D
             {
                 skyMat.SkyTopColor = nightTopColor;
                 skyMat.SkyHorizonColor = nightHorizonColor;
+                skyMat.GroundBottomColor = new Color(0.005f, 0.008f, 0.015f);
+                skyMat.GroundHorizonColor = new Color(0.02f, 0.03f, 0.05f);
             }
 
             if (_environment != null && _environment.Environment != null)
             {
                 _environment.Environment.FogEnabled = true;
                 _environment.Environment.FogMode = Godot.Environment.FogModeEnum.Exponential;
-                _environment.Environment.FogDensity = 0.001f; // Reverting to slightly thinner night fog
+                _environment.Environment.FogDensity = 0.0002f;
                 _environment.Environment.FogLightColor = nightHorizonColor;
                 _environment.Environment.FogSunScatter = 0.0f;
             }
@@ -721,11 +732,6 @@ public partial class WorldManager : Node3D
     {
         // Celestial bodies should be anchored to the camera to prevent parallax and clipping,
         // but their rotation makes them orbit the world.
-        if (_moon != null && _camera != null)
-        {
-            _moon.GlobalPosition = _camera.GlobalPosition;
-        }
-
         if (_timeInitialized)
         {
             if (SmoothDayNightCycle)

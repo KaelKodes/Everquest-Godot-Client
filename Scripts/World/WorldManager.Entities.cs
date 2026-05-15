@@ -45,7 +45,7 @@ public partial class WorldManager : Node3D
             GD.PrintErr($"[WORLD] ProcessMobMove parsing error: {ex.Message}");
         }
     }
-    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f, float size = 6f, bool wantsHeldLanternLight = false, int lightPharosVariant = -1)
+    public void SpawnEntityAt(string id, string name, string type, Vector3 pos, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float headingYaw = 0f, float size = 6f, bool wantsHeldLanternLight = false, int lightPharosVariant = -1, string modelCodeOverride = null)
     {
         if (_activeEntities.ContainsKey(id)) return;
 
@@ -63,7 +63,7 @@ public partial class WorldManager : Node3D
             // Before Setup so AttachWeapons(..., equip) sees _hasLightSource and wires handheld omni to lantern.
             if (wantsHeldLanternLight)
                 instance.SetLightSource(true);
-            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson, size);
+            instance.Setup(name, type, appearanceJson, race, gender, face, equipVisualsJson, size, modelCodeOverride);
             if (wantsHeldLanternLight)
                 instance.SetLightSource(true);
             if (lightPharosVariant >= 0)
@@ -125,6 +125,12 @@ public partial class WorldManager : Node3D
             int lightPharosVariant = -1;
             if (ent.TryGetProperty("lightPharosVariant", out var lpv) && lpv.ValueKind == System.Text.Json.JsonValueKind.Number)
                 lightPharosVariant = lpv.GetInt32();
+            string modelCodeOverride = null;
+            if (ent.TryGetProperty("modelCode", out var mcProp) && mcProp.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                modelCodeOverride = mcProp.GetString();
+                if (string.IsNullOrEmpty(modelCodeOverride)) modelCodeOverride = null;
+            }
 
             incomingIds.Add(id);
 
@@ -132,7 +138,7 @@ public partial class WorldManager : Node3D
             {
                 // GD.Print($"[WORLD] Spawning '{name}' (race={race} gender={gender} face={face}) at server coords: {rawX}, {rawY}, {rawZ}");
                 // Use the Godot-mapped coordinates (x, y, z) calculated above
-                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw, size, wantsHeldLanternLight, lightPharosVariant);
+                SpawnEntityAt(id, name, type, new Vector3(x, y, z), appearance, race, gender, face, equipVis, godotYaw, size, wantsHeldLanternLight, lightPharosVariant, modelCodeOverride);
             }
             else
             {

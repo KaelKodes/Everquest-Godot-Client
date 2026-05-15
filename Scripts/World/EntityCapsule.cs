@@ -1251,7 +1251,7 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
     public float EyeHeight { get; private set; } = 5.8f;
     public float OverheadHeight { get; private set; } = 7.0f;
 
-    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float size = 6f)
+    public void Setup(string name, string type, string appearanceJson = "", int race = 1, int gender = 0, int face = 0, string equipVisualsJson = "", float size = 6f, string modelCodeOverride = null)
     {
         // Setup nodes if Setup is called before _Ready
         if (_nameLabel == null || _mesh == null) _Ready();
@@ -1381,14 +1381,23 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
 
         // Try to load actual character model GLB
         bool modelLoaded = false;
-        if (TryGetRaceModel(race, out var codes))
+        string modelCode = null;
+        if (!string.IsNullOrEmpty(modelCodeOverride))
         {
-            string modelCode = (gender == 1) ? codes.female : codes.male;
+            modelCode = modelCodeOverride;
+        }
+        else if (TryGetRaceModel(race, out var codes))
+        {
+            modelCode = (gender == 1) ? codes.female : codes.male;
+        }
+
+        if (modelCode != null)
+        {
             _modelCode = modelCode;
             
             string modelPath = $"res://Data/Characters/{modelCode}.glb";
 
-            if (face > 0)
+            if (face > 0 && string.IsNullOrEmpty(modelCodeOverride))
             {
                 if (modelCode != "frm" && modelCode != "frf" && modelCode != "kem" && modelCode != "kef")
                 {
@@ -1608,12 +1617,16 @@ public partial class EntityCapsule : CharacterBody3D, ITargetable
                 GD.Print($"[MODEL] GLB not found at {modelPath} for '{name}' (race={race} gender={gender})");
             }
         }
-        else
+        else if (string.IsNullOrEmpty(modelCodeOverride))
         {
             if (_warnedRaces.Add(race))
             {
                 GD.Print($"[MODEL] No race mapping for '{name}' (race={race} gender={gender}), using capsule");
             }
+        }
+        else
+        {
+            GD.Print($"[MODEL] GLB not found for override '{modelCodeOverride}' on '{name}', using capsule");
         }
 
         if (!modelLoaded)

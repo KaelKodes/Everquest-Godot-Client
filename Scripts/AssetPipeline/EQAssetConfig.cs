@@ -14,7 +14,20 @@ public partial class EQAssetConfig : RefCounted
     private static EQAssetConfig _instance;
     public static EQAssetConfig Instance => _instance ??= new EQAssetConfig();
 
-    private const string ConfigPath = "user://eq_config.json";
+    private const string LegacyConfigPath = "user://eq_config.json";
+
+    /// <summary>Stable across game updates (not tied to Godot user:// project folder renames).</summary>
+    private static string StableConfigPath
+    {
+        get
+        {
+            string dir = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                "EQ.gd");
+            System.IO.Directory.CreateDirectory(dir);
+            return System.IO.Path.Combine(dir, "eq_config.json");
+        }
+    }
 
     /// <summary>The validated path to the EQ installation directory.</summary>
     public string EQPath { get; private set; } = "";
@@ -588,12 +601,8 @@ public partial class EQAssetConfig : RefCounted
             var opts = new JsonSerializerOptions { WriteIndented = true };
             string json = root.ToJsonString(opts);
 
-            using var file = FileAccess.Open(ConfigPath, FileAccess.ModeFlags.Write);
-            if (file != null)
-            {
-                file.StoreString(json);
-                GD.Print("[EQ Config] Saved configuration.");
-            }
+            System.IO.File.WriteAllText(StableConfigPath, json);
+            GD.Print($"[EQ Config] Saved configuration to {StableConfigPath}.");
         }
         catch (Exception ex)
         {
@@ -601,20 +610,41 @@ public partial class EQAssetConfig : RefCounted
         }
     }
 
+    private static string ReadConfigJson()
+    {
+        if (System.IO.File.Exists(StableConfigPath))
+            return System.IO.File.ReadAllText(StableConfigPath);
+
+        string legacy = ProjectSettings.GlobalizePath(LegacyConfigPath);
+        if (!System.IO.File.Exists(legacy))
+            return null;
+
+        try
+        {
+            string json = System.IO.File.ReadAllText(legacy);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StableConfigPath)!);
+            System.IO.File.WriteAllText(StableConfigPath, json);
+            GD.Print("[EQ Config] Migrated EQ path from legacy user:// storage.");
+            return json;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[EQ Config] Legacy config migration failed: {ex.Message}");
+            return System.IO.File.ReadAllText(legacy);
+        }
+    }
+
     private void Load()
     {
         try
         {
-            if (!FileAccess.FileExists(ConfigPath))
+            string json = ReadConfigJson();
+            if (string.IsNullOrEmpty(json))
             {
                 GD.Print("[EQ Config] No saved configuration found.");
                 return;
             }
 
-            using var file = FileAccess.Open(ConfigPath, FileAccess.ModeFlags.Read);
-            if (file == null) return;
-
-            string json = file.GetAsText();
             var doc = JsonDocument.Parse(json);
 
             bool resaveEqPath = false;

@@ -172,6 +172,8 @@ public partial class WorldManager : Node3D
             }
         }
         _spawnedDoors.Clear();
+        _doorNetworkStatePending.Clear();
+        _doorNetworkStateApplyAtMsec.Clear();
         foreach (var child in _worldObjectsContainer.GetChildren())
         {
             if (GodotObject.IsInstanceValid(child))
@@ -601,24 +603,24 @@ public partial class WorldManager : Node3D
             //
             // LanternExtractor's baked negative-scale transform is not zone-specific:
             // apply the normal correction to every extracted GLB zone.
-            bool useLightFix = true;
-            LightFixActiveForCurrentZone = useLightFix;
-            if (useLightFix)
-            {
-                int meshCountFixed = 0;
-                int surfaceCountFixed = 0;
-                BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals: true);
-                _zoneNormalsCorrectedThisLoad = true;
-                GD.Print($"[WORLD][LIGHT-FIX] '{zoneId}': flipped outward normals on {surfaceCountFixed} zone surface(s) across {meshCountFixed} mesh(es). Backlight hack disabled for this zone.");
-            }
-
-            // Register Animated Materials for the zone
+            // Material list before lighting passes so we can skip water from the global normal flip.
             string cachePath = EQAssetCache.Instance.GetZonePath(zoneId);
             string zoneMatList = System.IO.Path.Combine(cachePath, "Zone", "MaterialLists", $"{zoneId}.txt");
             Dictionary<string, (string[] frames, float delay)> animData = null;
             if (System.IO.File.Exists(zoneMatList))
             {
                 animData = ParseMaterialList(zoneMatList);
+            }
+
+            bool useLightFix = true;
+            LightFixActiveForCurrentZone = useLightFix;
+            if (useLightFix)
+            {
+                int meshCountFixed = 0;
+                int surfaceCountFixed = 0;
+                BakeFlippedNormalsRecursive(scene, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals: true, animData);
+                _zoneNormalsCorrectedThisLoad = true;
+                GD.Print($"[WORLD][LIGHT-FIX] '{zoneId}': flipped outward normals on {surfaceCountFixed} zone surface(s) across {meshCountFixed} mesh(es). Backlight hack disabled for this zone.");
             }
 
             // Fix Materials: Strip Unshaded and apply proper roughness so clustered lighting works.
@@ -628,6 +630,7 @@ public partial class WorldManager : Node3D
             {
                 string texturesDir = System.IO.Path.Combine(cachePath, "Zone", "Textures");
                 RegisterAnimationsRecursive(scene, animData, texturesDir);
+                EnsureLiquidTexturesRecursive(scene, animData, texturesDir);
             }
 
             // Generate collision for walkable geometry
@@ -696,6 +699,46 @@ public partial class WorldManager : Node3D
 
         _musicPlayer.PlayZoneAmbience(trackName);
     }
+    private static void ApplyLiquidMaterialSettings(StandardMaterial3D mat)
+    {
+        string n = (mat.ResourceName ?? "").ToLower();
+        // Pool planes: single-sided + default depth (double-sided transparent fights the zone
+        // negative-scale transform and flickers at grazing angles). Waterfalls stay two-sided.
+        bool verticalSheet = n.Contains("falls");
+        mat.CullMode = verticalSheet
+            ? BaseMaterial3D.CullModeEnum.Disabled
+            : BaseMaterial3D.CullModeEnum.Back;
+        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+        mat.DepthDrawMode = BaseMaterial3D.DepthDrawModeEnum.OpaqueOnly;
+        mat.ShadingMode = StandardMaterial3D.ShadingModeEnum.PerPixel;
+        mat.SpecularMode = StandardMaterial3D.SpecularModeEnum.Disabled;
+        mat.RenderPriority = 0;
+        bool hasTexture = mat.AlbedoTexture != null;
+        if (n.Contains("lava"))
+        {
+            mat.AlbedoColor = hasTexture ? Colors.White : new Color(0.9f, 0.25f, 0.05f, 0.9f);
+            mat.EmissionEnabled = true;
+            mat.Emission = new Color(0.8f, 0.2f, 0.0f);
+            mat.EmissionEnergyMultiplier = 2.0f;
+        }
+        else if (n.Contains("slime"))
+        {
+            mat.AlbedoColor = hasTexture ? Colors.White : new Color(0.15f, 0.85f, 0.15f, 0.8f);
+        }
+        else
+        {
+            // Keep EQ w1/w2 ripple textures visible — a blue multiply tint reads as flat missing water.
+            mat.AlbedoColor = hasTexture ? Colors.White : new Color(0.55f, 0.85f, 0.95f, 0.75f);
+        }
+    }
+
+    /// <summary>Shared liquid name check for zone load and GLTF sanitize (no anim dictionary required).</summary>
+    public static bool IsLiquidMaterialName(string resourceName)
+    {
+        if (string.IsNullOrEmpty(resourceName)) return false;
+        return IsLiquidName(resourceName.ToLower());
+    }
+
     private void GenerateCollisionRecursive(Node node, ref int meshCount, ref int collisionCount, AnimatableBody3D targetBody = null, Dictionary<string, (string[] frames, float delay)> animData = null, bool isInteractiveDoor = false)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
@@ -712,7 +755,7 @@ public partial class WorldManager : Node3D
                     // Use GetActiveMaterial to catch overrides from the GLTF importer
                     var mat = meshInst.GetActiveMaterial(i);
                     bool isLiquid = mat != null && IsLiquidMaterial(mat, animData);
-                    
+
                     bool isNoCollide = false;
                     if (mat != null && !string.IsNullOrEmpty(mat.ResourceName)) {
                         string n = mat.ResourceName.ToLower();
@@ -763,20 +806,42 @@ public partial class WorldManager : Node3D
                     if (indicesObj.VariantType != Variant.Type.Nil)
                     {
                         var indices = indicesObj.AsInt32Array();
-                        for (int j = 0; j < indices.Length; j++)
+                        for (int j = 0; j < indices.Length; j += 3)
                         {
                             if (isNoCollide) continue;
-                            if (isLiquid) liquidFaces.Add(vertices[indices[j]]);
-                            else faces.Add(vertices[indices[j]]);
+                            if (j + 2 >= indices.Length) break;
+                            if (isLiquid)
+                            {
+                                liquidFaces.Add(vertices[indices[j + 2]]);
+                                liquidFaces.Add(vertices[indices[j + 1]]);
+                                liquidFaces.Add(vertices[indices[j]]);
+                            }
+                            else
+                            {
+                                faces.Add(vertices[indices[j]]);
+                                faces.Add(vertices[indices[j + 1]]);
+                                faces.Add(vertices[indices[j + 2]]);
+                            }
                         }
                     }
                     else
                     {
-                        for (int j = 0; j < vertices.Length; j++)
+                        for (int j = 0; j < vertices.Length; j += 3)
                         {
                             if (isNoCollide) continue;
-                            if (isLiquid) liquidFaces.Add(vertices[j]);
-                            else faces.Add(vertices[j]);
+                            if (j + 2 >= vertices.Length) break;
+                            if (isLiquid)
+                            {
+                                liquidFaces.Add(vertices[j + 2]);
+                                liquidFaces.Add(vertices[j + 1]);
+                                liquidFaces.Add(vertices[j]);
+                            }
+                            else
+                            {
+                                faces.Add(vertices[j]);
+                                faces.Add(vertices[j + 1]);
+                                faces.Add(vertices[j + 2]);
+                            }
                         }
                     }
                 }
@@ -843,8 +908,11 @@ public partial class WorldManager : Node3D
         }
     }
 
-    private bool IsLiquidMaterial(Material material, Dictionary<string, (string[] frames, float delay)> animData = null)
+    private static bool IsLiquidMaterial(Material material, Dictionary<string, (string[] frames, float delay)> animData = null, string meshNodeHint = null)
     {
+        if (!string.IsNullOrEmpty(meshNodeHint) && IsLiquidName(meshNodeHint.ToLower()))
+            return true;
+
         if (material == null) return false;
         
         // 1. Check material name (resource name)
@@ -855,9 +923,9 @@ public partial class WorldManager : Node3D
         }
 
         // 2. Check texture path (often more reliable for GLTF imports)
-        if (material is StandardMaterial3D stdMat && stdMat.AlbedoTexture != null)
+        if (material is BaseMaterial3D bm && bm.AlbedoTexture != null)
         {
-            string texPath = stdMat.AlbedoTexture.ResourcePath.ToLower();
+            string texPath = bm.AlbedoTexture.ResourcePath.ToLower();
             if (IsLiquidName(texPath)) return true;
         }
         
@@ -873,15 +941,33 @@ public partial class WorldManager : Node3D
         return false;
     }
 
-    private bool IsLiquidName(string name)
+    private static bool IsLiquidName(string name)
     {
         // Many variations of water and lava
         return name.Contains("water") || name.Contains("wawa") || name.Contains("fwater") || 
                name.Contains("swater") || name.Contains("lava") || name.Contains("slime") ||
                name.Contains("liquid") || name.Contains("pool") || name.Contains("p_water") ||
+               name.Contains("river") || name.Contains("canal") || name.Contains("sewer") ||
                name == "ow1" || name == "w1" || name == "fw1" || name == "sw1" || 
-               name.StartsWith("falls") || name == "t50_w1" || name == "d_ow1" ||
-               name.Contains("pok_water") || name.Contains("pok_pool");
+               name.StartsWith("falls") || name == "t50_w1" || name == "d_ow1" || name == "d_w1" ||
+               name.Contains("pok_water") || name.Contains("pok_pool") ||
+               IsEqWaterTileToken(name);
+    }
+
+    /// <summary>EQ zone tiles like d_w1, :w2:, w3 in Lantern material lists (not decowall).</summary>
+    private static bool IsEqWaterTileToken(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        for (int i = 0; i < name.Length - 1; i++)
+        {
+            if (name[i] != 'w' || !char.IsDigit(name[i + 1])) continue;
+            bool leftOk = i == 0 || name[i - 1] == '_' || name[i - 1] == ':' || name[i - 1] == 'd';
+            int j = i + 1;
+            while (j < name.Length && char.IsDigit(name[j])) j++;
+            bool rightOk = j >= name.Length || name[j] == '_' || name[j] == ':' || name[j] == '.';
+            if (leftOk && rightOk) return true;
+        }
+        return false;
     }
 
 
@@ -899,24 +985,8 @@ public partial class WorldManager : Node3D
                     mat.Metallic = 0.0f;
                     mat.MetallicSpecular = 0.0f;
                     
-                    if (IsLiquidMaterial(mat, animData))
-                    {
-                        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                        
-                        string n = mat.ResourceName.ToLower();
-                        if (n.Contains("lava")) {
-                            mat.AlbedoColor = new Color(0.8f, 0.2f, 0.0f, 0.85f);
-                            mat.EmissionEnabled = true;
-                            mat.Emission = new Color(0.8f, 0.2f, 0.0f);
-                            mat.EmissionEnergyMultiplier = 2.0f;
-                        } else if (n.Contains("slime")) {
-                            mat.AlbedoColor = new Color(0.1f, 0.8f, 0.1f, 0.75f);
-                        } else {
-                            // Water
-                            mat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
-                        }
-                    }
+                    if (IsLiquidMaterial(mat, animData, meshInst.Name))
+                        ApplyLiquidMaterialSettings(mat);
                     else
                     {
                         // With corrected outward normals, back-face cull hides underside glow on platforms.
@@ -956,24 +1026,8 @@ public partial class WorldManager : Node3D
                     newMat.Metallic = 0.0f;
                     newMat.MetallicSpecular = 0.0f;
                     
-                    if (IsLiquidMaterial(newMat, animData))
-                    {
-                        newMat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                        newMat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                        
-                        string n = newMat.ResourceName.ToLower();
-                        if (n.Contains("lava")) {
-                            newMat.AlbedoColor = new Color(0.8f, 0.2f, 0.0f, 0.85f);
-                            newMat.EmissionEnabled = true;
-                            newMat.Emission = new Color(0.8f, 0.2f, 0.0f);
-                            newMat.EmissionEnergyMultiplier = 2.0f;
-                        } else if (n.Contains("slime")) {
-                            newMat.AlbedoColor = new Color(0.1f, 0.8f, 0.1f, 0.75f);
-                        } else {
-                            // Water
-                            newMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f, 0.65f);
-                        }
-                    }
+                    if (IsLiquidMaterial(newMat, animData, meshInst.Name))
+                        ApplyLiquidMaterialSettings(newMat);
                     else if (_zoneNormalsCorrectedThisLoad)
                     {
                         newMat.CullMode = BaseMaterial3D.CullModeEnum.Back;
@@ -1027,7 +1081,7 @@ public partial class WorldManager : Node3D
     /// </summary>
     public const string LightFixFlipMetaKey = "_lightfix_normals_flipped";
 
-    public static void BakeFlippedNormalsRecursive(Node node, ref int meshCountFixed, ref int surfaceCountFixed, bool recomputeNormals = false)
+    public static void BakeFlippedNormalsRecursive(Node node, ref int meshCountFixed, ref int surfaceCountFixed, bool recomputeNormals = false, Dictionary<string, (string[] frames, float delay)> animData = null)
     {
         if (node is MeshInstance3D meshInst && meshInst.Mesh != null)
         {
@@ -1040,9 +1094,13 @@ public partial class WorldManager : Node3D
                 if (surfaceCount > 0)
                 {
                     var dst = new ArrayMesh();
+                    string meshHint = meshInst.Name.ToString();
                     for (int s = 0; s < surfaceCount; s++)
                     {
                         var arrays = src.SurfaceGetArrays(s);
+                        var mat = src.SurfaceGetMaterial(s);
+                        if (mat == null)
+                            mat = meshInst.GetActiveMaterial(s);
 
                         if (recomputeNormals && 0 < arrays.Count && arrays[0].VariantType == Variant.Type.PackedVector3Array)
                         {
@@ -1054,7 +1112,6 @@ public partial class WorldManager : Node3D
                         }
 
                         // Single negate for Lantern negative-scale chain — correct for omnis/point lights.
-                        // Do not use world-space outward recompute here; it inverts omni response.
                         if (1 < arrays.Count && arrays[1].VariantType == Variant.Type.PackedVector3Array)
                         {
                             var normals = (Vector3[])arrays[1];
@@ -1063,10 +1120,6 @@ public partial class WorldManager : Node3D
                             arrays[1] = normals;
                         }
 
-                        // Flip tangent handedness only — XYZ stay the same, only .W sign
-                        // changes — so normal-mapped TBN remains consistent with the
-                        // negated normals. (Godot ARRAY_TANGENT = 2, PackedFloat32Array,
-                        // 4 floats per vertex: x,y,z,w.)
                         if (2 < arrays.Count && arrays[2].VariantType == Variant.Type.PackedFloat32Array)
                         {
                             var tangents = (float[])arrays[2];
@@ -1075,13 +1128,6 @@ public partial class WorldManager : Node3D
                             arrays[2] = tangents;
                         }
 
-                        // IMPORTANT: do NOT reverse triangle winding. Godot auto-flips cull
-                        // order for negative-determinant node transforms, so the original
-                        // winding still produces correct front/back face culling. Reversing
-                        // winding here would invert visibility — floors disappear, you see
-                        // through the world, etc.
-
-                        var mat = src.SurfaceGetMaterial(s);
                         dst.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
                         if (mat != null) dst.SurfaceSetMaterial(s, mat);
                         surfaceCountFixed++;
@@ -1095,7 +1141,7 @@ public partial class WorldManager : Node3D
         }
         foreach (var child in node.GetChildren())
         {
-            BakeFlippedNormalsRecursive(child, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals);
+            BakeFlippedNormalsRecursive(child, ref meshCountFixed, ref surfaceCountFixed, recomputeNormals, animData);
         }
     }
 
@@ -1410,13 +1456,54 @@ public partial class WorldManager : Node3D
 
         GD.Print($"[WORLD] Rebuilt floor/boundaries for map geometry: center=({centerX},{centerZ}), size=({mapWidth}x{mapLength})");
     }
+    /// <summary>Bind w1/w2… frame PNGs when glTF import left liquid materials without an albedo texture.</summary>
+    private void EnsureLiquidTexturesRecursive(Node node, Dictionary<string, (string[] frames, float delay)> animData, string texturesDir)
+    {
+        if (_materialAnimator == null || animData == null) return;
+
+        if (node is MeshInstance3D meshInst)
+        {
+            void TryBind(BaseMaterial3D mat)
+            {
+                if (mat == null || mat.AlbedoTexture != null) return;
+                if (string.IsNullOrEmpty(mat.ResourceName)) return;
+                if (!IsLiquidMaterial(mat, animData, meshInst.Name)) return;
+
+                if (animData.TryGetValue(mat.ResourceName, out var anim))
+                    _materialAnimator.RegisterMaterial(mat, anim.frames, anim.delay, texturesDir);
+                else
+                {
+                    foreach (var kvp in animData)
+                    {
+                        if (kvp.Key.Equals(mat.ResourceName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _materialAnimator.RegisterMaterial(mat, kvp.Value.frames, kvp.Value.delay, texturesDir);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
+                TryBind(meshInst.GetSurfaceOverrideMaterial(i) as BaseMaterial3D);
+            if (meshInst.Mesh != null)
+            {
+                for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
+                    TryBind(meshInst.Mesh.SurfaceGetMaterial(i) as BaseMaterial3D);
+            }
+        }
+
+        foreach (Node child in node.GetChildren())
+            EnsureLiquidTexturesRecursive(child, animData, texturesDir);
+    }
+
     private void RegisterAnimationsRecursive(Node node, Dictionary<string, (string[] frames, float delay)> animData, string texturesDir)
     {
         if (node is MeshInstance3D meshInst)
         {
             for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
             {
-                if (meshInst.GetSurfaceOverrideMaterial(i) is StandardMaterial3D mat)
+                if (meshInst.GetSurfaceOverrideMaterial(i) is BaseMaterial3D mat)
                 {
                     if (mat.ResourceName != null && animData.TryGetValue(mat.ResourceName, out var anim))
                     {
@@ -1439,7 +1526,7 @@ public partial class WorldManager : Node3D
             {
                 for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
                 {
-                    if (meshInst.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D mat)
+                    if (meshInst.Mesh.SurfaceGetMaterial(i) is BaseMaterial3D mat)
                     {
                         if (mat.ResourceName != null && animData.TryGetValue(mat.ResourceName, out var anim))
                         {

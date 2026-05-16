@@ -125,6 +125,7 @@ public partial class MainUI
 			{
 				string src = evt.GetProperty("source").GetString();
 				string tgt = evt.GetProperty("target").GetString();
+				string tgtId = evt.TryGetProperty("targetId", out var tIdProp) && tIdProp.ValueKind != JsonValueKind.Null ? tIdProp.GetString() : "";
 				string spell = evt.GetProperty("spell").GetString();
 				int dmg = evt.GetProperty("damage").GetInt32();
 				Log("SPELL", $"{src} hit {tgt} for {dmg} points of non-melee damage. ({spell})");
@@ -133,7 +134,9 @@ public partial class MainUI
 				if (wm != null) 
 				{
 					string hitAction = dmg >= 25 ? "hit_heavy" : "hit";
-					wm.TriggerEntityAction(tgt, hitAction);
+					bool hitById = !string.IsNullOrEmpty(tgtId) && wm.GetEntityById(tgtId) != null;
+					if (hitById) wm.TriggerEntityActionById(tgtId, hitAction);
+					else wm.TriggerEntityAction(tgt, hitAction);
 				}
 				// Spell impact — use a generic blunt sound for magical force
 				UISoundPlayer.Instance?.PlayWeaponImpact("crush");
@@ -151,17 +154,38 @@ public partial class MainUI
 			case "DOT_TICK":
 			{
 				string tgt = evt.GetProperty("target").GetString();
+				string tgtId = evt.TryGetProperty("targetId", out var dotTgtId) && dotTgtId.ValueKind != JsonValueKind.Null ? dotTgtId.GetString() : "";
 				string spell = evt.GetProperty("spell").GetString();
 				int dmg = evt.GetProperty("damage").GetInt32();
-				Log("DOT", $"{tgt} has taken {dmg} damage from {spell}.");
+				string logLine = evt.TryGetProperty("text", out var dotTxt) && dotTxt.ValueKind != JsonValueKind.Null && !string.IsNullOrEmpty(dotTxt.GetString())
+					? dotTxt.GetString()
+					: $"{tgt} has taken {dmg} damage from {spell}.";
+				Log("DOT", logLine);
+				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
+				if (wm != null)
+				{
+					string hitAction = dmg >= 25 ? "hit_heavy" : "hit";
+					bool hitById = !string.IsNullOrEmpty(tgtId) && wm.GetEntityById(tgtId) != null;
+					if (hitById) wm.TriggerEntityActionById(tgtId, hitAction);
+					else wm.TriggerEntityAction(tgt, hitAction);
+				}
+				UISoundPlayer.Instance?.PlayWeaponImpact("crush");
 				break;
 			}
 			case "DEATH":
 			{
 				string who = evt.GetProperty("who").GetString();
+				string whoId = evt.TryGetProperty("whoId", out var wIdProp) && wIdProp.ValueKind != JsonValueKind.Null
+					? wIdProp.GetString() ?? ""
+					: "";
 				Log("DEATH", $"{who} has been slain!");
 				var wm = GetNodeOrNull<WorldManager>("ViewPortPanel/SubViewportContainer/SubViewport/World3D");
-				if (wm != null) wm.TriggerEntityAction(who, "die");
+				if (wm != null)
+				{
+					bool dieById = !string.IsNullOrEmpty(whoId) && wm.GetEntityById(whoId) != null;
+					if (dieById) wm.TriggerEntityActionById(whoId, "die");
+					else wm.TriggerEntityAction(who, "die");
+				}
 				break;
 			}
 			case "XP_GAIN":

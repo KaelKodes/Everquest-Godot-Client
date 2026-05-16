@@ -78,10 +78,10 @@ public partial class WorldManager : Node3D
             float scaleMult = size / 100f;
             doorEntity.Scale = new Vector3(scaleMult, scaleMult, scaleMult);
 
-            // Is this an elevator? If so, we need an AnimatableBody3D wrapper inside to carry players
+            // Elevators need AnimatableBody3D so mesh + collision + rider sync. Portcullises tween the DoorEntity
+            // root instead — AnimatableBody under a scaled Node3D often ignores Tween motion; double DOOR_STATE
+            // bursts also cancel the tween before it moves.
             string upperName = modelName.ToUpper();
-            
-            // Explicitly exclude known buttons/posts like fele1, fele2
             bool isElevator = (upperName.Contains("LEVATOR") || upperName.Contains("ELESTEP") || upperName.Contains("LIFT") || upperName.Contains("PLATFORM"));
             
             // Buttons that call the elevator often share the name (e.g. lift_btn) but should NOT be unclickable!
@@ -90,9 +90,10 @@ public partial class WorldManager : Node3D
                 isElevator = false;
             }
             
+            bool needsMovingPlatform = isElevator;
             AnimatableBody3D platformBody = null;
             
-            if (isElevator)
+            if (needsMovingPlatform)
             {
                 platformBody = new AnimatableBody3D { Name = "PlatformBody", SyncToPhysics = false };
                 doorEntity.AddChild(platformBody);
@@ -106,7 +107,7 @@ public partial class WorldManager : Node3D
             // Generate collision for the door meshes
             int meshCount = 0;
             int collisionCount = 0;
-            if (isElevator)
+            if (needsMovingPlatform)
             {
                 GenerateCollisionRecursive(doorMeshNode, ref meshCount, ref collisionCount, platformBody, null, true);
             }
@@ -132,13 +133,34 @@ public partial class WorldManager : Node3D
     }
     public void ToggleDoor(string doorId, bool isOpen)
     {
-        if (_spawnedDoors.TryGetValue(doorId, out Node3D doorNode) && doorNode is DoorEntity doorEntity)
+        // Merge rapid open/close (duplicate clicks or server echo) — last state wins after a short quiet window.
+        _doorNetworkStatePending[doorId] = isOpen;
+        _doorNetworkStateApplyAtMsec[doorId] = Time.GetTicksMsec() + DoorNetworkDebounceMs;
+    }
+
+    private void FlushDebouncedDoorStates()
+    {
+        if (_doorNetworkStateApplyAtMsec.Count == 0) return;
+        ulong now = Time.GetTicksMsec();
+        List<string> ready = null;
+        foreach (var kv in _doorNetworkStateApplyAtMsec)
         {
-            doorEntity.SetOpenState(isOpen);
+            if (now >= kv.Value)
+                (ready ??= new List<string>()).Add(kv.Key);
         }
-        else
+        if (ready == null) return;
+
+        foreach (string doorId in ready)
         {
-            GD.Print($"[WORLD] Ignored state change for unspawned/invisible door: {doorId}");
+            _doorNetworkStateApplyAtMsec.Remove(doorId);
+            if (!_doorNetworkStatePending.TryGetValue(doorId, out bool isOpen))
+                continue;
+            _doorNetworkStatePending.Remove(doorId);
+
+            if (_spawnedDoors.TryGetValue(doorId, out Node3D doorNode) && doorNode is DoorEntity doorEntity)
+                doorEntity.SetOpenState(isOpen);
+            else
+                GD.Print($"[WORLD] Ignored state change for unspawned/invisible door: {doorId}");
         }
     }
     private void ConnectDoorInputsRecursive(Node node, DoorEntity doorEntity)

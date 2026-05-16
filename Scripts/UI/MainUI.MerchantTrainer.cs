@@ -5,6 +5,17 @@ using System.Collections.Generic;
 
 public partial class MainUI
 {
+	/// <summary>OPEN_MERCHANT / OPEN_TRAINER send npcId as number or string — normalize for SendRaw payloads.</summary>
+	private static string JsonElementAsNpcId(JsonElement el)
+	{
+		return el.ValueKind switch
+		{
+			JsonValueKind.String => el.GetString() ?? "",
+			JsonValueKind.Number => el.GetRawText(),
+			_ => "",
+		};
+	}
+
 	private void OnMerchantOpened(Variant data)
 	{
 		if (!IsInstanceValid(this)) return;
@@ -14,7 +25,7 @@ public partial class MainUI
 			using var doc = JsonDocument.Parse(json);
 			var root = doc.RootElement;
 			string npcName = root.GetProperty("npcName").GetString();
-			string npcId = root.GetProperty("npcId").GetString();
+			string npcId = JsonElementAsNpcId(root.GetProperty("npcId"));
 			var items = root.GetProperty("items");
 
 			// Track active merchant for sell transactions
@@ -511,8 +522,8 @@ public partial class MainUI
 		try
 		{
 			var root = System.Text.Json.JsonDocument.Parse(data.ToString()).RootElement;
-			_trainerNpcId = root.TryGetProperty("npcId", out var nId) ? nId.GetString() : "";
-			_trainerNpcName = root.TryGetProperty("npcName", out var nN) ? nN.GetString() : "Trainer";
+			_trainerNpcId = root.TryGetProperty("npcId", out var nidEl) ? JsonElementAsNpcId(nidEl) : "";
+			_trainerNpcName = root.TryGetProperty("npcName", out var nN) ? (nN.GetString() ?? "Trainer") : "Trainer";
 			int practices = root.TryGetProperty("practices", out var pr) ? pr.GetInt32() : 0;
 			long copper = root.TryGetProperty("copper", out var cu) ? cu.GetInt64() : 0;
 
@@ -702,6 +713,22 @@ public partial class MainUI
 		_trainerTrainBtn.Disabled = true;
 		_trainerTrainBtn.Pressed += OnTrainSkillPressed;
 		rightVbox.AddChild(_trainerTrainBtn);
+
+		var giveToNpcBtn = new Button();
+		giveToNpcBtn.Text = "Give item…";
+		giveToNpcBtn.TooltipText = "Hand notes or quest items to this NPC. Pick up an item from inventory, place it in a slot, then tap Give.";
+		giveToNpcBtn.CustomMinimumSize = new Vector2(0, 32);
+		giveToNpcBtn.AddThemeFontSizeOverride("font_size", 12);
+		giveToNpcBtn.Pressed += () =>
+		{
+			if (string.IsNullOrEmpty(_trainerNpcId))
+			{
+				Log("SYSTEM", "No NPC selected for hand-in.");
+				return;
+			}
+			OpenGiveNPCWindow(_trainerNpcId, _trainerNpcName);
+		};
+		rightVbox.AddChild(giveToNpcBtn);
 
 		// Spacer
 		var spacer = new Control();

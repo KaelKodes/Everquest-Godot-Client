@@ -14,6 +14,10 @@ public partial class WorldManager : Node3D
     private ITargetable _currentTarget;
     private Dictionary<string, Node3D> _activeEntities = new Dictionary<string, Node3D>();
     private Dictionary<string, Node3D> _spawnedDoors = new Dictionary<string, Node3D>();
+    /// <summary>Latest desired open state per door while debouncing rapid DOOR_STATE_CHANGE bursts.</summary>
+    private readonly Dictionary<string, bool> _doorNetworkStatePending = new();
+    private readonly Dictionary<string, ulong> _doorNetworkStateApplyAtMsec = new();
+    private const ulong DoorNetworkDebounceMs = 110;
     private Dictionary<string, Node3D> _spawnedWorldObjects = new Dictionary<string, Node3D>();
     private readonly HashSet<string> _doorSceneLoadWarnedOnce = new();
     private readonly HashSet<string> _worldObjectSceneLoadWarnedOnce = new();
@@ -336,6 +340,20 @@ public partial class WorldManager : Node3D
 
         if (_activeEntities.TryGetValue(id, out Node3D entity) && entity is EntityCapsule cap)
             return cap;
+
+        // Zone payloads use raw mob ids; combat log often uses "mob_<id>" (see server ai.js MELEE_*).
+        if (id.StartsWith("mob_", StringComparison.Ordinal))
+        {
+            string stripped = id.Substring(4);
+            if (_activeEntities.TryGetValue(stripped, out entity) && entity is EntityCapsule capStripped)
+                return capStripped;
+        }
+        else
+        {
+            string withPrefix = $"mob_{id}";
+            if (_activeEntities.TryGetValue(withPrefix, out entity) && entity is EntityCapsule capPrefixed)
+                return capPrefixed;
+        }
 
         return null;
     }
@@ -777,6 +795,8 @@ public partial class WorldManager : Node3D
                 _lastVisualsHour = _currentWorldHour;
             }
         }
+
+        FlushDebouncedDoorStates();
     }
 
     public override void _PhysicsProcess(double delta)
@@ -1184,11 +1204,21 @@ public partial class WorldManager : Node3D
                             else if (mouseBtnEvent.ButtonIndex == MouseButton.Right)
                             {
                                 SetTarget(capsule);
-                                var client = GetNodeOrNull<GameClient>("/root/GameClient");
-                                if (client != null)
+                                // Same as left-click: giving quest items / notes uses the Give window; trainer UI also has "Give item…".
+                                var heldRight = MainUI.Instance?.GetHeldItem();
+                                if (heldRight.HasValue)
                                 {
-                                    var dict = new { targetId = capsule.Name.ToString() };
-                                    client.SendMessage("RIGHT_CLICK", dict);
+                                    string npcIdR = capsule.Name.ToString().Replace("mob_", "");
+                                    MainUI.Instance?.OpenGiveNPCWindow(npcIdR, capsule.EntityName);
+                                }
+                                else
+                                {
+                                    var client = GetNodeOrNull<GameClient>("/root/GameClient");
+                                    if (client != null)
+                                    {
+                                        var dict = new { targetId = capsule.Name.ToString() };
+                                        client.SendMessage("RIGHT_CLICK", dict);
+                                    }
                                 }
                             }
                             break;

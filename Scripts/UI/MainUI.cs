@@ -3516,10 +3516,10 @@ public partial class MainUI : Control
 	/// Expected JSON: { "type": "COMBAT_LOG", "events": [
 	///   { "event": "MELEE_HIT", "source": "You", "target": "a fire beetle", "damage": 12 },
 	///   { "event": "MELEE_MISS", "source": "a fire beetle", "target": "You" },
-	///   { "event": "SPELL_DAMAGE", "source": "You", "target": "a fire beetle", "spell": "Shock of Lightning", "damage": 30 },
+	///   { "event": "SPELL_DAMAGE", "source": "You", "target": "a fire beetle", "spell": "Shock of Lightning", "damage": 30, "sourceId": "player_1", "targetId": "a_fire_beetle_1700000000000_ab12" },
 	///   { "event": "SPELL_HEAL", "source": "You", "target": "You", "spell": "Minor Healing", "amount": 20 },
-	///   { "event": "DOT_TICK", "source": "You", "target": "a fire beetle", "spell": "Poison", "damage": 5 },
-	///   { "event": "DEATH", "who": "a fire beetle" },
+	///   { "event": "DOT_TICK", "source": "Poison", "target": "a fire beetle", "spell": "Poison", "damage": 5, "sourceId": "player_1", "targetId": "a_fire_beetle_1700000000000_ab12" },
+	///   { "event": "DEATH", "who": "a fire beetle", "whoId": "a_fire_beetle_1700000000000_ab12" },
 	///   { "event": "XP_GAIN", "amount": 50 },
 	///   { "event": "LOOT", "item": "Fire Beetle Eye", "source": "a fire beetle" },
 	///   { "event": "LEVEL_UP", "level": 5 },

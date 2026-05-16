@@ -274,9 +274,17 @@ public partial class GameClient : Node
                         if (charProp.TryGetProperty("relayUrl", out var relayProp))
                         {
                             string rawUrl = relayProp.GetString();
-                            _relayUrl = RewriteHostForCluster(rawUrl);
+                            string newUrl = RewriteHostForCluster(rawUrl);
+                            // sendFullState() re-sends LOGIN_OK; reconnecting here would Close() the relay
+                            // socket and log "[RELAY] disconnected" even though the game session continues.
+                            bool needRelay =
+                                string.IsNullOrEmpty(_relayUrl)
+                                || _relayUrl != newUrl
+                                || _relaySocket.GetReadyState() != WebSocketPeer.State.Open;
+                            _relayUrl = newUrl;
                             GD.Print($"[NET] Found Movement Relay: {_relayUrl}");
-                            ConnectToRelay(_relayUrl);
+                            if (needRelay)
+                                ConnectToRelay(_relayUrl);
                         }
                     }
                     EmitSignal(SignalName.LoginOkReceived, message);

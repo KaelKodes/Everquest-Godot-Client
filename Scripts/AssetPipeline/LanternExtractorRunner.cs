@@ -212,6 +212,7 @@ public partial class LanternExtractorRunner : RefCounted
         }
 
         CopyDirectory(exportDir, cacheDir);
+        WarnIfZoneObjectAnimDataIncomplete(cacheDir, zone);
 
         // If an alias was used, rename the core files to match the expected zoneId
         if (zone != extractTarget)
@@ -382,6 +383,60 @@ public partial class LanternExtractorRunner : RefCounted
         }
 
         return Task.CompletedTask;
+    }
+
+    private static readonly System.Collections.Generic.HashSet<string> s_warnedZoneMatAnim =
+        new(System.StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Detect incomplete Lantern exports (common when an older LanternExtractor ships with the installer).
+    /// Zone props still load from GLB but <see cref="MaterialAnimator"/> has no frame PNGs / mat list entries.
+    /// </summary>
+    private static void WarnIfZoneObjectAnimDataIncomplete(string cacheDir, string zoneId)
+    {
+        try
+        {
+            string objectsDir = Path.Combine(cacheDir, "Objects");
+            if (!Directory.Exists(objectsDir)) return;
+
+            var glbs = Directory.GetFiles(objectsDir, "*.glb", SearchOption.TopDirectoryOnly);
+            if (glbs.Length == 0) return;
+
+            string matDir = Path.Combine(objectsDir, "MaterialLists");
+            int matListCount = Directory.Exists(matDir)
+                ? Directory.GetFiles(matDir, "*.txt", SearchOption.TopDirectoryOnly).Length
+                : 0;
+
+            if (matListCount == 0)
+            {
+                if (s_warnedZoneMatAnim.Add(zoneId + ":matlist"))
+                {
+                    GD.PrintErr(
+                        $"[Lantern] Zone '{zoneId}' has Objects/*.glb but no Objects/MaterialLists/*.txt. " +
+                        "Animated world props need a current LanternExtractor build that exports MaterialLists + frame PNGs. " +
+                        "Re-download LanternExtractor via the launcher, or delete this zone folder under the game's user cache and reconnect to re-extract.");
+                }
+                return;
+            }
+
+            string texDir = Path.Combine(objectsDir, "Textures");
+            string texDirLo = Path.Combine(objectsDir, "textures");
+            int pngCount = 0;
+            if (Directory.Exists(texDir))
+                pngCount += Directory.GetFiles(texDir, "*.png", SearchOption.TopDirectoryOnly).Length;
+            if (Directory.Exists(texDirLo))
+                pngCount += Directory.GetFiles(texDirLo, "*.png", SearchOption.TopDirectoryOnly).Length;
+
+            if (pngCount == 0 && s_warnedZoneMatAnim.Add(zoneId + ":png"))
+            {
+                GD.PrintErr(
+                    $"[Lantern] Zone '{zoneId}': MaterialLists exist but no PNG frames under Objects/Textures — object texture animation will not run.");
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Lantern] Could not verify object animation export: {ex.Message}");
+        }
     }
 
     /// <summary>

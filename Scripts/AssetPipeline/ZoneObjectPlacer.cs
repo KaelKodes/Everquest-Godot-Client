@@ -871,6 +871,8 @@ public partial class ZoneObjectPlacer : RefCounted
                 Material mat = mi.GetActiveMaterial(i);
                 if (mat is not StandardMaterial3D sm)
                     continue;
+                if (WorldManager.IsLiquidMaterialName(sm.ResourceName))
+                    continue;
                 if (sm.AlbedoTexture != null || sm.NormalTexture != null || sm.RoughnessTexture != null ||
                     sm.MetallicTexture != null || sm.AOTexture != null)
                     continue;
@@ -1656,8 +1658,7 @@ public partial class ZoneObjectPlacer : RefCounted
             for (int i = 0; i < meshInst.GetSurfaceOverrideMaterialCount(); i++)
             {
                 var mat = meshInst.GetSurfaceOverrideMaterial(i);
-                // GD.Print($"[Anim Debug] Override Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
-                if (mat is StandardMaterial3D stdMat)
+                if (mat is BaseMaterial3D stdMat)
                 {
                     if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
                         Animator.RegisterMaterial(stdMat, anim.frames, anim.delay, texturesDir);
@@ -1669,8 +1670,7 @@ public partial class ZoneObjectPlacer : RefCounted
                 for (int i = 0; i < meshInst.Mesh.GetSurfaceCount(); i++)
                 {
                     var mat = meshInst.Mesh.SurfaceGetMaterial(i);
-                    // GD.Print($"[Anim Debug] Surface Mat {i}: {mat?.GetType().Name} - Name: {mat?.ResourceName}");
-                    if (mat is StandardMaterial3D stdMat)
+                    if (mat is BaseMaterial3D stdMat)
                     {
                         if (stdMat.ResourceName != null && animData.TryGetValue(stdMat.ResourceName, out var anim))
                         {
@@ -1682,7 +1682,6 @@ public partial class ZoneObjectPlacer : RefCounted
                             {
                                 if (kvp.Key.Equals(stdMat.ResourceName, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    // GD.Print($"[Anim Debug] Case mismatch fixed! {stdMat.ResourceName} matched {kvp.Key}");
                                     Animator.RegisterMaterial(stdMat, kvp.Value.frames, kvp.Value.delay, texturesDir);
                                     break;
                                 }

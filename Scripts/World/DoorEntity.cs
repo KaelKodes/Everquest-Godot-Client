@@ -23,6 +23,10 @@ public partial class DoorEntity : Node3D, ITargetable
     private Tween _doorTween;
     private AnimatableBody3D _platformBody;
     private float _lastSwingAngle = 90f;
+    private ulong _lastDoorClickMsec;
+    private const ulong DoorClickThrottleMs = 400;
+    /** Vertical travel when open (EQ often leaves door_param 0; derived from mesh height). */
+    private float _liftDistance;
 
     public DoorEntity()
     {
@@ -43,6 +47,10 @@ public partial class DoorEntity : Node3D, ITargetable
         
         Vector3 worldCenter = doorAabb.Position + doorAabb.Size / 2f;
         _localMeshCenter = ToLocal(worldCenter);
+
+        // PEQ portcullis rows often have door_param=0; live client lifts by model height (~1 EQ unit ≈ 1 Godot unit).
+        float meshHeight = Mathf.Max(doorAabb.Size.Y, 4f);
+        _liftDistance = doorParam > 0 ? doorParam : meshHeight;
 
         if (opentype == 59 || name.ToUpper().Contains("LEVATOR")) Behavior = DoorBehavior.Elevator;
         else if (opentype == 65 || opentype == 40) Behavior = DoorBehavior.Portcullis;
@@ -67,11 +75,11 @@ public partial class DoorEntity : Node3D, ITargetable
         {
             _doorTween = CreateTween();
             
-            // Ensure physics syncing is enabled before moving so the platform carries the player
+            // SyncToPhysics reads transforms FROM the physics server each tick. Turning it on
+            // while a Tween writes `position` fights the tween — portcullises/elevators stay frozen.
+            // Drive the motion with the tween, then re-enable sync so riders/collisions settle.
             if (_platformBody != null)
-            {
-                _platformBody.SyncToPhysics = true;
-            }
+                _platformBody.SyncToPhysics = false;
         }
         
         Vector3 targetPos = BasePosition;
@@ -86,7 +94,7 @@ public partial class DoorEntity : Node3D, ITargetable
         {
             if (Behavior == DoorBehavior.Elevator || Behavior == DoorBehavior.Portcullis)
             {
-                targetPos.Y += DoorParam;
+                targetPos.Y += _liftDistance;
             }
             else if (Behavior == DoorBehavior.Sliding)
             {
@@ -132,7 +140,10 @@ public partial class DoorEntity : Node3D, ITargetable
         if (instant)
         {
             if (_platformBody != null)
+            {
                 _platformBody.Position = localTargetOffset;
+                _platformBody.SyncToPhysics = true;
+            }
             else
                 Position = targetPos;
             
@@ -145,6 +156,7 @@ public partial class DoorEntity : Node3D, ITargetable
             _doorTween.TweenProperty(_platformBody, "position", localTargetOffset, duration)
                       .SetTrans(Tween.TransitionType.Sine)
                       .SetEase(Tween.EaseType.InOut);
+            _doorTween.Finished += OnPlatformMotionTweenFinished;
         }
         else if (Behavior == DoorBehavior.Swinging)
         {
@@ -161,6 +173,12 @@ public partial class DoorEntity : Node3D, ITargetable
         }
         
         GD.Print($"[WORLD] Door {DoorId} (Type: {Behavior}) {(isOpen ? "opening" : "closing")} to Pos: {targetPos}, Rot: {targetRot}");
+    }
+
+    private void OnPlatformMotionTweenFinished()
+    {
+        if (_platformBody != null && GodotObject.IsInstanceValid(_platformBody))
+            _platformBody.SyncToPhysics = true;
     }
 
     public void SetTargeted(bool targeted)
@@ -221,30 +239,35 @@ public partial class DoorEntity : Node3D, ITargetable
                     wm.SetTarget(this);
                 }
             }
-            else if (mouseBtn.ButtonIndex == MouseButton.Right)
-            {
-                var wm = WorldManager.ResolveFromDescendant(this);
-                if (wm != null)
-                {
-                    if (wm.CurrentTargetId == this.Name)
+                    else if (mouseBtn.ButtonIndex == MouseButton.Right)
                     {
-                        if (GameClient.Instance != null)
+                        ulong now = Time.GetTicksMsec();
+                        if (now - _lastDoorClickMsec < DoorClickThrottleMs)
+                            return;
+                        _lastDoorClickMsec = now;
+
+                        var wm = WorldManager.ResolveFromDescendant(this);
+                        if (wm != null)
                         {
-                            GameClient.Instance.SendRaw($"{{\"type\": \"DOOR_CLICK\", \"door_id\": {DoorId}}}");
-                            GD.Print($"[WORLD] Sent DOOR_CLICK for door {DoorId} ({EntityName})");
+                            if (wm.CurrentTargetId == this.Name)
+                            {
+                                if (GameClient.Instance != null)
+                                {
+                                    GameClient.Instance.SendRaw($"{{\"type\": \"DOOR_CLICK\", \"door_id\": {DoorId}}}");
+                                    GD.Print($"[WORLD] Sent DOOR_CLICK for door {DoorId} ({EntityName})");
+                                }
+                            }
+                            else
+                            {
+                                wm.SetTarget(this);
+                                if (GameClient.Instance != null)
+                                {
+                                    GameClient.Instance.SendRaw($"{{\"type\": \"DOOR_CLICK\", \"door_id\": {DoorId}}}");
+                                    GD.Print($"[WORLD] Auto-targeted and sent DOOR_CLICK for door {DoorId} ({EntityName})");
+                                }
+                            }
                         }
                     }
-                    else
-                    {
-                        wm.SetTarget(this);
-                        if (GameClient.Instance != null)
-                        {
-                            GameClient.Instance.SendRaw($"{{\"type\": \"DOOR_CLICK\", \"door_id\": {DoorId}}}");
-                            GD.Print($"[WORLD] Auto-targeted and sent DOOR_CLICK for door {DoorId} ({EntityName})");
-                        }
-                    }
-                }
-            }
         }
     }
 }
